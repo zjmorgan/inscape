@@ -137,3 +137,13 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Pickle files
+.pkl
+
+### Application
+
+# Reflection files
+.hkl
+.prp
+
