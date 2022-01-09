@@ -139,11 +139,15 @@ dmypy.json
 cython_debug/
 
 # Pickle files
-.pkl
+*.pkl
 
 ### Application
 
 # Reflection files
-.hkl
-.prp
+*.hkl
+*.prp
+
+# Figures
+*.png
+*.pdf
 
