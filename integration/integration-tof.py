@@ -7,7 +7,7 @@ import sys
 import os 
 
 directory = os.path.dirname(os.path.realpath(__file__))
-sys.path.append('/SNS/CORELLI/shared/Integration')
+sys.path.append('/home/zgf/.git/inscape/integration/')
 
 import merge
 
@@ -15,7 +15,7 @@ import imp
 imp.reload(merge)
 
 # directories ------------------------------------------------------------------
-iptsfolder = '/SNS/CORELLI/IPTS-26829/'
+iptsfolder = '/SNS/CORELLI/IPTS-27472/'
 scriptdir = iptsfolder+'shared/scripts/'
 
 # calibration calibration -----------------------------------------------------
@@ -26,36 +26,30 @@ tube_calibration = '/SNS/CORELLI/shared/calibration/tube/calibration_corelli_202
 counts_file = '/SNS/CORELLI/IPTS-23019/shared/germanium_2021b/sa_CCR_195098-195105_w_bkg_sub_cal.nxs'
 spectrum_file = '/SNS/CORELLI/IPTS-23019/shared/germanium_2021b/flux_CCR_195098-195105_by_bank_w_bkg_sub_w_cal.nxs'
 
-ipts = 26829
- 
-# Mn3Si2Te6, 005 K, 2021/07
-#start1 = 198009
-#stop1 = 198188
-#sampleT = '005K'
+ipts = 27472
 
 # Mn3Si2Te6, 100 K, 2021/07
-start1 = 198190
-stop1 = 198369
-sampleT = '100K'
+start1 = 214289
+stop1 = 214468
 
 # UB matrix --------------------------------------------------------------------
-ub_file = '/SNS/CORELLI/IPTS-26829/shared/scripts/Mn3Si2Te6_4th_'+sampleT+'.mat'
+ub_file = scriptdir+'MSBT_050K.mat'
 
 # peak prediction parameters ---------------------------------------------------
-reflection_condition = 'Primitive'
+reflection_condition = 'Rhombohedrally centred, obverse'
 
 # output name ------------------------------------------------------------------
 
-outname = 'Mn3Si2Te6_CCR_'+sampleT+'lscale5_integration'
+outname = 'output'
 
 pdf_output = directory+'/peak-envelopes_{}.pdf'.format(outname)
 
-runs = np.arange(start1, stop1)
+runs = np.arange(start1, start1+10)
          
 merge.pre_integration(ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition)
     
-peak_dictionary = merge.PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
+peak_dictionary = merge.PeakDictionary(4.2473, 4.2473, 40.7573, 90, 90, 120)
 
 for r in range(start1,stop1+1):
         

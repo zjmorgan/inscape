@@ -844,10 +844,7 @@ class PeakDictionary:
                         self.pws.addPeak(pk)
                     
                     run = peak.getRunNumber()
-                    if run == 0 and ws.split('_')[-2].isnumeric():
-                        _, exp, run, _ = ws.split('_')
-                    
-                    bank = 1 if bank == 'panel' else int(bank.strip('bank'))
+                    bank = int(bank.strip('bank'))
                     ind = peak.getPeakNumber()
                     row = int(pws.row(p)['Row'])
                     col = int(pws.row(p)['Col'])
@@ -986,15 +983,11 @@ class PeakDictionary:
         SortPeaksWorkspace(self.pws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.pws)  
         SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)  
             
-def box_integrator(runs, indices, binsize=0.001, radius=0.15, exp=None):
+def box_integrator(runs, indices, binsize=0.001, radius=0.15):
 
     for i, r in enumerate(runs):
         
-        if exp is None:
-            ows = 'COR_'+str(r)
-        else:
-            ows = 'HB3A_'+str(exp)+'_'+str(r)
-            
+        ows = 'COR_'+str(r)
         omd = ows+'_md'
         opk = ows+'_pks'
 
@@ -1698,7 +1691,7 @@ def partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out):
     return pk, bkg
     
 def norm_integrator(peak_envelope, runs, Q0, D, W, bin_size=0.013, box_size=1.65, 
-                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None):
+                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5):
     
     principal_radii = 1/np.sqrt(D.diagonal())
     
@@ -1727,12 +1720,7 @@ def norm_integrator(peak_envelope, runs, Q0, D, W, bin_size=0.013, box_size=1.65
     if mtd.doesExist('normMD'): DeleteWorkspace('normMD')
         
     for i, r in enumerate(runs):
-        
-        if exp is None:
-            ows = 'COR_'+str(r)
-        else:
-            ows = 'HB3A_'+str(exp)+'_'+str(r)
-
+        ows = 'COR_'+str(r)
         omd = ows+'_md'
             
         if mtd.doesExist('tmpDataMD'): DeleteWorkspace('tmpDataMD')
@@ -1753,46 +1741,23 @@ def norm_integrator(peak_envelope, runs, Q0, D, W, bin_size=0.013, box_size=1.65
             print('Q0_bin', Q0_bin)
             print('Q1_bin', Q1_bin)
             print('Q2_bin', Q2_bin)
-            
-            extents = [Q_rot[0]-dQ[0],Q_rot[0]+dQ[0],Q_rot[1]-dQ[1],Q_rot[1]+dQ[1],Q_rot[2]-dQ[2],Q_rot[2]+dQ[2]]
-            bins = [int(round(2*dQ[0]/dQp[0]))+1,int(round(2*dQ[1]/dQp[1]))+1,int(round(2*dQ[2]/dQp[2]))+1]
                 
-        if exp is None:
-            MDNorm(InputWorkspace=omd,
-                   SolidAngleWorkspace='sa',
-                   FluxWorkspace='flux',
-                   RLU=True, # not actually HKL
-                   QDimension0='{},{},{}'.format(*W[:,0]),
-                   QDimension1='{},{},{}'.format(*W[:,1]),
-                   QDimension2='{},{},{}'.format(*W[:,2]),
-                   Dimension0Name='QDimension0',
-                   Dimension1Name='QDimension1',
-                   Dimension2Name='QDimension2',
-                   Dimension0Binning='{},{},{}'.format(*Q0_bin),
-                   Dimension1Binning='{},{},{}'.format(*Q1_bin),
-                   Dimension2Binning='{},{},{}'.format(*Q2_bin),
-                   OutputWorkspace='__normDataMD',
-                   OutputDataWorkspace='tmpDataMD',
-                   OutputNormalizationWorkspace='tmpNormMD')
-                   
-        else:
-            BinMD(InputWorkspace=omd, AxisAligned=False, NormalizeBasisVectors=False,
-                  BasisVector0='Q0,A^-1,{},{},{}'.format(*W[:,0]),
-                  BasisVector1='Q1,A^-1,{},{},{}'.format(*W[:,1]),
-                  BasisVector2='Q2,A^-1,{},{},{}'.format(*W[:,2]),
-                  OutputExtents='{},{},{},{},{},{}'.format(*extents),
-                  OutputBins='{},{},{}'.format(*bins),
-                  OutputWorkspace='tmpDataMD')
-
-            BinMD(InputWorkspace=ows+'_van', AxisAligned=False, NormalizeBasisVectors=False,
-                  BasisVector0='Q0,A^-1,{},{},{}'.format(*W[:,0]),
-                  BasisVector1='Q1,A^-1,{},{},{}'.format(*W[:,1]),
-                  BasisVector2='Q2,A^-1,{},{},{}'.format(*W[:,2]),
-                  OutputExtents='{},{},{},{},{},{}'.format(*extents),
-                  OutputBins='{},{},{}'.format(*bins),
-                  OutputWorkspace='tmpNormMD')
-                  
-            DivideMD(LHSWorkspace='tmpDataMD', RHSWorkspace='tmpNormMD', OutputWorkspace='__normDataMD')
+        MDNorm(InputWorkspace=omd,
+               SolidAngleWorkspace='sa',
+               FluxWorkspace='flux',
+               RLU=True, # not actually HKL
+               QDimension0='{},{},{}'.format(*W[:,0]),
+               QDimension1='{},{},{}'.format(*W[:,1]),
+               QDimension2='{},{},{}'.format(*W[:,2]),
+               Dimension0Name='QDimension0',
+               Dimension1Name='QDimension1',
+               Dimension2Name='QDimension2',
+               Dimension0Binning='{},{},{}'.format(*Q0_bin),
+               Dimension1Binning='{},{},{}'.format(*Q1_bin),
+               Dimension2Binning='{},{},{}'.format(*Q2_bin),
+               OutputWorkspace='__normDataMD',
+               OutputDataWorkspace='tmpDataMD',
+               OutputNormalizationWorkspace='tmpNormMD')
 
         if i == 0:
             Qxaxis = mtd['__normDataMD'].getXDimension()
@@ -1990,114 +1955,312 @@ def pre_integration(ipts, runs, ub_file, spectrum_file, counts_file,
             DeleteWorkspace(ows)        
             # md = GroupWorkspaces(merge_md)
             # pk = GroupWorkspaces(merge_pk)
+
+def mixture3d(Q, Qx, Qy, Qz, weights, Q0, u, v):
     
-def pre_merging(ipts, exp, runs, ub_file, counts_file, reflection_condition):
+    Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
+    Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
     
-    # peak centroid radius ---------------------------------------------------------
-    centroid_radius = 0.125
+    n_components_range = np.arange(2,4+1)
+                 
+    new_weight = weights/weights.sum()*0+1
     
-    min_d_spacing = 0.7
-    max_d_spacing= 20
-    
-    if not mtd.doesExist('van'):
-        LoadMD(Filename=counts_file, OutputWorkspace='van')
+    mask = weights > 0
         
-    merge_md = []
-    merge_pk = []
-
-    for r in runs:
-        print('Processing experiment : {}, scan : {}'.format(exp,r))
-        ows = 'HB3A_'+str(exp)+'_'+str(r)
-        omd = ows+'_md'
-        opk = ows+'_pks'
-        merge_md.append(omd)
-        merge_pk.append(opk)
+    X = np.stack((Qx[mask], Qy[mask], Qz[mask])).T
+    #Y = (np.stack((Qu[mask], Qv[mask], Q[mask]))).T
+    
+    # ---
+                   
+    # lowest_bic = np.infty
+    # bic = []
         
-        if not mtd.doesExist(omd):
-            filename = '/HFIR/HB3A/IPTS-{}/shared/autoreduce/HB3A_exp{:04}_scan{:04}.nxs'.format(ipts,exp,r)
-            LoadMD(Filename=filename, OutputWorkspace=ows)
-            
-            wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
-            
-            SetGoniometer(Workspace=ows, 
-                          Axis0='omega,0,1,0,-1',
-                          Axis1='chi,0,0,1,-1',
-                          Axis2='phi,0,1,0,-1',
-                          Average=False)
-            
-            ConvertHFIRSCDtoMDE(InputWorkspace=ows, 
-                                Wavelength=wavelength, 
-                                MinValues='-10,-10,-10',
-                                MaxValues='10,10,10', 
-                                OutputWorkspace=omd)   
+#     cv_types = ['full',] #
+#     for cv_type in cv_types:
+#         for n_components in n_components_range:
+# 
+#             gmm = mixture.GaussianMixture(n_components=n_components, covariance_type=cv_type, 
+#                                           n_init=1, init_params='kmeans', max_iter=200, tol=1e-4, verbose=False)
+# 
+#             gmm.fit(X)
+#             bic.append(gmm.bic(X))
+#             if bic[-1] < lowest_bic:
+#                 lowest_bic = bic[-1]
+#                 best_gmm = gmm
+#     
+#     clf = best_gmm
+        
+    plt.close('Mixture-3d')
+    fig = plt.figure('Mixture-3d')
+    ax = Axes3D(fig)
+    
+    for i in [3]:
+        
+        model = pomegranate.gmm.GeneralMixtureModel.from_samples(pomegranate.MultivariateGaussianDistribution,
+                                                                 n_components=i, X=X, weights=weights**2, stop_threshold=0.0001)
+        model.fit(X=X, weights=weights**2, stop_threshold=0.0001)
+        Y_ = model.predict(X)
+                  
+        print(i, model.score(X, Y_))
+        print(model.distributions)
 
-        if not mtd.doesExist(ows+'_van'):
-
-            wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
-            
-            d = mtd[ows].getSignalArray()
-            v = mtd['van'].getSignalArray().copy()
-            
-            mtd[ows].setSignalArray(v.repeat(d.shape[2]).reshape(*d.shape))
-            
-            ConvertHFIRSCDtoMDE(InputWorkspace=ows, 
-                                Wavelength=wavelength, 
-                                MinValues='-10,-10,-10',
-                                MaxValues='10,10,10', 
-                                OutputWorkspace=ows+'_van') 
-                                
-            if ub_file is None:
-                UB = mtd[ows].getExperimentInfo(0).run().getProperty('ubmatrix').value
-                UB = [float(ub) for ub in UB.split(' ')]
-                UB = np.array(UB).reshape(3,3)
+    for i in range(3):
                 
-                SetUB(omd, UB=UB)
-            else:
-                LoadIsawUB(InputWorkspace=omd, Filename=ub_file)
+        ax.scatter(X[Y_ == i, 0], X[Y_ == i, 1], X[Y_ == i, 2], s=0.8, c='C{}'.format(i), edgecolors=None, depthshade=True, alpha=0.1)
 
-        if not mtd.doesExist(opk):
-        
-            wavelength = float(mtd[omd].getExperimentInfo(0).run().getProperty('wavelength').value)
+    ax.set_aspect('equal')
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    zlim = ax.get_zlim()
+    #set_axes_equal(ax)
+    #proj3d.persp_transformation = orthogonal_proj
     
-            PredictPeaks(InputWorkspace=omd,
-                         WavelengthMin=wavelength*0.95,
-                         WavelengthMax=wavelength*1.05,
-                         MinDSpacing=min_d_spacing,
-                         MaxDSpacing=max_d_spacing,                         
-                         ReflectionCondition=reflection_condition,
-                         CalculateGoniometerForCW=True,
-                         CalculateWavelength=False,
-                         Wavelength=wavelength,
-                         InnerGoniometer=True,
-                         FlipX=True,
-                         OutputType='Peak',
-                         OutputWorkspace=opk)
-                         
-            HFIRCalculateGoniometer(Workspace=opk,
-                                    Wavelength=wavelength,
-                                    OverrideProperty=True, 
-                                    InnerGoniometer=True,
-                                    FlipX=True)
-                         
-            CentroidPeaksMD(InputWorkspace=omd,
-                            PeakRadius=centroid_radius, 
-                            PeaksWorkspace=opk, 
-                            OutputWorkspace=opk)
-                            
-            CentroidPeaksMD(InputWorkspace=omd,
-                            PeakRadius=centroid_radius, 
-                            PeaksWorkspace=opk, 
-                            OutputWorkspace=opk)
+    ax.set_xlabel('Qx (\u212B\u207B\u00B9)') 
+    ax.set_ylabel('Qy (\u212B\u207B\u00B9)') 
+    ax.set_zlabel('Qz (\u212B\u207B\u00B9)') 
 
-            IntegratePeaksMD(InputWorkspace=omd, 
-                             PeakRadius=centroid_radius,
-                             BackgroundInnerRadius=centroid_radius+0.01,
-                             BackgroundOuterRadius=centroid_radius+0.02,
-                             PeaksWorkspace=opk,
-                             OutputWorkspace=opk)
+    fig.show()
+        
+def projected_profile_mixture(peak_envelope, key, Q, Qx, Qy, Qz, weights,
+                              Q0, u, v, bins=16, bins2d=50):
+    
+    n_components_range = np.arange(1,3+1)
+    
+    Q_range = [Q.min(),Q.max()]
 
-        # delete ows save memory
-        if mtd.doesExist(ows):
-            DeleteWorkspace(ows)        
-            # md = GroupWorkspaces(merge_md)
-            # pk = GroupWorkspaces(merge_pk)
+    Qmod = np.linalg.norm(Q0)
+    
+#     mask = (Q > Qmod-radius) & (Q < Qmod+radius)
+#     
+#     x = Q[~mask].flatten()
+#     y = weights[~mask].flatten()
+#     
+#     A = np.array([x*0+1, x]).T
+#     B = y.flatten()
+#     
+#     coeff, r, rank, s = np.linalg.lstsq(A, B)
+#               
+#     weights = weights-(coeff[0]+coeff[1]*Q)
+#     
+#     weights[weights < 0] = 0
+# 
+#     width = 6*np.sqrt(variance)
+# 
+#     mask = np.abs(Q-center) < width
+    
+    Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
+    Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
+    
+    Qu_range = [Qu.min(),Qu.max()]
+    Qv_range = [Qv.min(),Qv.max()]
+                 
+    new_weight = weights/weights.sum()
+    
+    new_weight /= new_weight[new_weight > 0].min()
+    new_weight = np.round(new_weight).astype(int)
+    
+    new_weight -= new_weight.min()
+    
+    mask = new_weight > 0
+    
+    new_weight = new_weight[mask]
+    
+    X = np.stack((np.repeat(Qu[mask], new_weight), np.repeat(Qv[mask], new_weight))).T
+ 
+    Y = np.stack((np.repeat(Q[mask], new_weight))).T
+    Y = Y.reshape(Y.size,1)
+    
+    Z = np.stack((np.repeat(new_weight, new_weight))).T
+    Z = Z.reshape(Z.size,1)
+                
+    # fig, ax = plt.subplots(1, 1, num='Background')
+    # ax.plot(np.sort(new_weight), '-')
+    # fig.show()
+    
+    # ---
+                   
+    lowest_bic = np.infty
+    bic = []
+        
+    cv_types = ['tied',] #, 'full'
+    for cv_type in cv_types:
+        for n_components in n_components_range:
+
+            gmm = mixture.GaussianMixture(n_components=n_components, covariance_type=cv_type, 
+                                          n_init=1, init_params='kmeans', max_iter=200, tol=1e-4, verbose=False)
+
+            gmm.fit(X)
+            bic.append(gmm.bic(X))
+            if bic[-1] < lowest_bic:
+                lowest_bic = bic[-1]
+                best_gmm = gmm
+    
+    clf = best_gmm
+    Y_ = clf.predict(X)
+
+    plt.close('Mixture-type-I-projection')
+    fig, ax = plt.subplots(1, 1, num='Mixture-type-I-projection')
+    
+    #for i, (mean, cov) in enumerate(zip(clf.means_, clf.covariances_)):
+    for i, mean in enumerate(clf.means_):
+        
+        cov = clf.covariances_
+        
+        eigenvalues, eigenvectors = np.linalg.eig(cov)
+
+        ax.scatter(X[Y_ == i, 0], X[Y_ == i, 1], 0.8, color='C{}'.format(i))
+    
+        radii = 3*np.sqrt(eigenvalues)
+                
+        t = np.linspace(0,2*np.pi,100)
+        x, y = radii[0]*np.cos(t), radii[1]*np.sin(t)
+        
+        xe = eigenvectors[0,0]*x+eigenvectors[0,1]*y+mean[0]
+        ye = eigenvectors[1,0]*x+eigenvectors[1,1]*y+mean[1]
+        
+        ax.plot(xe, ye, color='C{}'.format(i))
+    
+    ax.set_xlabel('Q1 (\u212B\u207B\u00B9)') 
+    ax.set_ylabel('Q2 (\u212B\u207B\u00B9)') 
+    fig.show()
+        
+    # ---
+            
+    plt.close('Mixture-type-I-Q')
+    fig, ax = plt.subplots(1, 1, num='Mixture-type-I-Q')
+    Y_ = clf.predict(X)
+        
+    for i, mean in enumerate(clf.means_):
+        
+        veil = Y_ == i
+        
+        x, y = Y[veil,0].copy(), Z[veil,0].copy()
+        
+        sort = np.argsort(x)
+        
+        x, y = x[sort], y[sort]
+        
+        bin_counts, bin_edges = np.histogram(x, bins, Q_range, weights=y)
+        bin_centers = 0.5*(bin_edges[1:]+bin_edges[:-1])
+        
+        bin_counts -= bin_counts.min()
+        
+        ax.plot(bin_centers, bin_counts, '-o', color='C{}'.format(i))
+        
+        scale = bin_counts.max()
+        
+        mu = np.average(bin_centers, weights=bin_counts**2)
+        sig_sq = np.average((bin_centers-mu)**2, weights=bin_counts**2)
+        
+        ax.plot(x, scale*norm(x, sig_sq, mu), '--', color='C{}'.format(i))
+        
+    ax.set_xlabel('Q (\u212B\u207B\u00B9)') 
+    fig.show()
+    
+    # --------------------------------------------------------------------------------
+
+    lowest_bic = np.infty
+    bic = []
+        
+    cv_types = ['tied',] #, 'full'
+    for cv_type in cv_types:
+        for n_components in n_components_range:
+
+            gmm = mixture.GaussianMixture(n_components=n_components, covariance_type=cv_type, 
+                                          n_init=1, init_params='kmeans', max_iter=200, tol=1e-3, verbose=False)
+                                          
+            gmm.fit(Y)
+            bic.append(gmm.bic(Y))
+            if bic[-1] < lowest_bic:
+                lowest_bic = bic[-1]
+                best_gmm = gmm
+    
+    clf = best_gmm
+        
+    plt.close('Mixture-type-II-Q')
+    fig, ax = plt.subplots(1, 1, num='Mixture-type-II-Q')
+    Y_ = clf.predict(Y)
+    
+    #for i, (mean, cov) in enumerate(zip(clf.means_, clf.covariances_)):
+    for i, mean in enumerate(clf.means_):
+        
+        var = clf.covariances_.flatten()
+        
+        x, y = Y[Y_ == i, 0].copy(), Z[Y_ == i, 0].copy().copy()
+        
+        sort = np.argsort(x)
+        
+        x, y = x[sort], y[sort]
+        
+        bin_counts, bin_edges = np.histogram(x, bins, Q_range, weights=y)
+        bin_centers = 0.5*(bin_edges[1:]+bin_edges[:-1])
+        
+        bin_counts -= bin_counts.min()
+        
+        ax.plot(bin_centers, bin_counts, '-o', color='C{}'.format(i))
+        
+        scale = bin_counts.max()
+        
+        mu = np.average(bin_centers, weights=bin_counts**2)
+        sig_sq = np.average((bin_centers-mu)**2, weights=bin_counts**2)
+        
+        ax.plot(x, scale*norm(x, var, mu), '--', color='C{}'.format(i))
+        
+    ax.set_xlabel('Q (\u212B\u207B\u00B9)') 
+    fig.show()
+    
+    # ---
+    
+    plt.close('Mixture-type-II-projection')
+    fig, ax = plt.subplots(1, 1, num='Mixture-type-II-projection')
+    Y_ = clf.predict(Y)
+    
+    print(len(clf.means_),clf.means_)
+        
+    for i, mean in enumerate(clf.means_):
+        
+        veil = Y_ == i
+        
+        x, y, z = X[veil,0].copy(), X[veil,1].copy(), Z[veil,0].copy()
+
+        uv_bin_counts, u_bin_edges, v_bin_edges = np.histogram2d(x, y, bins=[bins2d,bins2d+1], 
+                                                                 range=[Qu_range,Qv_range], weights=z)
+        
+        uv_bin_counts = uv_bin_counts.T
+        
+        uv_bin_counts -= uv_bin_counts[uv_bin_counts > 0].min()
+        
+        uv_bin_counts[uv_bin_counts < 0] = 0
+                         
+        u_bin_centers_grid, v_bin_centers_grid = np.meshgrid(0.5*(u_bin_edges[1:]+u_bin_edges[:-1]), 
+                                                             0.5*(v_bin_edges[1:]+v_bin_edges[:-1]))
+        
+        u_center = np.average(u_bin_centers_grid, weights=uv_bin_counts**2)
+        v_center = np.average(v_bin_centers_grid, weights=uv_bin_counts**2)
+        
+        u_variance = np.average((u_bin_centers_grid-u_center)**2, weights=uv_bin_counts**2)
+        v_variance = np.average((v_bin_centers_grid-v_center)**2, weights=uv_bin_counts**2)
+        
+        uv_covariance = np.average((u_bin_centers_grid-u_center)\
+                                  *(v_bin_centers_grid-v_center), weights=uv_bin_counts**2)
+                                   
+        cov = np.array([[u_variance,uv_covariance],
+                        [uv_covariance,v_variance]])
+                                       
+        eigenvalues, eigenvectors = np.linalg.eig(cov)
+
+        ax.scatter(x, y, 0.8, color='C{}'.format(i))
+    
+        radii = 3*np.sqrt(eigenvalues)
+                
+        t = np.linspace(0,2*np.pi,100)
+        x, y = radii[0]*np.cos(t), radii[1]*np.sin(t)
+        
+        xe = eigenvectors[0,0]*x+eigenvectors[0,1]*y+u_center
+        ye = eigenvectors[1,0]*x+eigenvectors[1,1]*y+v_center
+        
+        ax.plot(xe, ye, color='C{}'.format(i))
+        
+    ax.set_xlabel('Q1 (\u212B\u207B\u00B9)') 
+    ax.set_ylabel('Q2 (\u212B\u207B\u00B9)') 
+    fig.show()
