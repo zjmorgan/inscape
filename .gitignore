@@ -143,6 +143,9 @@ cython_debug/
 
 ### Application
 
+# NeXus files
+*.nxs
+
 # Reflection files
 *.hkl
 *.prp

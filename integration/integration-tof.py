@@ -28,7 +28,6 @@ spectrum_file = '/SNS/CORELLI/IPTS-23019/shared/germanium_2021b/flux_CCR_195098-
 
 ipts = 27472
 
-# Mn3Si2Te6, 100 K, 2021/07
 start1 = 214289
 stop1 = 214468
 
@@ -38,18 +37,30 @@ ub_file = scriptdir+'MSBT_050K.mat'
 # peak prediction parameters ---------------------------------------------------
 reflection_condition = 'Rhombohedrally centred, obverse'
 
-# output name ------------------------------------------------------------------
+ipts = 26829
 
-outname = 'output'
+# Mn3Si2Te6, 100 K, 2021/07
+start1 = 198190
+stop1 = 198369
+
+# UB matrix --------------------------------------------------------------------
+ub_file = '/SNS/CORELLI/IPTS-26829/shared/scripts/Mn3Si2Te6_4th_100K.mat'
+
+# peak prediction parameters ---------------------------------------------------
+reflection_condition = 'Primitive'
+
+# output name ------------------------------------------------------------------
+outname = 'Mn3Si2Te6_CCR_100K_integration'
 
 pdf_output = directory+'/peak-envelopes_{}.pdf'.format(outname)
 
-runs = np.arange(start1, start1+10)
+runs = np.arange(start1, stop1+1)
          
 merge.pre_integration(ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition)
     
 peak_dictionary = merge.PeakDictionary(4.2473, 4.2473, 40.7573, 90, 90, 120)
+peak_dictionary = merge.PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
 
 for r in range(start1,stop1+1):
         

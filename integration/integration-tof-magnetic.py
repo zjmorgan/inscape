@@ -14,38 +14,65 @@ import merge
 import imp
 imp.reload(merge)
 
-ipts = 26317
+# directories ------------------------------------------------------------------
+iptsfolder = '/SNS/CORELLI/IPTS-26829/'
+scriptdir = iptsfolder+'shared/scripts/'
+
+# calibration calibration -----------------------------------------------------
+detector_calibration = '/SNS/CORELLI/IPTS-23019/shared/germanium_2021b/germanium_2021B_corrected.xml'
+tube_calibration = '/SNS/CORELLI/shared/calibration/tube/calibration_corelli_20200109.nxs.h5'
 
 # spectrum file ----------------------------------------------------------------
-counts_file = '/HFIR/HB3A/IPTS-24612/shared/autoreduce/HB3A_exp0722_scan0220.nxs'
+counts_file = '/SNS/CORELLI/shared/Vanadium/2021B_1005_SlimSAM/sa_SS_195098-195105_w_bkg_sub.nxs'
+spectrum_file = '/SNS/CORELLI/shared/Vanadium/2021B_1005_SlimSAM/flux_SS_195098-195105_by_bank_w_bkg_sub.nxs'
 
-# experiment number ------------------------------------------------------------
-exp = 823
+ipts = 26829
 
-# scan numbers -----------------------------------------------------------------
-start = 8
-stop = 9
+# Mn3Si2Te6,SS, 0T, 100K, 2021/10
+start1 = 221033
+stop1 =  221077 # 221122
 
+# Mn3Si2Te6, SS, 5T, 005K, 2021/10
+start1 = 221129
+stop1 =  221173 # 221308
+# 
+# Mn3Si2Te6, SS, 0T, 005K, 2021/10
+start1 = 221309
+stop1 =  221488
+#
+# Mn3Si2Te6, SS, 1T, 005K, 2021/10
+start1 = 221684
+stop1 =  221728 # 221773
+# 
 # UB matrix --------------------------------------------------------------------
-ub_file = directory+'/test_cw.mat'# None # '/HFIR/HB3A/IPTS-26317/shared/data-filtering-eklahn/O1_integration/O1-UB-eklahn.mat'
+ub_file = "/SNS/CORELLI/IPTS-26829/shared/scripts/Mn3Si2Te6_005K_4p75T_SS.mat"
 
 # peak prediction parameters ---------------------------------------------------
 reflection_condition = 'Primitive'
 
 # output name ------------------------------------------------------------------
-outname = 'output'
+
+outname = 'Mn3Si2Te6_SS_005K_1T_integration_fixed'
+
+#outname = 'Mn3Si2Te6_SS_005K_5T_integration'
+#outname = 'Mn3Si2Te6_SS_005K_0T_integration'
+#outname = 'Mn3Si2Te6_SS_005K_1T_integration'
 
 pdf_output = directory+'/peak-envelopes_{}.pdf'.format(outname)
 
-runs = np.arange(start, stop+1)
+runs = np.arange(start1, stop1+1)
          
-merge.pre_merging(ipts, exp, runs, ub_file, counts_file, reflection_condition)
+merge.pre_integration(ipts, runs, ub_file, spectrum_file, counts_file, 
+                      tube_calibration, detector_calibration, reflection_condition)
+    
+new_peak_dictionary = merge.PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
+new_peak_dictionary.load(directory+'/Mn3Si2Te6_SS_005K_5T_integration.pkl')
 
-peak_dictionary = merge.PeakDictionary(11.84, 12.195, 21.529, 101.124, 93.117, 90.89)
+peak_dictionary = merge.PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
 
-for r in runs:
+for r in range(start1,stop1+1):
         
-    ows = 'HB3A_'+str(exp)+'_'+str(r)
+    ows = 'COR_'+str(r)
     opk = ows+'_pks'
     
     peak_dictionary.add_peaks(opk)
@@ -54,6 +81,7 @@ peak_envelope = merge.PeakEnvelope(pdf_output)
 peak_envelope.show_plots(False)
 
 peaks = peak_dictionary.to_be_integrated()
+new_peaks = peak_dictionary.to_be_integrated()
 
 # keys = [(-1,-1,-1)]
 # keys = [(-1,-1,1)]
@@ -62,30 +90,30 @@ peaks = peak_dictionary.to_be_integrated()
 # keys = [(2,2,1)]
 # keys = [(4,0,1)]
 
-#keys = [(1,1,-1)]
+#keys = [(5,-4,2),(-5,4,-2)] #
 #for i, key in enumerate(keys[:]):
-      
+
 for i, key in enumerate(list(peaks.keys())[:]):
     print('Integrating peak : {}'.format(key))
-    
+
     runs, numbers = peaks[key]
-        
+
     h, k, l = key
-    
+
     d = peak_dictionary.get_d(h, k, l)
     
     peak_envelope.clear_plots()
-    
-    Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(runs, numbers, binsize=0.005, radius=0.15, exp=exp)
+
+    Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(runs, numbers, binsize=0.005, radius=0.15)
 
     center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
                                                                                                          Q0, radius=0.15, bins=31)
-        
+
     print('Peak-fit Q: {}'.format(peak_fit))
     print('Peak background ratio Q: {}'.format(peak_bkg_ratio))
     print('Signal-noise ratio Q: {}'.format(sig_noise_ratio))
     print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
-    
+
     if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Q0)-center) < 0.1):
 
         n, u, v = merge.projection_axes(Q0)
@@ -93,48 +121,57 @@ for i, key in enumerate(list(peaks.keys())[:]):
         center2d, covariance2d, peak_score2d, sig_noise_ratio2d = merge.projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
                                                                                          Q0, u, v, center, variance, radius=0.1,
                                                                                          bins=21, bins2d=21)
-        
+
         print('Peak-score 2d: {}'.format(peak_score2d))
         print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
-        
+
         if peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.1 and sig_noise_ratio2d > 3:
-            
+
             Qc, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
                                           center, variance, 
                                           center2d, covariance2d, 
                                           n, u, v, xsigma=4, lscale=5, plot='first')
-                            
+
             center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
                                                                                                                            Q0, u, v, center, variance, center2d, covariance2d, bins=21)
-                                                                                                    
+
             print('Peak-fit Q second pass: {}'.format(peak_fit))
             print('Peak background ratio Q second pass: {}'.format(peak_bkg_ratio))
             print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
             print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
-            
+
             if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Qc)-center) < 0.1 and peak_total_data_ratio < 2):
 
                 if not np.isnan(covariance2d).any():
-                    
+
                     Q0, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
                                                   center, variance, 
                                                   center2d, covariance2d, 
-                                                  n, u, v, xsigma=4, lscale=5, plot=None)  
-
-                    radii = 1/np.sqrt(np.diagonal(D)) 
+                                                  n, u, v, xsigma=4, lscale=5, plot=None)
+                                                  
+                    peak = new_peak_dictionary.peak_dict.get(key)
                     
-                    print('Peak-radii: {}'.format(radii))
+                    if peak is not None:
                     
-                    if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.15).all():
+                        A = peak.get_A()
+                        Q0 = peak.get_Q()
+                        D, W = np.linalg.eig(A)
+                        D = np.diag(D)
 
-                        data = merge.norm_integrator(peak_envelope, runs, Q0, D, W, exp=exp)
+                        radii = 1/np.sqrt(np.diagonal(D)) 
+                        
+                        print('Peak-radii: {}'.format(radii))
+                                            
+                        if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.15).all():
 
-                        peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data)
-            
+                            data = merge.norm_integrator(peak_envelope, runs, Q0, D, W)
+                                                    
+                            peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data)
+
     h, k, l = key
-    
+
     peak_dictionary(h, k, l)
-    
+
     if i % 15 == 0:
         peak_dictionary.save(directory+'/{}.pkl'.format(outname))
     peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))

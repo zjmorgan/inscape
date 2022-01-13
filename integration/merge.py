@@ -9,7 +9,6 @@ from mantid.kernel import V3D
 from mantid.geometry import Goniometer
 
 from sklearn import mixture
-import pomegranate
 
 import pprint
 import pickle
@@ -437,6 +436,10 @@ class PeakInformation:
         
         return self.__Q
         
+    def get_A(self):
+        
+        return self.__A
+        
     def update_scale_constant(self, scale_constant):
         
         self.__scale_constant = scale_constant
@@ -473,6 +476,33 @@ class PeakInformation:
         
         return self.__merge_intensity_error()
         
+    def get_goniometers(self):
+        
+        R = []
+        
+        for phi, chi, omega in zip(self.__phi,self.__chi,self.__omega):
+            R.append(np.dot(self.__R_y(omega), np.dot(self.__R_z(chi), self.__R_y(phi))))
+            
+        return R
+        
+    def __R_x(self, angle):
+        
+        t = np.deg2rad(angle)
+        
+        return np.array([[1,0,0],[0,np.cos(t),-np.sin(t)],[0,np.sin(t),np.cos(t)]])
+        
+    def __R_y(self, angle):
+        
+        t = np.deg2rad(angle)
+        
+        return np.array([[np.cos(t),0,np.sin(t)],[0,1,0],[-np.sin(t),0,np.cos(t)]])
+
+    def __R_z(self, angle):
+        
+        t = np.deg2rad(angle)
+        
+        return np.array([[np.cos(t),-np.sin(t),0],[np.sin(t),np.cos(t),0],[0,0,1]])
+        
     def dictionary(self):
         
         return { 'PeakNumber': self.__peak_num,
@@ -497,9 +527,9 @@ class PeakInformation:
                  'Wavelength': np.round(self.__wl,2).tolist(),
                  'ScatteringAngle': np.round(np.rad2deg(self.__two_theta),2).tolist(),
                  'AzimuthalAngle': np.round(np.rad2deg(self.__az_phi),2).tolist(),
-                 'GoniometerPhiAngle': np.round(np.rad2deg(self.__phi),2).tolist(),
-                 'GoniometerChiAngle': np.round(np.rad2deg(self.__chi),2).tolist(),
-                 'GoniometerOmegaAngle': np.round(np.rad2deg(self.__omega),2).tolist(),
+                 'GoniometerPhiAngle': np.round(self.__phi,2).tolist(),
+                 'GoniometerChiAngle': np.round(self.__chi,2).tolist(),
+                 'GoniometerOmegaAngle': np.round(self.__omega,2).tolist(),
                  'EstimatedIntensity': np.round(self.__est_int,2).tolist(),
                  'EstimatedIntensitySigma': np.round(self.__est_int_err,2).tolist() }
 
@@ -859,7 +889,10 @@ class PeakDictionary:
                     R = peak.getGoniometerMatrix()
                     self.g.setR(R)
                     phi, chi, omega = self.g.getEulerAngles('YZY') 
-
+                    
+                    if np.isclose(chi,0) and np.isclose(omega,0):
+                        phi = np.rad2deg(np.arctan2(R[0,2],R[0,0]))
+                        
                     self.peak_dict[key].add_information(run, bank, ind, row, col,  
                                                         wl, two_theta, az_phi, 
                                                         phi, chi, omega, 
@@ -915,14 +948,36 @@ class PeakDictionary:
         pk.setIntensity(intens)
         pk.setSigmaIntensity(sig_intens)
         self.cws.addPeak(pk)
+        
+    def calibrated_result(self, key, run_num, Q):
+        
+        peak = self.peak_dict[key]
+
+        h, k, l = key
+        Qx, Qy, Qz = Q
+
+        peak_num = self.cws.getNumberPeaks()+1
+        
+        runs = peak.get_run_numbers()
+        goniometer = peak.get_goniometers()[runs.index(run_num)]
+
+        pk = self.cws.createPeakHKL(V3D(h,k,l))
+        pk.setGoniometerMatrix(goniometer)
+        pk.setQSampleFrame(V3D(Qx,Qy,Qz))
+        pk.setPeakNumber(peak_num)
+        pk.setRunNumber(run_num)
+        self.cws.addPeak(pk)
             
-    def save_hkl(self, filename):
+    def save_hkl(self, filename, magnetic=False):
         
         SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)  
         
         ol = self.iws.sample().getOrientedLattice()
         
-        hkl_format = '{:4.0f}{:4.0f}{:4.0f}{:8.2f}{:8.2f}{:8.4f}\n'
+        if magnetic:
+            hkl_format = '{:4.0f}{:4.0f}{:4.0f}{:4.0f}{:8.2f}{:8.2f}{:8.4f}\n'
+        else:
+            hkl_format = '{:4.0f}{:4.0f}{:4d}{:8.2f}{:8.2f}{:8.4f}\n'
         
         with open(filename, 'w') as f:
             
@@ -935,8 +990,16 @@ class PeakDictionary:
 
                     h, k, l = pk.getH(), pk.getK(), pk.getL()
                     d_spacing = ol.d(V3D(h,k,l))
-                    f.write(hkl_format.format(h, k, l, intens, sig_intens, d_spacing))
-          
+                    
+                    if magnetic:
+                        f.write(hkl_format.format(h, k, l, 1, intens, sig_intens, d_spacing))
+                    else:
+                        f.write(hkl_format.format(h, k, l, intens, sig_intens, d_spacing))
+                        
+    def save_calibration(self, filename):
+        
+        SaveNexus(self.cws, Filename=filename)
+                        
     def save(self, filename):
         
         with open(filename, 'wb') as f:
@@ -1486,9 +1549,6 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
                     
         mask = (A[0,0]*(Qu-u_center)+A[0,1]*(Qv-v_center))*(Qu-u_center)+\
              + (A[1,0]*(Qu-u_center)+A[1,1]*(Qv-v_center))*(Qv-v_center) <= 1 & (np.abs(Q-center) < width) 
-             
-        print('Qu',Qu[mask].max(),Qu[mask].min())
-        print('Qv',Qv[mask].max(),Qv[mask].min())
 
         radii = 4*np.sqrt(eigenvalues)
 
@@ -1500,9 +1560,6 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
         veil = (A[0,0]*(Qu[mask]-u_center)+A[0,1]*(Qv[mask]-v_center))*(Qu[mask]-u_center)+\
              + (A[1,0]*(Qu[mask]-u_center)+A[1,1]*(Qv[mask]-v_center))*(Qv[mask]-v_center) <= 1
              
-        print('Qu',Qu[mask][veil].max(),Qu[mask][veil].min())
-        print('Qv',Qv[mask][veil].max(),Qv[mask][veil].min())
-        
         x = Qu[mask][~veil].flatten()
         y = Qv[mask][~veil].flatten()
         z = weights[mask][~veil].flatten()
@@ -2101,3 +2158,99 @@ def pre_merging(ipts, exp, runs, ub_file, counts_file, reflection_condition):
             DeleteWorkspace(ows)        
             # md = GroupWorkspaces(merge_md)
             # pk = GroupWorkspaces(merge_pk)
+            
+# class GaussianFit3D:
+#     
+#     def __init__(self):
+#         
+#         pass
+#             
+#     def Gaussian3D(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
+# 
+#         sigma = np.array([[sig0**2,rho01*sig0*sig1,rho02*sig0*sig2],
+#                           [rho01*sig0*sig1,sig1**2,rho12*sig1*sig2],
+#                           [rho02*sig0*sig2,rho12*sig1*sig2,sig2**2]])
+#                           
+#         inv_sig = np.linalg.inv(sigma)
+#         
+#         x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+#         
+#         return A*np.exp(-0.5*(inv_sig[0,0]*x0**2+inv_sig[1,1]*x1**2+inv_sig[2,2]*x2**2\
+#                           +2*(inv_sig[1,2]*x1*x2+inv_sig[0,2]*x0*x2+inv_sig[0,1]*x0*x1))+B
+# 
+#     def residual(self, params, Q0, Q1, Q2, y, e):
+#         
+#         A = params['A']
+#         B = params['B']
+#         
+#         mu0 = params['mu0']
+#         mu1 = params['mu1']
+#         mu2 = params['mu2']
+#         
+#         sig0 = params['sig0']
+#         sig1 = params['sig1']
+#         sig2 = params['sig2']
+#         
+#         rho12 = params['rho12']
+#         rho02 = params['rho02']
+#         rho01 = params['rho01']
+# 
+#         yfit = Gaussian3D(Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+#         
+#         return (y-yfit)/e
+        
+#     def fit(self):
+#         
+#         print(y.max())
+#     
+#         e /= y.max()
+#         y /= y.max()
+#         
+#         y *= 4/np.exp(2)
+#         e *= 4/np.exp(2)
+#         
+#         x = x[y > 0.005]
+#         e = e[y > 0.005]
+#         y = y[y > 0.005]
+#     
+#         params = Parameters()
+#         params.add('a', value=50.) #2/x[np.argmax(y)]
+#         #params.add('b', value=b)
+#         #params.add('r', value=r)
+#         params.add('s', value=1.)
+#         params.add('qmax', value=Qr)
+# 
+#         out = Minimizer(self.residual, params, fcn_args=(x, y, e))
+#         result = out.minimize(method='leastsq') 
+#         
+#         a = result.params['a'].value
+#         #b = result.params['b'].value
+#         #r = result.params['r'].value
+#         s = result.params['s'].value
+#         qmax = result.params['qmax'].value
+# 
+#         #results = [a, b, r, s, t0]
+#         results = [a, s, qmax]
+#         
+#         popt.append(results)
+#         chisq.append(result.redchi)
+#         mt.append(Qr)
+#         
+#         path_length.append(L1+L2)
+#         scattering_angle.append(two_theta)
+#         mom.append(2*np.pi/lamda)
+# 
+#         print(key)
+#         report_fit(result)
+#             
+#         X = np.linspace(x.min(), x.max(), 500)
+#         Y = IC(X, *popt[-1])
+# 
+#         plt.figure()
+#         plt.errorbar(x, y, yerr=1.96*e, fmt='-o')
+#         plt.plot(X, Y)
+#         #plt.plot(popt[-1][2]-0.76124/popt[-1][0], popt[-1][1]*2/np.exp(2), 's')
+#         #plt.plot(popt[-1][2]-4.15592/popt[-1][0], popt[-1][1]*2/np.exp(2), 's')
+#         #plt.plot(popt[-1][2]+0.421416/popt[-1][0], popt[-1][1]*2/np.exp(2), 's')
+#         plt.title(key+' {:.2e} [eV]'.format(energy[i]))
+#         plt.xlabel(r'$Q$ [$\AA^{-1}$]')
