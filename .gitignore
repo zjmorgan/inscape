@@ -154,3 +154,9 @@ cython_debug/
 *.png
 *.pdf
 
+# Other files
+*.xml
+*.DetCal
+*.csv
+*.mat
+

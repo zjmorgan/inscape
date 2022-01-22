@@ -14,6 +14,7 @@ import merge
 import imp
 imp.reload(merge)
 
+instrument = 'HB3A'
 ipts = 26317
 
 # spectrum file ----------------------------------------------------------------
@@ -39,44 +40,36 @@ pdf_output = directory+'/peak-envelopes_{}.pdf'.format(outname)
 
 runs = np.arange(start, stop+1)
          
-merge.pre_merging(ipts, exp, runs, ub_file, counts_file, reflection_condition)
+merge.pre_merging(instrument, ipts, exp, runs, ub_file, counts_file, reflection_condition)
 
 peak_dictionary = merge.PeakDictionary(11.84, 12.195, 21.529, 101.124, 93.117, 90.89)
 
 for r in runs:
         
-    ows = 'HB3A_'+str(exp)+'_'+str(r)
+    ows = '{}_{}_{}'.format(instrument,exp,r)
     opk = ows+'_pks'
     
     peak_dictionary.add_peaks(opk)
 
 peak_envelope = merge.PeakEnvelope(pdf_output)
-peak_envelope.show_plots(False)
+peak_envelope.show_plots(True)
 
 peaks = peak_dictionary.to_be_integrated()
 
-# keys = [(-1,-1,-1)]
-# keys = [(-1,-1,1)]
-# keys = [(-2,1,1)]
-# keys = [(0,3,1)]
-# keys = [(2,2,1)]
-# keys = [(4,0,1)]
-
-#keys = [(1,1,-1)]
-#for i, key in enumerate(keys[:]):
-      
 for i, key in enumerate(list(peaks.keys())[:]):
     print('Integrating peak : {}'.format(key))
     
     runs, numbers = peaks[key]
         
-    h, k, l = key
+    h, k, l, m, n, p = key
     
     d = peak_dictionary.get_d(h, k, l)
     
     peak_envelope.clear_plots()
     
-    Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(runs, numbers, binsize=0.005, radius=0.15, exp=exp)
+    remove = False
+    
+    Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15, exp=exp)
 
     center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
                                                                                                          Q0, radius=0.15, bins=31)
@@ -88,50 +81,64 @@ for i, key in enumerate(list(peaks.keys())[:]):
     
     if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Q0)-center) < 0.1):
 
-        n, u, v = merge.projection_axes(Q0)
+        remove = True
 
-        center2d, covariance2d, peak_score2d, sig_noise_ratio2d = merge.projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
-                                                                                         Q0, u, v, center, variance, radius=0.1,
-                                                                                         bins=21, bins2d=21)
+    n, u, v = merge.projection_axes(Q0)
+
+    center2d, covariance2d, peak_score2d, sig_noise_ratio2d = merge.projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
+                                                                                     Q0, u, v, center, variance, radius=0.1,
+                                                                                     bins=21, bins2d=21)
+    
+    print('Peak-score 2d: {}'.format(peak_score2d))
+    print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
+    
+    if peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.15 and sig_noise_ratio2d > 3:
         
-        print('Peak-score 2d: {}'.format(peak_score2d))
-        print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
+        remove = True
         
-        if peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.1 and sig_noise_ratio2d > 3:
-            
-            Qc, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
-                                          center, variance, 
-                                          center2d, covariance2d, 
-                                          n, u, v, xsigma=4, lscale=5, plot='first')
-                            
-            center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
-                                                                                                                           Q0, u, v, center, variance, center2d, covariance2d, bins=21)
-                                                                                                    
-            print('Peak-fit Q second pass: {}'.format(peak_fit))
-            print('Peak background ratio Q second pass: {}'.format(peak_bkg_ratio))
-            print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
-            print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
-            
-            if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Qc)-center) < 0.1 and peak_total_data_ratio < 2):
-
-                if not np.isnan(covariance2d).any():
+    Qc, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
+                                  center, variance, 
+                                  center2d, covariance2d, 
+                                  n, u, v, xsigma=4, lscale=5, plot='first')
                     
-                    Q0, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
-                                                  center, variance, 
-                                                  center2d, covariance2d, 
-                                                  n, u, v, xsigma=4, lscale=5, plot=None)  
+    center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
+                                                                                                                   Q0, u, v, center, variance, center2d, covariance2d, bins=21)
+                                                                                            
+    print('Peak-fit Q second pass: {}'.format(peak_fit))
+    print('Peak background ratio Q second pass: {}'.format(peak_bkg_ratio))
+    print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
+    print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
+    
+    if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Qc)-center) < 0.1 and peak_total_data_ratio < 3):
 
-                    radii = 1/np.sqrt(np.diagonal(D)) 
-                    
-                    print('Peak-radii: {}'.format(radii))
-                    
-                    if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.15).all():
+        remove = True
 
-                        data = merge.norm_integrator(peak_envelope, runs, Q0, D, W, exp=exp)
+    if not np.isnan(covariance2d).any():
+        
+        Q0, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
+                                      center, variance, 
+                                      center2d, covariance2d, 
+                                      n, u, v, xsigma=4, lscale=5, plot=None)  
 
-                        peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data)
+        radii = 1/np.sqrt(np.diagonal(D)) 
+        
+        print('Peak-radii: {}'.format(radii))
+        
+        if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all():
+
+            data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, exp=exp)
+
+            peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data)
             
-    h, k, l = key
+        else:
+            
+            remove = True
+            
+    if remove:
+            
+        peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d)
+            
+    h, k, l, m, n, p = key
     
     peak_dictionary(h, k, l)
     

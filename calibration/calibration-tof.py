@@ -19,7 +19,7 @@ iptsfolder = '/SNS/CORELLI/IPTS-23019/'
 scriptdir = iptsfolder+'shared/scripts/'
 
 # calibration calibration -----------------------------------------------------
-detector_calibration = '/SNS/CORELLI/IPTS-23019/shared/germanium_2021b/germanium_2021B_corrected.xml'
+detector_calibration = '/SNS/CORELLI/shared/Calibration/2022A/calibration.xml'
 tube_calibration = '/SNS/CORELLI/shared/calibration/tube/calibration_corelli_20200109.nxs.h5'
 
 # spectrum file ----------------------------------------------------------------
@@ -32,18 +32,18 @@ start = 221998
 stop = 222172
 
 # UB matrix --------------------------------------------------------------------
-ub_file = '/SNS/CORELLI/IPTS-23019/shared/scripts/garnet_2022a_300k.mat'
+ub_file = os.path.join(directory,'garnet_2022a.mat')
 
 # peak prediction parameters ---------------------------------------------------
 reflection_condition = 'Body centred'
 
 # output name ------------------------------------------------------------------
-outname = 'garnet_calibration'
+outname = 'garnet_calibration_refined'
 
-pdf_output = directory+'/peak-envelopes_{}.pdf'.format(outname)
+pdf_output = os.path.join(directory,'peak-envelopes_{}.pdf'.format(outname))
 
 runs = np.arange(start, stop+1)
-         
+
 merge.pre_integration(ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition)
     
@@ -65,7 +65,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
     
     runs, numbers = peaks[key]
     
-    h, k, l = key
+    h, k, l, m, n, p = key
     
     d = peak_dictionary.get_d(h, k, l)
     
@@ -122,7 +122,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
         
                         peak_dictionary.calibrated_result(key, r, Q0)
             
-    h, k, l = key
+    h, k, l, m, n, p = key
     
     peak_dictionary(h, k, l)
 

@@ -10,9 +10,9 @@ import os
 directory = os.path.dirname(os.path.realpath(__file__))
 
 magnetic_file = directory+'/Mn3Si2Te6_SS_005K_1T_correction.hkl'
-nuclear_file = directory+'/Mn3Si2Te6_SS_005K_5T_correction.hkl'
+nuclear_file = directory+'/Mn3Si2Te6_SS_100K_0T_correction.hkl'
 
-new_filename = directory+'/Mn3Si2Te6_SS_005K_1T_minus_5T.hkl'
+new_filename = directory+'/Mn3Si2Te6_SS_005K_1T_subtraction.hkl'
 
 magnetic_data = np.loadtxt(magnetic_file)
 nuclear_data = np.loadtxt(nuclear_file)
