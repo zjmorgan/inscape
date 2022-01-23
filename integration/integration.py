@@ -19,7 +19,7 @@ with open(sys.argv[1], 'r') as f:
     lines = f.readlines()
     
     for line in lines:
-        if line[0] != '#':
+        if line[0] != '#' and line.count('=') > 0:
             line = line.replace(' ', '').replace('\n', '')
             var, val = line.split('=')
             
@@ -29,15 +29,25 @@ with open(sys.argv[1], 'r') as f:
             else:
                 if val.lower() == 'none':
                     val = None
-                elif val.lower() == 'false'
+                elif val.lower() == 'false':
                     val = False
-                elif val.lower() == 'true'
+                elif val.lower() == 'true':
                     val = True
                 elif val.count(',') > 0:
-                    val = val.split(',')
-                    val = [int(v) if v.isdigit() else float(v) if v.isdecimal() else v for v in val]
-                    
+                    val = [int(v) if v.isdigit() else \
+                           float(v) if v.isdecimal() else \
+                           np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 else \
+                           v for v in val.split(',')]
+                elif val.count('-') > 0:
+                    val = [int(v)+i if v.isdigit() else \
+                           v+'1' if v.isalpha() else \
+                           v for i, v in enumerate(val.split('-'))]
+                    if type(val[0]) is int:
+                        val = np.arange(*val).tolist()
+                        
             dictionary[var] = val
+
+CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
 a = dictionary['a']
 b = dictionary['b']
@@ -46,11 +56,59 @@ alpha = dictionary['alpha']
 beta = dictionary['beta']
 gamma = dictionary['gamma']
 
-peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
-peak_dictionary.set_scale_constant(1e+4)
+reflection_condition = dictionary['reflection-condition']
+group = dictionary['group']
 
-merge.pre_integration(instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
-                      tube_calibration, detector_calibration, reflection_condition)
+chemical_formula = ' '.join(dictionary['chemical-formula'])
+
+z_parameter = dictionary['z-parameter']
+sample_radius = dictionary['sample-radius']
+
+facility, instrument = merge.set_instrument(dictionary['instrument'])
+ipts = dictionary['ipts']
+
+working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument,ipts)
+shared_directory = '/{}/{}/shared/'.format(facility,instrument)
+
+runs = []
+for r in dictionary['runs']:
+    if type(r) is list:
+        runs += r
+    else:
+        runs += [r]
+
+experiment = dictionary['experiment']
+ub_file = os.path.join(working_directory, dictionary['ub-file'])
+
+directory = os.path.dirname(os.path.abspath(sys.argv[1]))
+outname = dictionary['name']
+
+spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
+counts_file = os.path.join(shared_directory+'Vanadium', dictionary['vanadium-file'])
+
+tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
+detector_calibration = os.path.join(shared_directory+'Calibration', dictionary['detector-file'])
+
+mod_vector_1 = dictionary['modulation-vector-1']
+mod_vector_2 = dictionary['modulation-vector-2']
+mod_vector_3 = dictionary['modulation-vector-3']
+max_order = dictionary['max-order']
+cross_terms = dictionary['cross-terms']
+
+if not all([a,b,c,alpha,beta,gamma]):
+    LoadIsawUB(InputWorkspace='sample', Filename=ub_file)
+else:
+    SetUB(Workspace='sample', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
+
+volume = mtd['sample'].sample().getOrientedLattice().volume()
+
+peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+
+merge.pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
+                      tube_calibration, detector_calibration, reflection_condition,
+                      mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
+                      radius=sample_radius, chemical_formula=chemical_formula, volume=volume, z=z_parameter)
 
 for r in runs:
         
@@ -59,7 +117,9 @@ for r in runs:
     
     peak_dictionary.add_peaks(opk)
 
-peak_envelope = PeakEnvelope(pdf_output)
+print(runs)
+
+peak_envelope = PeakEnvelope(directory+'/{}.pdf'.format(outname))
 peak_envelope.show_plots(False)
 
 peak_dictionary.split_peaks(5)
@@ -127,7 +187,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
             remove = True
 
         if not np.isnan(covariance2d).any():
-            
+
             Q0, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
                                           center, variance, 
                                           center2d, covariance2d, 
@@ -151,6 +211,11 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
             peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d)
 
+    if i % 15 == 0:
+
+        peak_dictionary.save(directory+'/{}.pkl'.format(outname))
+        peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
+                    
 peak_dictionary.save(directory+'/{}.pkl'.format(outname))
 peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
 peak_envelope.create_pdf()

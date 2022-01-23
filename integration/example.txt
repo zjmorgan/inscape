@@ -2,15 +2,15 @@
 
 # Experiment information ------------------------------------------------------
 # ======================
-  Instrument = CORELLI
-  IPTS       = 28994
-  Runs       = 225150-225389
-  Experiment = None
-  UB-file    = scripts/ErFeO3_cooling.mat
+  Instrument  = CORELLI
+  IPTS        = 28994
+  Runs        = 225150-225160
+  Experiment  = None
+  UB-file     = scripts/ErFeO3_cooling.mat
+  Split-angle = 5
 
 # Output information ----------------------------------------------------------
 # ==================
-  Directory = ErFeO3 
   Name      = ErFe03_006K
 
 # Material parameters ---------------------------------------------------------
@@ -29,6 +29,7 @@
 # ===================
   Chemical-formula = Er-Fe-O3
   Z-parameter      = 4
+  Sample-radius    = 0.15
   
 # ===================
   Modulation-vector-1 = 0,0,0

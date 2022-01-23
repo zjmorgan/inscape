@@ -1,9 +1,12 @@
 from mantid.simpleapi import BinMD, PlusMD, SetMDFrame
 from mantid.simpleapi import LoadNexus, LoadEventNexus, LoadParameterFile
-from mantid.simpleapi import LoadIsawUB, SetGoniometer, ConvertUnits, 
+from mantid.simpleapi import ApplyCalibration, MaskDetectors
+from mantid.simpleapi import LoadIsawUB, SetGoniometer, ConvertUnits
 from mantid.simpleapi import ConvertToMD, CropWorkspaceForMDNorm
+from mantid.simpleapi import MDNorm, CloneMDWorkspace, DivideMD
 from mantid.simpleapi import PredictPeaks, PredictSatellitePeaks
-from mantid.simpleapi import CentroidPeaksMD, IntegratePeaksMD
+from mantid.simpleapi import CentroidPeaksMD, IntegratePeaksMD, SetUB
+from mantid.simpleapi import SetSampleMaterial, AnvredCorrection
 from mantid.simpleapi import DeleteWorkspace
 from mantid.simpleapi import mtd
 
@@ -899,10 +902,11 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
 
     return pk_data, pk_norm, bkg_data, bkg_norm, dQp
     
-def pre_integration(instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
-                    tube_calibration, detector_calibration, reflection_condition, 
-                    mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0], 
-                    max_order=0, cross_terms=False):
+def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file,
+                    tube_calibration, detector_calibration, reflection_condition,
+                    mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
+                    max_order=0, cross_terms=False, radius=0.15,
+                    chemical_formula=None, volume=None, z=1):
     
     # peak prediction parameters ---------------------------------------------------
     if instrument == 'CORELLI':
@@ -957,13 +961,27 @@ def pre_integration(instrument, ipts, runs, ub_file, spectrum_file, counts_file,
             proton_charge = sum(mtd[ows].getRun().getLogData('proton_charge').value)/1e12
             print('The current proton charge : {}'.format(proton_charge))
             
-            #NormaliseByCurrent(ows, OutputWorkspace=ows)
+            # NormaliseByCurrent(ows, OutputWorkspace=ows)
             
             if instrument == 'CORELLI':
-                SetGoniometer(ows, Axis0='{},0,1,0,1'.format(gon_axis)) 
+                SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis)) 
             else:
-                SetGoniometer(ows, Goniometers='Universal') 
+                SetGoniometer(Workspace=ows, Goniometers='Universal') 
             
+            LoadIsawUB(InputWorkspace=ows, Filename=ub_file)
+                
+            if chemical_formula is not None:
+                
+                SetSampleMaterial(InputWorkspace=ows,
+                                  ChemicalFormula=chemical_formula,
+                                  ZParameter=z,
+                                  UnitCellVolume=volume)
+                
+                AnvredCorrection(InputWorkspace=ows, 
+                                 OnlySphericalAbsorption=True,
+                                 Radius=radius, 
+                                 OutputWorkspace=ows)     
+    
             ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
             
             if instrument == 'CORELLI':
@@ -986,8 +1004,6 @@ def pre_integration(instrument, ipts, runs, ub_file, spectrum_file, counts_file,
                         SplitThreshold=50, 
                         MaxRecursionDepth=13, 
                         MinRecursionDepth=7)
-                                                
-            LoadIsawUB(InputWorkspace=omd, Filename=ub_file)
 
         if not mtd.doesExist(opk):
             PredictPeaks(InputWorkspace=omd, 
@@ -1145,10 +1161,20 @@ def pre_merging(instrument, ipts, exp, runs, ub_file, counts_file, reflection_co
             # pk = GroupWorkspaces(merge_pk)
 
 def set_instrument(instrument):
+    
+    instrument = instrument.lower()
 
-    if (instrument.lower() == 'bl9' or instrument.lower() == 'corelli'): instrument = 'CORELLI' 
-    if (instrument.lower() == 'bl11b' or instrument.lower() == 'mandi'): instrument = 'MANDI' 
-    if (instrument.lower() == 'bl12' or instrument.lower() == 'topaz'): instrument = 'TOPAZ' 
-    if (instrument.lower() == 'hb3a' or instrument.lower() == 'demand'): instrument = 'HB3A' 
-    if (instrument.lower() == 'hb2c' or instrument.lower() == 'wand2'): instrument = 'HB2C' 
-    if (instrument.lower() == 'cg4d' or instrument.lower() == 'imagine'): instrument = 'CG4D' 
+    if (instrument == 'bl9' or instrument== 'corelli'): 
+        facility, instrument = 'SNS', 'CORELLI'
+    if (instrument == 'bl11b' or instrument == 'mandi'):
+        facility, instrument = 'SNS', 'MANDI'
+    if (instrument == 'bl12' or instrument== 'topaz'):
+        facility, instrument = 'SNS', 'TOPAZ'
+    if (instrument == 'hb3a' or instrument == 'demand'):
+        facility, instrument = 'HFIR', 'HB3A'
+    if (instrument == 'hb2c' or instrument == 'wand2'):
+        facility, instrument = 'HFIR', 'HB2C'
+    if (instrument == 'cg4d' or instrument == 'imagine'):
+        facility, instrument = 'HFIR', 'CG4D'
+     
+    return facility, instrument

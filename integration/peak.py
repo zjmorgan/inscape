@@ -1245,6 +1245,16 @@ class PeakDictionary:
     def save_hkl(self, filename, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
+                           ColumnNameToSortBy='Intens',
+                           SortAscending=False,
+                           OutputWorkspace=self.iws)
+
+        scale = 1
+        if self.iws.getNumberPeaks() > 0:
+            I = self.iws.getPeak(0).getIntensity()
+            scale = 9999.99/I
+
+        SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='DSpacing',
                            SortAscending=False,
                            OutputWorkspace=self.iws)  
@@ -1286,7 +1296,7 @@ class PeakDictionary:
             for pn in range(self.iws.getNumberPeaks()):
 
                 pk = self.iws.getPeak(pn)
-                intens, sig_intens = pk.getIntensity(), pk.getSigmaIntensity()
+                intens, sig_intens = pk.getIntensity()*scale, pk.getSigmaIntensity()*scale
 
                 if (intens > 0 and sig_intens > 0 and intens/sig_intens > 3):
 
