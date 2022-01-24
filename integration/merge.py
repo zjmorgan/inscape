@@ -725,7 +725,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
     dQ = box_size*principal_radii
     
     dQp = np.array([bin_size,bin_size,bin_size])
-
+    
     D_pk = D/peak_ellipsoid**2
     D_bkg_in = D/inner_bkg_ellipsoid**2
     D_bkg_out = D/outer_bkg_ellipsoid**2
@@ -736,8 +736,10 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
     _, Q1_bin_size = np.linspace(Q_rot[1]-dQ[1],Q_rot[1]+dQ[1], 11, retstep=True)
     _, Q_bin_size = np.linspace(Q_rot[2]-dQ[2],Q_rot[2]+dQ[2], 27, retstep=True)
     
-    dQp[0] = np.min([Q0_bin_size,bin_size])
-    dQp[1] = np.min([Q1_bin_size,bin_size])
+    if not np.isclose(Q0_bin_size, 0):
+        dQp[0] = np.min([Q0_bin_size,bin_size]) 
+    if not np.isclose(Q1_bin_size, 0):
+        dQp[1] = np.min([Q1_bin_size,bin_size]) 
     dQp[2] = Q_bin_size
     
     pk_data, pk_norm = [], []
@@ -937,7 +939,7 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
     merge_md = []
     merge_pk = []
 
-    for r in runs:
+    for i, r in enumerate(runs):
         print('Processing run : {}'.format(r))
         ows = '{}_{}'.format(instrument,r)
         omd = ows+'_md'
@@ -948,28 +950,31 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
         if not mtd.doesExist(omd):
             filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
             LoadEventNexus(Filename=filename, OutputWorkspace=ows)
-            
+
             if tube_calibration is not None:
                 ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
-                
+
             if counts_file is not None:
                 MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
-            
+
             if detector_calibration is not None:
                 LoadParameterFile(Workspace=ows, Filename=detector_calibration)
-            
+
             proton_charge = sum(mtd[ows].getRun().getLogData('proton_charge').value)/1e12
             print('The current proton charge : {}'.format(proton_charge))
-            
+
             # NormaliseByCurrent(ows, OutputWorkspace=ows)
-            
+
             if instrument == 'CORELLI':
                 SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis)) 
             else:
                 SetGoniometer(Workspace=ows, Goniometers='Universal') 
             
-            LoadIsawUB(InputWorkspace=ows, Filename=ub_file)
-                
+            if type(ub_file) is list:
+                LoadIsawUB(InputWorkspace=ows, Filename=ub_file[i])
+            else:
+                LoadIsawUB(InputWorkspace=ows, Filename=ub_file)
+              
             if chemical_formula is not None:
                 
                 SetSampleMaterial(InputWorkspace=ows,

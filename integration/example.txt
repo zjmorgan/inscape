@@ -4,7 +4,7 @@
 # ======================
   Instrument  = CORELLI
   IPTS        = 28994
-  Runs        = 225150-225160
+  Runs        = 225150-225389
   Experiment  = None
   UB-file     = scripts/ErFeO3_cooling.mat
   Split-angle = 5

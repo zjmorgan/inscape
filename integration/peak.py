@@ -13,6 +13,14 @@ import pprint
 import pickle
 #pickle.settings['recurse'] = True
 
+class CustomUnpickler(pickle.Unpickler):
+
+    def find_class(self, module, name):
+        if name == 'PeakInformation':
+            from peak import PeakInformation
+            return PeakInformation
+        return super().find_class(module, name)
+
 def _pprint_dict(self, object, stream, indent, allowance, context, level):
     write = stream.write
     write('{')
@@ -270,13 +278,13 @@ class PeakEnvelope:
             
             sat = ''
             
-            if m > 0: sat += '+k\u2081'
-            if n > 0: sat += '+k\u2082'
-            if p > 0: sat += '+k\u2083'
+            if m > 0: sat += '+q\u2081'
+            if n > 0: sat += '+q\u2082'
+            if p > 0: sat += '+q\u2083'
             
-            if m < 0: sat += '-k\u2081'
-            if n < 0: sat += '-k\u2082'
-            if p < 0: sat += '-k\u2083'
+            if m < 0: sat += '-q\u2081'
+            if n < 0: sat += '-q\u2082'
+            if p < 0: sat += '-q\u2083'
             
             self.ax_Q.set_title('({} {} {}){}'.format(h,k,l,sat))
             
@@ -448,6 +456,10 @@ class PeakInformation:
     def get_A(self):
         
         return self.__A
+        
+    def set_A(self, A):
+        
+        self.__A = A
         
     def update_scale_constant(self, scale_constant):
         
@@ -1197,6 +1209,9 @@ class PeakDictionary:
         
         R = peak.get_goniometers()[0]
 
+        self.iws.run().getGoniometer().setR(R)
+        self.cws.run().getGoniometer().setR(R)
+
         pk = self.iws.createPeakHKL(V3D(h,k,l))
         pk.setGoniometerMatrix(R)
         pk.setPeakNumber(peak_num)
@@ -1232,8 +1247,10 @@ class PeakDictionary:
 
         peak_num = self.cws.getNumberPeaks()+1
 
-        runs = peak.get_run_numbers()
+        runs = peak.get_run_numbers().tolist()
         R = peak.get_goniometers()[runs.index(run_num)]
+
+        self.cws.run().getGoniometer().setR(R)
 
         pk = self.cws.createPeakHKL(V3D(h,k,l))
         pk.setGoniometerMatrix(R)
@@ -1340,7 +1357,8 @@ class PeakDictionary:
 
         with open(filename, 'rb') as f:
 
-            self.peak_dict = pickle.load(f)
+            #self.peak_dict = pickle.load(f)
+            self.peak_dict = CustomUnpickler(f).load()
 
         peak_dict = { }
 

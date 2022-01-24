@@ -102,8 +102,14 @@ else:
 
 volume = mtd['sample'].sample().getOrientedLattice().volume()
 
+ref_peak_dictionary = dictionary['reference-dictionary']
+
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+
+if ref_peak_dictionary is not None:
+    ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+    ref_peak_dictionary.load(os.path.join(directory, ref_peak_dictionary))
 
 merge.pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition,
@@ -116,8 +122,6 @@ for r in runs:
     opk = ows+'_pks'
     
     peak_dictionary.add_peaks(opk)
-
-print(runs)
 
 peak_envelope = PeakEnvelope(directory+'/{}.pdf'.format(outname))
 peak_envelope.show_plots(False)
@@ -137,11 +141,11 @@ for i, key in enumerate(list(peaks.keys())[:]):
     for redudancy in redudancies:
     
         runs, numbers = redudancy
-                
+        
         peak_envelope.clear_plots()
         
         remove = False
-                
+        
         Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15)
 
         center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
