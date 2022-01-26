@@ -18,10 +18,10 @@ imp.reload(peak)
 from peak import PeakDictionary, PeakEnvelope
 
 peak_dictionary_1 = PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
-peak_dictionary_1.load(directory+'/Mn3Si2Te6_electric_S2_2nd_cooling_integration.pkl')
+peak_dictionary_1.load(directory+'/Mn3Si2Te6_electric_S2_006K_00mA_2nd_127runs_integration.pkl')
 
 peak_dictionary_2 = PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
-peak_dictionary_2.load(directory+'/Mn3Si2Te6_electric_S2_2nd_cooling_integration.pkl')
+peak_dictionary_2.load(directory+'/Mn3Si2Te6_electric_S2_006K_08mA_2nd_127runs_integration.pkl')
 
 ellipsoids = { }
 
@@ -58,3 +58,5 @@ for key in peak_dictionary_2.peak_dict.keys():
         peak.set_A(item)
         
 peak_dictionary_2.save(directory+'/Mn3Si2Te6_electric_S2_2nd_cooling_reference_ellipsoids.pkl')
+
+peak_dictionary_2(0,0,2)

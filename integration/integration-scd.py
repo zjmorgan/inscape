@@ -20,6 +20,8 @@ with open(sys.argv[1], 'r') as f:
     
     for line in lines:
         if line[0] != '#' and line.count('=') > 0:
+            if line.count('#') > 0:
+                line, _ = line.split('#')
             line = line.replace(' ', '').replace('\n', '')
             var, val = line.split('=')
             
@@ -59,7 +61,10 @@ gamma = dictionary['gamma']
 reflection_condition = dictionary['reflection-condition']
 group = dictionary['group']
 
-chemical_formula = ' '.join(dictionary['chemical-formula'])
+if dictionary['chemical-formula'] is not None:
+    chemical_formula = ' '.join(dictionary['chemical-formula'])
+else:
+    chemical_formula = dictionary['chemical-formula']
 
 z_parameter = dictionary['z-parameter']
 sample_radius = dictionary['sample-radius']
@@ -79,6 +84,8 @@ for r in dictionary['runs']:
 
 experiment = dictionary['experiment']
 ub_file = os.path.join(working_directory, dictionary['ub-file'])
+
+split_angle = dictionary['split-angle']
 
 directory = os.path.dirname(os.path.abspath(sys.argv[1]))
 outname = dictionary['name']
@@ -102,12 +109,12 @@ else:
 
 volume = mtd['sample'].sample().getOrientedLattice().volume()
 
-ref_peak_dictionary = dictionary['reference-dictionary']
+ref_dict = dictionary['peak-dictionary']
 
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 
-if ref_peak_dictionary is not None:
+if ref_dict is not None:
     ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
     ref_peak_dictionary.load(os.path.join(directory, ref_peak_dictionary))
 
@@ -126,7 +133,7 @@ for r in runs:
 peak_envelope = PeakEnvelope(directory+'/{}.pdf'.format(outname))
 peak_envelope.show_plots(False)
 
-peak_dictionary.split_peaks(5)
+peak_dictionary.split_peaks(split_angle)
 peaks = peak_dictionary.to_be_integrated()
 
 for i, key in enumerate(list(peaks.keys())[:]):
@@ -134,6 +141,13 @@ for i, key in enumerate(list(peaks.keys())[:]):
     
     redudancies = peaks[key]
     
+    fixed = False
+    if ref_dict is not None:
+        ref_peaks = ref_peak_dictionary.peak_dict.get(key)
+        if ref_peaks is not None:
+            if len(ref_peaks) == len(redudancies):
+                fixed = True
+                
     h, k, l, m, n, p = key
     
     d = peak_dictionary.get_d(h, k, l, m, n, p)
@@ -145,17 +159,22 @@ for i, key in enumerate(list(peaks.keys())[:]):
         peak_envelope.clear_plots()
         
         remove = False
-        
+                
         Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15)
+
+        # if fixed:
+        #     ref_peak = ref_peaks[j]
+        #     Q0 = ref_peak.get_Q()
+        #     A = peak.get_A()
 
         center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
                                                                                                              Q0, radius=0.15, bins=31)
-            
+
         print('Peak-fit Q: {}'.format(peak_fit))
         print('Peak background ratio Q: {}'.format(peak_bkg_ratio))
         print('Signal-noise ratio Q: {}'.format(sig_noise_ratio))
         print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
-        
+
         if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Q0)-center) < 0.1):
 
             remove = True
@@ -165,22 +184,22 @@ for i, key in enumerate(list(peaks.keys())[:]):
         center2d, covariance2d, peak_score2d, sig_noise_ratio2d = merge.projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
                                                                                          Q0, u, v, center, variance, radius=0.1,
                                                                                          bins=21, bins2d=21)
-        
+
         print('Peak-score 2d: {}'.format(peak_score2d))
         print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
-        
-        if peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.15 and sig_noise_ratio2d > 3:
-            
+
+        if (peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.15 and sig_noise_ratio2d > 3):
+
             remove = True
-            
-        Qc, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
-                                      center, variance, 
-                                      center2d, covariance2d, 
-                                      n, u, v, xsigma=4, lscale=5, plot='first')
-                        
+
+        Qc, A, W, D = merge.ellipsoid(Q0, center, variance, center2d, covariance2d, 
+                                      n, u, v, xsigma=4, lscale=5)
+
+        peak_envelope.plot_projection_ellipse(*peak.draw_ellispoid(center2d, covariance2d, lscale=5))
+
         center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
                                                                                                                        Q0, u, v, center, variance, center2d, covariance2d, bins=21)
-                                                                                                
+
         print('Peak-fit Q second pass: {}'.format(peak_fit))
         print('Peak background ratio Q second pass: {}'.format(peak_bkg_ratio))
         print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
@@ -192,10 +211,8 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
         if not np.isnan(covariance2d).any():
 
-            Q0, A, W, D = merge.ellipsoid(peak_envelope, Q0, 
-                                          center, variance, 
-                                          center2d, covariance2d, 
-                                          n, u, v, xsigma=4, lscale=5, plot=None)  
+            Q0, A, W, D = merge.ellipsoid(Q0, center, variance, center2d, covariance2d, 
+                                          n, u, v, xsigma=4, lscale=5)
 
             radii = 1/np.sqrt(np.diagonal(D)) 
 
@@ -219,7 +236,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
         peak_dictionary.save(directory+'/{}.pkl'.format(outname))
         peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
-                    
+
 peak_dictionary.save(directory+'/{}.pkl'.format(outname))
 peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
 peak_envelope.create_pdf()
