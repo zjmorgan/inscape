@@ -138,7 +138,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
     
     d = peak_dictionary.get_d(h, k, l, m, n, p)
     
-    for redudancy in redudancies:
+    for j, redudancy in enumerate(redudancies):
     
         runs, numbers = redudancy
         
@@ -201,11 +201,11 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
             print('Peak-radii: {}'.format(radii))
 
-            if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all():
+            if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
                 data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W)
 
-                peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data)
+                peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
             else:
 
@@ -213,7 +213,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
         if remove:
 
-            peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d)
+            peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, j)
 
     if i % 15 == 0:
 
