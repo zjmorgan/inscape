@@ -12,32 +12,8 @@ from mantid.simpleapi import ConvertHFIRSCDtoMDE, HFIRCalculateGoniometer
 from mantid.simpleapi import mtd
 
 import numpy as np
-from scipy.optimize import curve_fit
 
-# sigmaxy, sigmaxz, sigmayz
-
-def f(data, *var):
-    
-    a, c, mux, muy, muz, sigmaxx, sigmayy, sigmazz = var
-        
-    x, y, z = data
-    
-    dx, dy, dz = x-mux, y-muy, z-muz
-    
-    sigma = np.array([[sigmaxx**2,0,0],
-                      [0,sigmayy**2,0],
-                      [0,0,sigmazz**2]])
-    
-    #det_sigma = np.linalg.det(sigma)
-    #factor = 1/np.sqrt(8*np.pi**3*det_sigma)
-    
-    inv_sigma = np.linalg.inv(sigma)
-    
-    prod = (inv_sigma[0,0]*dx+inv_sigma[0,1]*dy+inv_sigma[0,2]*dz)*dx\
-         + (inv_sigma[1,0]*dx+inv_sigma[1,1]*dy+inv_sigma[1,2]*dz)*dy\
-         + (inv_sigma[2,0]*dx+inv_sigma[2,1]*dy+inv_sigma[2,2]*dz)*dz
-        
-    return a*np.exp(-0.5*prod)+c
+from lmfit import Parameters, Minimizer, report_fit
 
 def box_integrator(instrument, runs, indices, binsize=0.001, radius=0.15, exp=None):
 
@@ -688,7 +664,7 @@ def ellipsoid(Q0, center, variance, center2d, covariance2d, n, u, v, xsigma=3, l
     eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
 
     radii = lscale*np.sqrt(eigenvalues)
-    
+
     u_ = u*eigenvectors[0,0]+v*eigenvectors[1,0]
     v_ = u*eigenvectors[0,1]+v*eigenvectors[1,1]
 
@@ -706,12 +682,12 @@ def ellipsoid(Q0, center, variance, center2d, covariance2d, n, u, v, xsigma=3, l
 
     return Q, A, W, D
 
-def decompose_ellipsoid(Q0, A, xsigma=3, lscale=5.99):
+def decompose_ellipsoid(A, xsigma=3, lscale=5.99):
 
     center, center2d = 0, np.array([0.,0.])
 
     D, W = np.linalg.eig(A)
-    D = np.diag(D)
+    #D = np.diag(D)
 
     n = W[:,2].copy()
 
@@ -726,9 +702,11 @@ def decompose_ellipsoid(Q0, A, xsigma=3, lscale=5.99):
     a = np.column_stack([u,v,np.ones(3)])
     b = np.column_stack([W[:,0],W[:,1],np.ones(3)])
 
-    x = np.solve(a,b)
+    x = np.linalg.solve(a,b)
 
     eigenvectors = x[0:2,0:2].copy()
+    eigenvalues = np.array([[eigenvalues[0],0],[0,eigenvalues[1]]])
+    
     covariance2d = np.dot(np.dot(eigenvectors, eigenvalues), eigenvectors.T)
 
     return center, center2d, variance, covariance2d
@@ -753,7 +731,7 @@ def partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out):
     return pk, bkg
 
 def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, box_size=2.3,
-                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None):
+                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None, fit=False):
 
     principal_radii = 1/np.sqrt(D.diagonal())
 
@@ -792,8 +770,8 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
 
         omd = ows+'_md'
 
-        if mtd.doesExist('tmpDataMD'): DeleteWorkspace('tmpDataMD')
-        if mtd.doesExist('tmpNormMD'): DeleteWorkspace('tmpNormMD')
+        #if mtd.doesExist('tmpDataMD'): DeleteWorkspace('tmpDataMD')
+        #if mtd.doesExist('tmpNormMD'): DeleteWorkspace('tmpNormMD')
 
         SetUB(omd, UB=np.eye(3)/(2*np.pi)) # hack to transform axes
 
@@ -829,8 +807,8 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
                    Dimension1Binning='{},{},{}'.format(*Q1_bin),
                    Dimension2Binning='{},{},{}'.format(*Q2_bin),
                    OutputWorkspace='__normDataMD',
-                   OutputDataWorkspace='tmpDataMD',
-                   OutputNormalizationWorkspace='tmpNormMD')
+                   OutputDataWorkspace='tmpDataMD_{}'.format(i),
+                   OutputNormalizationWorkspace='tmpNormMD_{}'.format(i))
 
         else:
             BinMD(InputWorkspace=omd, AxisAligned=False, NormalizeBasisVectors=False,
@@ -839,7 +817,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
                   BasisVector2='Q2,A^-1,{},{},{}'.format(*W[:,2]),
                   OutputExtents='{},{},{},{},{},{}'.format(*extents),
                   OutputBins='{},{},{}'.format(*bins),
-                  OutputWorkspace='tmpDataMD')
+                  OutputWorkspace='tmpDataMD_{}'.format(i))
 
             BinMD(InputWorkspace=ows+'_van', AxisAligned=False, NormalizeBasisVectors=False,
                   BasisVector0='Q0,A^-1,{},{},{}'.format(*W[:,0]),
@@ -847,14 +825,14 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
                   BasisVector2='Q2,A^-1,{},{},{}'.format(*W[:,2]),
                   OutputExtents='{},{},{},{},{},{}'.format(*extents),
                   OutputBins='{},{},{}'.format(*bins),
-                  OutputWorkspace='tmpNormMD')
+                  OutputWorkspace='tmpNormMD_{}'.format(i))
 
-            DivideMD(LHSWorkspace='tmpDataMD', RHSWorkspace='tmpNormMD', OutputWorkspace='__normDataMD')
+            DivideMD(LHSWorkspace='tmpDataMD_{}'.format(i), RHSWorkspace='tmpNormMD_{}'.format(i), OutputWorkspace='__normDataMD_{}'.format(i))
 
         if i == 0:
-            Qxaxis = mtd['__normDataMD'].getXDimension()
-            Qyaxis = mtd['__normDataMD'].getYDimension()
-            Qzaxis = mtd['__normDataMD'].getZDimension()
+            Qxaxis = mtd['__normDataMD'.format(i)].getXDimension()
+            Qyaxis = mtd['__normDataMD'.format(i)].getYDimension()
+            Qzaxis = mtd['__normDataMD'.format(i)].getZDimension()
 
             Qx = np.linspace(Qxaxis.getMinimum(), Qxaxis.getMaximum(), Qxaxis.getNBins()+1)
             Qy = np.linspace(Qyaxis.getMinimum(), Qyaxis.getMaximum(), Qyaxis.getNBins()+1)
@@ -868,7 +846,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
             # v_extents = [Qyaxis.getMinimum(),Qyaxis.getMaximum()]
             # Q_extents = [Qzaxis.getMinimum(),Qzaxis.getMaximum()]
 
-        signal = mtd['tmpDataMD'].getSignalArray().copy()
+        signal = mtd['tmpDataMD_{}'.format(i)].getSignalArray().copy()
 
         pk, bkg = partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out)
 
@@ -882,7 +860,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
                +D_bkg_out[1,1]*(Qy-Q_rot[1])**2\
                +D_bkg_out[2,2]*(Qz-Q_rot[2])**2 <= 1)
 
-        signal = mtd['tmpNormMD'].getSignalArray().copy()
+        signal = mtd['tmpNormMD_{}'.format(i)].getSignalArray().copy()
 
         pk, bkg = partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out)
 
@@ -890,14 +868,14 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
         bkg_norm.append(bkg)
 
         if i == 0:
-            CloneMDWorkspace(InputWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            CloneMDWorkspace(InputWorkspace='tmpNormMD', OutputWorkspace='normMD')
+            CloneMDWorkspace(InputWorkspace='tmpDataMD_{}'.format(i), OutputWorkspace='dataMD')
+            CloneMDWorkspace(InputWorkspace='tmpNormMD_{}'.format(i), OutputWorkspace='normMD')
         else:
-            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD', OutputWorkspace='normMD')
+            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD_{}'.format(i), OutputWorkspace='dataMD')
+            PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD_{}'.format(i), OutputWorkspace='normMD')
 
-        DeleteWorkspace('tmpDataMD')
-        DeleteWorkspace('tmpNormMD')
+        #DeleteWorkspace('tmpDataMD')
+        #DeleteWorkspace('tmpNormMD')
 
     DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normDataMD')
 
@@ -937,83 +915,193 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
     
     # ---
     
-    xdata = np.vstack((Qx.ravel(), Qy.ravel(), Qz.ravel()))
-    ydata = signal.copy().ravel()
-    edata = error_sq.copy().ravel()
-    
-    mask = ~(np.isnan(ydata) | np.isinf(ydata) | np.isnan(edata) | np.isinf(edata))
+    if fit:
         
-    yreal = ydata[mask]
-    ereal = edata[mask]
-    xreal = xdata.T[mask].T
-    
-    mask = (yreal > 0) & (ereal > 0)
+        xdata = np.vstack((Qx.ravel(), Qy.ravel(), Qz.ravel()))
+        ydata = signal.copy().ravel()
+        edata = error_sq.copy().ravel()
         
-    y = yreal[mask]
-    e = ereal[mask]
-    x = xreal.T[mask].T
-                
-    sig = 0.25/np.sqrt(D.diagonal())
-    
-    p0 = (y.max(), np.median(y), Q_rot[0], Q_rot[1], Q_rot[2], sig[0], sig[1], sig[2]) 
-    
-    popt, pcov = curve_fit(f, x, y, sigma=np.sqrt(e)/y, p0=p0, absolute_sigma=True, factor=1, maxfev=5000)  
-    
-    print(popt)
-    
-    print(Q_rot)
-    Q_rot = [popt[2],popt[3],popt[4]]
-    print(Q_rot)
-    
-    radii = 4*np.array([popt[5],popt[6],popt[7]])
-    
-    D[0,0] = 1/radii[0]**2
-    D[1,1] = 1/radii[1]**2
-    D[2,2] = 1/radii[2]**2
-    
-    D_pk = D/peak_ellipsoid**2
-    D_bkg_in = D/inner_bkg_ellipsoid**2
-    D_bkg_out = D/outer_bkg_ellipsoid**2
+        mask = ~(np.isnan(ydata) | np.isinf(ydata) | np.isnan(edata) | np.isinf(edata))
+            
+        yreal = ydata[mask]
+        ereal = edata[mask]
+        xreal = xdata.T[mask].T
+        
+        mask = (yreal > 0) & (ereal > 0)
+            
+        y = yreal[mask]
+        e = ereal[mask]
+        x = xreal.T[mask].T
+                    
+        sig = 0.25/np.sqrt(D.diagonal())
+        
+        fitting = GaussianFit3D(x, y, e, Q_rot, sig) 
+     
+        popt = fitting.fit()
+        
+        Q_rot = [popt[2],popt[3],popt[4]]
+        
+        radii = 4*np.array([popt[5],popt[6],popt[7]])
+        
+        D[0,0] = 1/radii[0]**2
+        D[1,1] = 1/radii[1]**2
+        D[2,2] = 1/radii[2]**2
+        
+        D_pk = D/peak_ellipsoid**2
+        D_bkg_in = D/inner_bkg_ellipsoid**2
+        D_bkg_out = D/outer_bkg_ellipsoid**2
 
-    ymodl = f(xdata, *popt)
-    
-    signal = ymodl.reshape(*error_sq.shape)
-    
-    radii_pk_u = 1/np.sqrt(D_pk[0,0])
-    radii_pk_v = 1/np.sqrt(D_pk[1,1])
-    radii_pk_Q = 1/np.sqrt(D_pk[2,2])
+        ymodl = fitting.Gaussian3D(xdata[0], xdata[1], xdata[2], *popt)
+        
+        signal = ymodl.reshape(*error_sq.shape)
+        
+        radii_pk_u = 1/np.sqrt(D_pk[0,0])
+        radii_pk_v = 1/np.sqrt(D_pk[1,1])
+        radii_pk_Q = 1/np.sqrt(D_pk[2,2])
 
-    radii_in_u = 1/np.sqrt(D_bkg_in[0,0])
-    radii_in_v = 1/np.sqrt(D_bkg_in[1,1])
-    radii_in_Q = 1/np.sqrt(D_bkg_in[2,2])
+        radii_in_u = 1/np.sqrt(D_bkg_in[0,0])
+        radii_in_v = 1/np.sqrt(D_bkg_in[1,1])
+        radii_in_Q = 1/np.sqrt(D_bkg_in[2,2])
 
-    radii_out_u = 1/np.sqrt(D_bkg_out[0,0])
-    radii_out_v = 1/np.sqrt(D_bkg_out[1,1])
-    radii_out_Q = 1/np.sqrt(D_bkg_out[2,2])
+        radii_out_u = 1/np.sqrt(D_bkg_out[0,0])
+        radii_out_v = 1/np.sqrt(D_bkg_out[1,1])
+        radii_out_Q = 1/np.sqrt(D_bkg_out[2,2])
 
-    t = np.linspace(0,2*np.pi,100)
+        t = np.linspace(0,2*np.pi,100)
 
-    x_pk_Qu, y_pk_Qu = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_u*np.sin(t)+Q_rot[0]
-    x_pk_Qv, y_pk_Qv = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_v*np.sin(t)+Q_rot[1]
-    x_pk_uv, y_pk_uv = radii_pk_u*np.cos(t)+Q_rot[0], radii_pk_v*np.sin(t)+Q_rot[1]
+        x_pk_Qu, y_pk_Qu = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_u*np.sin(t)+Q_rot[0]
+        x_pk_Qv, y_pk_Qv = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_v*np.sin(t)+Q_rot[1]
+        x_pk_uv, y_pk_uv = radii_pk_u*np.cos(t)+Q_rot[0], radii_pk_v*np.sin(t)+Q_rot[1]
 
-    x_in_Qu, y_in_Qu = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_u*np.sin(t)+Q_rot[0]
-    x_in_Qv, y_in_Qv = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_v*np.sin(t)+Q_rot[1]
-    x_in_uv, y_in_uv = radii_in_u*np.cos(t)+Q_rot[0], radii_in_v*np.sin(t)+Q_rot[1]
+        x_in_Qu, y_in_Qu = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_u*np.sin(t)+Q_rot[0]
+        x_in_Qv, y_in_Qv = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_v*np.sin(t)+Q_rot[1]
+        x_in_uv, y_in_uv = radii_in_u*np.cos(t)+Q_rot[0], radii_in_v*np.sin(t)+Q_rot[1]
 
-    x_out_Qu, y_out_Qu = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_u*np.sin(t)+Q_rot[0]
-    x_out_Qv, y_out_Qv = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_v*np.sin(t)+Q_rot[1]
-    x_out_uv, y_out_uv = radii_out_u*np.cos(t)+Q_rot[0], radii_out_v*np.sin(t)+Q_rot[1]
+        x_out_Qu, y_out_Qu = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_u*np.sin(t)+Q_rot[0]
+        x_out_Qv, y_out_Qv = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_v*np.sin(t)+Q_rot[1]
+        x_out_uv, y_out_uv = radii_out_u*np.cos(t)+Q_rot[0], radii_out_v*np.sin(t)+Q_rot[1]
 
-    peak_envelope.plot_integration_fit(signal, Q0_bin, Q1_bin, Q2_bin,
-                                       x_pk_Qu, y_pk_Qu, x_pk_Qv, y_pk_Qv, x_pk_uv, y_pk_uv,
-                                       x_in_Qu, y_in_Qu, x_in_Qv, y_in_Qv, x_in_uv, y_in_uv,
-                                       x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv)
+        peak_envelope.plot_integration_fit(signal, Q0_bin, Q1_bin, Q2_bin,
+                                           x_pk_Qu, y_pk_Qu, x_pk_Qv, y_pk_Qv, x_pk_uv, y_pk_uv,
+                                           x_in_Qu, y_in_Qu, x_in_Qv, y_in_Qv, x_in_uv, y_in_uv,
+                                           x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv)
+        
+        pk_data, pk_norm = [], []
+        bkg_data, bkg_norm = [], []
+        
+        for i, r in enumerate(runs):
 
-    #signal[mask] = np.nan
-    #mtd['normDataMD'].setSignalArray(signal)
+            signal = mtd['tmpDataMD_{}'.format(i)].getSignalArray().copy()
+
+            pk, bkg = partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out)
+
+            pk_data.append(pk)
+            bkg_data.append(bkg)
+
+            mask = (D_bkg_in[0,0]*(Qx-Q_rot[0])**2\
+                   +D_bkg_in[1,1]*(Qy-Q_rot[1])**2\
+                   +D_bkg_in[2,2]*(Qz-Q_rot[2])**2 >= 1)\
+                 & (D_bkg_out[0,0]*(Qx-Q_rot[0])**2\
+                   +D_bkg_out[1,1]*(Qy-Q_rot[1])**2\
+                   +D_bkg_out[2,2]*(Qz-Q_rot[2])**2 <= 1)
+
+            signal = mtd['tmpNormMD_{}'.format(i)].getSignalArray().copy()
+
+            pk, bkg = partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out)
+            
+            pk_norm.append(pk)
+            bkg_norm.append(bkg)
 
     return pk_data, pk_norm, bkg_data, bkg_norm, dQp
+    
+class GaussianFit3D:
+
+    def __init__(self, x, y, e, Q, sig):
+
+        self.params = Parameters()
+
+        self.params.add('A', value=y.max()-np.median(y), min=0, max=y.max())
+        self.params.add('B', value=np.median(y), min=0, max=y.mean())
+        
+        self.params.add('mu0', value=Q[0], min=Q[0]-0.1, max=Q[0]+0.1)
+        self.params.add('mu1', value=Q[1], min=Q[1]-0.1, max=Q[1]+0.1)
+        self.params.add('mu2', value=Q[2], min=Q[2]-0.1, max=Q[2]+0.1)
+        
+        self.params.add('sig0', value=sig[0], min=0.25*sig[0], max=4*sig[0])
+        self.params.add('sig1', value=sig[1], min=0.25*sig[0], max=4*sig[0])
+        self.params.add('sig2', value=sig[2], min=0.25*sig[0], max=4*sig[0])
+        
+        #self.params.add('rho12', value=0., min=-1, max=1)
+        #self.params.add('rho02', value=0., min=-1, max=1)
+        #self.params.add('rho01', value=0., min=-1, max=1)
+        
+        self.x = x
+        self.y = y
+        self.e = np.sqrt(e)#/y
+
+    def Gaussian3D(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2):
+        
+        rho12, rho02, rho01 = 0, 0, 0
+
+        sigma = np.array([[sig0**2, rho01*sig0*sig1, rho02*sig0*sig2],
+                          [rho01*sig0*sig1, sig1**2, rho12*sig1*sig2],
+                          [rho02*sig0*sig2, rho12*sig1*sig2, sig2**2]])
+
+        inv_sig = np.linalg.inv(sigma)
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        return A*np.exp(-0.5*(inv_sig[0,0]*x0**2+inv_sig[1,1]*x1**2+inv_sig[2,2]*x2**2\
+                          +2*(inv_sig[1,2]*x1*x2+inv_sig[0,2]*x0*x2+inv_sig[0,1]*x0*x1)))+B
+
+    def residual(self, params, x, y, e):
+        
+        Q0, Q1, Q2 = x
+
+        A = params['A']
+        B = params['B']
+
+        mu0 = params['mu0']
+        mu1 = params['mu1']
+        mu2 = params['mu2']
+
+        sig0 = params['sig0']
+        sig1 = params['sig1']
+        sig2 = params['sig2']
+
+        #rho12 = params['rho12']
+        #rho02 = params['rho02']
+        #rho01 = params['rho01']
+
+        yfit = self.Gaussian3D(Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2) #, rho12, rho02, rho01
+        
+        #print(Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+
+        return (y-yfit)#/e
+
+    def fit(self):
+
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e))
+        result = out.minimize(method='leastsq')
+
+        report_fit(result)
+        
+        A = result.params['A'].value
+        B = result.params['B'].value
+        
+        mu0 = result.params['mu0'].value
+        mu1 = result.params['mu1'].value
+        mu2 = result.params['mu2'].value
+        
+        sig0 = result.params['sig0'].value
+        sig1 = result.params['sig1'].value
+        sig2 = result.params['sig2'].value
+        
+        #rho12 = result.params['rho12'].value
+        #rho02 = result.params['rho02'].value
+        #rho01 = result.params['rho01'].value
+        
+        return A, B, mu0, mu1, mu2, sig0, sig1, sig2#, rho12, rho02, rho01
 
 def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file,
                     tube_calibration, detector_calibration, reflection_condition,

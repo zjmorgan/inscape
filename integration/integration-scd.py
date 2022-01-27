@@ -111,17 +111,17 @@ volume = mtd['sample'].sample().getOrientedLattice().volume()
 
 ref_dict = dictionary['peak-dictionary']
 
-peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
-peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
-
-if ref_dict is not None:
-    ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
-    ref_peak_dictionary.load(os.path.join(directory, ref_peak_dictionary))
-
 merge.pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition,
                       mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
                       radius=sample_radius, chemical_formula=chemical_formula, volume=volume, z=z_parameter)
+
+if ref_dict is not None:
+    ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+    ref_peak_dictionary.load(os.path.join(directory, ref_dict))
+
+peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 
 for r in runs:
         
@@ -162,13 +162,13 @@ for i, key in enumerate(list(peaks.keys())[:]):
                 
         Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15)
 
-        # if fixed:
-        #     ref_peak = ref_peaks[j]
-        #     Q0 = ref_peak.get_Q()
-        #     A = peak.get_A()
-
         center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
                                                                                                              Q0, radius=0.15, bins=31)
+
+        if fixed:
+            ref_peak = ref_peaks[j]
+            if np.isnan(ref_peak.get_A()).any() or np.isinf(ref_peak.get_A()).any():
+                fixed = False
 
         print('Peak-fit Q: {}'.format(peak_fit))
         print('Peak background ratio Q: {}'.format(peak_bkg_ratio))
@@ -184,7 +184,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
         center2d, covariance2d, peak_score2d, sig_noise_ratio2d = merge.projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
                                                                                          Q0, u, v, center, variance, radius=0.1,
                                                                                          bins=21, bins2d=21)
-
+                                                                                         
         print('Peak-score 2d: {}'.format(peak_score2d))
         print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
 
@@ -194,7 +194,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
         Qc, A, W, D = merge.ellipsoid(Q0, center, variance, center2d, covariance2d, 
                                       n, u, v, xsigma=4, lscale=5)
-
+                                      
         peak_envelope.plot_projection_ellipse(*peak.draw_ellispoid(center2d, covariance2d, lscale=5))
 
         center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
@@ -214,13 +214,19 @@ for i, key in enumerate(list(peaks.keys())[:]):
             Q0, A, W, D = merge.ellipsoid(Q0, center, variance, center2d, covariance2d, 
                                           n, u, v, xsigma=4, lscale=5)
 
+            if fixed:
+                ref_peak = ref_peaks[j]
+                Q0 = ref_peak.get_Q()
+                A = ref_peak.get_A()
+                _, _, variance, covariance2d = merge.decompose_ellipsoid(A, xsigma=4, lscale=5)
+
             radii = 1/np.sqrt(np.diagonal(D)) 
 
             print('Peak-radii: {}'.format(radii))
 
             if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
-                data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W)
+                data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
 
                 peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
