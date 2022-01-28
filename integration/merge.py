@@ -951,7 +951,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
         D_bkg_in = D/inner_bkg_ellipsoid**2
         D_bkg_out = D/outer_bkg_ellipsoid**2
 
-        ymodl = fitting.Gaussian3D(xdata[0], xdata[1], xdata[2], *popt)
+        ymodl = fitting.gaussian_3d(xdata[0], xdata[1], xdata[2], *popt)
         
         signal = ymodl.reshape(*error_sq.shape)
         
@@ -1031,18 +1031,20 @@ class GaussianFit3D:
         self.params.add('sig1', value=sig[1], min=0.25*sig[0], max=4*sig[0])
         self.params.add('sig2', value=sig[2], min=0.25*sig[0], max=4*sig[0])
         
-        #self.params.add('rho12', value=0., min=-1, max=1)
-        #self.params.add('rho02', value=0., min=-1, max=1)
-        #self.params.add('rho01', value=0., min=-1, max=1)
+        self.params.add('delta12', value=-0.5*(1/sig[1]+1/sig[2]), max=0)
+        self.params.add('delta02', value=-0.5*(1/sig[0]+1/sig[2]), max=0)
+        self.params.add('delta01', value=-0.5*(1/sig[0]+1/sig[1]), max=0)
+        
+        self.params.add('rho12', value=0., min=-1, max=1, expr='delta12+0.5*(1/sig1+1/sig2)')
+        self.params.add('rho02', value=0., min=-1, max=1, expr='delta02+0.5*(1/sig0+1/sig2)')
+        self.params.add('rho01', value=0., min=-1, max=1, expr='delta01+0.5*(1/sig0+1/sig1)')
         
         self.x = x
         self.y = y
-        self.e = np.sqrt(e)#/y
+        self.e = np.sqrt(e)
 
-    def Gaussian3D(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2):
+    def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
         
-        rho12, rho02, rho01 = 0, 0, 0
-
         sigma = np.array([[sig0**2, rho01*sig0*sig1, rho02*sig0*sig2],
                           [rho01*sig0*sig1, sig1**2, rho12*sig1*sig2],
                           [rho02*sig0*sig2, rho12*sig1*sig2, sig2**2]])
@@ -1069,15 +1071,15 @@ class GaussianFit3D:
         sig1 = params['sig1']
         sig2 = params['sig2']
 
-        #rho12 = params['rho12']
-        #rho02 = params['rho02']
-        #rho01 = params['rho01']
+        rho12 = params['rho12']
+        rho02 = params['rho02']
+        rho01 = params['rho01']
 
-        yfit = self.Gaussian3D(Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2) #, rho12, rho02, rho01
+        args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01
+
+        yfit = self.gaussian_3d(*args)
         
-        #print(Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
-
-        return (y-yfit)#/e
+        return (y-yfit)/e
 
     def fit(self):
 
@@ -1097,11 +1099,11 @@ class GaussianFit3D:
         sig1 = result.params['sig1'].value
         sig2 = result.params['sig2'].value
         
-        #rho12 = result.params['rho12'].value
-        #rho02 = result.params['rho02'].value
-        #rho01 = result.params['rho01'].value
+        rho12 = result.params['rho12'].value
+        rho02 = result.params['rho02'].value
+        rho01 = result.params['rho01'].value
         
-        return A, B, mu0, mu1, mu2, sig0, sig1, sig2#, rho12, rho02, rho01
+        return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01
 
 def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file,
                     tube_calibration, detector_calibration, reflection_condition,
