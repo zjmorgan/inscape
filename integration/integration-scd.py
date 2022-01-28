@@ -129,15 +129,16 @@ for i, key in enumerate(list(peaks.keys())[:]):
             ref_peak = ref_peaks[j]
             Q0 = ref_peak.get_Q()
             A = ref_peak.get_A()
-            _, _, variance, covariance2d = merge.decompose_ellipsoid(A, xsigma=4, lscale=5)
+            D, W = np.linalg.eig(A)
+            D = np.diag(D)
 
             radii = 1/np.sqrt(np.diagonal(D)) 
 
-            peak_bkg_ratio, peak_score2d = 0, 0
+            peak_fit, peak_bkg_ratio, peak_score2d = 0, 0, 0
 
             if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
-                data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=True)
+                data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
 
                 peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
         
@@ -206,7 +207,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
                 if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
-                    data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=True)
+                    data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
 
                     peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
