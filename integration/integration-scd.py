@@ -15,7 +15,9 @@ from peak import PeakDictionary, PeakEnvelope
 
 CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
-dictionary = parameters.load_input_file(sys.argv[1])
+filename = '/SNS/CORELLI/IPTS-26829/shared/zgf/test_relax/Mn3Si2Te6.txt'
+
+dictionary = parameters.load_input_file(filename)
 
 a = dictionary['a']
 b = dictionary['b']
@@ -53,7 +55,7 @@ ub_file = os.path.join(working_directory, dictionary['ub-file'])
 
 split_angle = dictionary['split-angle']
 
-directory = os.path.dirname(os.path.abspath(sys.argv[1]))
+directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
@@ -195,12 +197,6 @@ for i, key in enumerate(list(peaks.keys())[:]):
                 Q0, A, W, D = merge.ellipsoid(Q0, center, variance, center2d, covariance2d, 
                                               n, u, v, xsigma=4, lscale=5)
 
-                if fixed:
-                    ref_peak = ref_peaks[j]
-                    Q0 = ref_peak.get_Q()
-                    A = ref_peak.get_A()
-                    _, _, variance, covariance2d = merge.decompose_ellipsoid(A, xsigma=4, lscale=5)
-
                 radii = 1/np.sqrt(np.diagonal(D)) 
 
                 print('Peak-radii: {}'.format(radii))
@@ -211,6 +207,8 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
                     peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
+                    peak_envelope.write_figure()
+
                 else:
 
                     remove = True
@@ -218,12 +216,14 @@ for i, key in enumerate(list(peaks.keys())[:]):
             if remove:
 
                 peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, j)
-
+    
     if i % 15 == 0:
 
         peak_dictionary.save(directory+'/{}.pkl'.format(outname))
-        peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
+        peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))        
 
 peak_dictionary.save(directory+'/{}.pkl'.format(outname))
 peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
 peak_envelope.create_pdf()
+
+peak_dictionary(0,0,-2)

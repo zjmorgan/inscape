@@ -373,8 +373,6 @@ class PeakEnvelope:
 
         if self.__show_plots: self.fig.show()
 
-        # self.pp.savefig(self.fig, dpi=144)
-
     def plot_extracted_Q(self, key, x, y, y0, yerr, X, Y):
 
         barsy, = self.bars_Q2
@@ -520,6 +518,8 @@ class PeakEnvelope:
 
         if self.__show_plots: self.fig.show()
 
+    def write_figure(self):
+        
         self.pp.savefig(self.fig, dpi=144)
 
 class PeakInformation:
@@ -1123,13 +1123,15 @@ class PeakDictionary:
             for pn in range(pws.getNumberPeaks()):
 
                 bank = pws.row(pn)['BankName']
-
+                row = int(pws.row(pn)['Row'])
+                col = int(pws.row(pn)['Col'])
+                    
                 peak = pws.getPeak(pn)
 
                 intens = peak.getIntensity()
                 sig_intens = peak.getSigmaIntensity()
 
-                if bank != 'None' and intens > 0 and sig_intens > 0:
+                if bank != 'None' and col > 2 and col < 14 and row > 16 and row < 240 and intens > 0 and sig_intens > 0:
 
                     h, k, l = peak.getIntHKL()
                     m, n, p = peak.getIntMNP()
@@ -1144,8 +1146,6 @@ class PeakDictionary:
 
                     bank = 1 if bank == 'panel' else int(bank.strip('bank'))
                     ind = peak.getPeakNumber()
-                    row = int(pws.row(p)['Row'])
-                    col = int(pws.row(p)['Col'])
 
                     wl = peak.getWavelength()
                     two_theta = peak.getScattering()
@@ -1233,11 +1233,10 @@ class PeakDictionary:
                 sig_intens = peak.get_estimated_intensity_errors()
                 R = peak.get_goniometers()[0]
 
-                clusters = self.__dbscan_1d(omega, eps)
-
+                clusters = self.__dbscan_1d(phi, eps)
+                
                 if len(clusters) > 1:
 
-                    print(clusters, len(clusters))
                     self.pws.removePeak(peak_num)
 
                     for cluster in clusters:
@@ -1372,7 +1371,7 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, cross_terms=False):
+    def save_hkl(self, filename, adaptive_scale=False, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
@@ -1380,9 +1379,10 @@ class PeakDictionary:
                            OutputWorkspace=self.iws)
 
         scale = 1
-        if self.iws.getNumberPeaks() > 0:
-            I = self.iws.getPeak(0).getIntensity()
-            scale = 9999.99/I
+        if adaptive_scale:
+            if self.iws.getNumberPeaks() > 0:
+                I = self.iws.getPeak(0).getIntensity()
+                scale = 9999.99/I
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='DSpacing',
