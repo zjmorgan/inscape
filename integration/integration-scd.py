@@ -15,7 +15,7 @@ from peak import PeakDictionary, PeakEnvelope
 
 CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
-filename = '/SNS/CORELLI/IPTS-26829/shared/zgf/test_relax/Mn3Si2Te6.txt'
+filename = sys.argv[1]
 
 dictionary = parameters.load_input_file(filename)
 
@@ -113,7 +113,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
     if ref_dict is not None:
         ref_peaks = ref_peak_dictionary.peak_dict.get(key)
         if ref_peaks is not None:
-            if len(ref_peaks) == len(redudancies):
+            if len(ref_peaks) >= len(redudancies):
                 fixed = True
                 
     h, k, l, m, n, p = key
@@ -143,6 +143,8 @@ for i, key in enumerate(list(peaks.keys())[:]):
                 data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
 
                 peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
+                
+                peak_envelope.write_figure()
         
         else:
         
@@ -203,7 +205,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
                 if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
-                    data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
+                    data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=True)
 
                     peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
@@ -225,5 +227,3 @@ for i, key in enumerate(list(peaks.keys())[:]):
 peak_dictionary.save(directory+'/{}.pkl'.format(outname))
 peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
 peak_envelope.create_pdf()
-
-peak_dictionary(0,0,-2)

@@ -1131,7 +1131,7 @@ class PeakDictionary:
                 intens = peak.getIntensity()
                 sig_intens = peak.getSigmaIntensity()
 
-                if bank != 'None' and col > 2 and col < 14 and row > 16 and row < 240 and intens > 0 and sig_intens > 0:
+                if bank != 'None' and col > 0 and col < 16 and row > 0 and row < 256 and intens > 0 and sig_intens > 0:
 
                     h, k, l = peak.getIntHKL()
                     m, n, p = peak.getIntMNP()

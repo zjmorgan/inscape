@@ -298,7 +298,7 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
 
     Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
     Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
-    
+
     width = 4*np.sqrt(variance)
 
     if np.sum(weights > 0) > 0:

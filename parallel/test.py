@@ -59,5 +59,5 @@ for i in range(mtd['out'].getNumberPeaks()-1,-1,-1):
     if (banks[i] == ''):
         mtd['out'].removePeak(i)
     
-SaveNexus(InputWorkspace='out', Filename=os.path.join(directory,peaks_workspace.replace('.nxs','_sr.nxs')))
-SaveIsawPeaks(InputWorkspace='out', Filename=os.path.join(directory,peaks_workspace.replace('.nxs','_sr.peaks')))
+#SaveNexus(InputWorkspace='out', Filename=os.path.join(directory,peaks_workspace.replace('.nxs','_sr.nxs')))
+#SaveIsawPeaks(InputWorkspace='out', Filename=os.path.join(directory,peaks_workspace.replace('.nxs','_sr.peaks')))
