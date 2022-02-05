@@ -3,8 +3,8 @@ from mantid.simpleapi import *
 import matplotlib.pyplot as plt
 import numpy as np
 
-file_1 = '/SNS/CORELLI/IPTS-28994/shared/scripts/ErFeO3_CCR_006K_240runs_van_bkg_absorb_cor_integration.hkl'
-file_2 = '/SNS/CORELLI/IPTS-28994/shared/scripts/ErFeO3_CCR_125K_240runs_van_bkg_integration.hkl'
+file_1 = '/home/zgf/.git/inscape/integration/PND_8_9.hkl'
+file_2 = '/home/zgf/.git/inscape/integration/PND_10_11.hkl'
 
 data_1 = np.loadtxt(file_1)
 data_2 = np.loadtxt(file_2)
@@ -51,12 +51,10 @@ for key in dictionary.keys():
        
 x, y1, y2 = np.array(x), np.array(y1), np.array(y2)
 
-mask = y1/y2 > 4
-y1[mask] = np.nan
-
 fig, ax = plt.subplots(1, 1, num='intensity-comparison')
-ax.plot(x, y1/y2, '-o', label='With over without absorption correction')
+ax.semilogy(x, y1, '-o', label='Scan 8-9')
+ax.semilogy(x, y2, '-o', label='Scan 10-11')
 ax.legend()
 ax.set_xlabel('d [\u212B]')
-ax.set_ylabel('Ratio')
+ax.set_ylabel('Intensity [arb. unit]')
 fig.show()   

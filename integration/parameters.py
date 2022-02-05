@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 
 def load_input_file(filename):
@@ -30,7 +32,7 @@ def load_input_file(filename):
                                float(v) if v.isdecimal() else \
                                np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 else \
                                v for v in val.split(',')]
-                    elif val.count('-') > 0:
+                    elif val.count('-') > 0 and val.count('/') == 0:
                         val = [int(v)+i if v.isdigit() else \
                                v+'1' if v.isalpha() else \
                                v for i, v in enumerate(val.split('-'))]
@@ -40,3 +42,62 @@ def load_input_file(filename):
                 dictionary[var] = val
 
         return dictionary
+    
+class Experiment:
+    
+    def __init__(self, instrument, ipts, run_numbers):
+        
+        tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ']
+    
+        instrument = instrument.upper()
+    
+        if instrument == 'BL9':
+            instrument = 'CORELLI'
+        if instrument == 'BL11B':
+            instrument = 'MANDI'
+        if instrument == 'BL12':
+            instrument = 'TOPAZ'
+            
+        if instrument == 'DEMAND':
+            instrument = 'HB3A'
+        if instrument == 'WAND2':
+            instrument = 'HB2C'
+        
+        facility = 'SNS' if instrument in tof_instruments else 'HFIR'
+        
+        self.facility, self.instrument = facility, instrument
+        
+        self.ipts = ipts
+        
+    def get_nexus_file(self, run, exp=None):
+        
+        if self.instrument == 'HB3A':
+            filepath = '/{}/{}/IPTS-{}/shared/autoreduce/'
+            filename = '{}_exp{:04}_scan{:04}.nxs'
+        else: 
+           filepath = '/{}/{}/IPTS-{}/nexus/'
+           filename = '{}_{}.nxs.h5'
+           
+        filepath = filepath.format(self.facility,self.instrument,self.ipts)
+        filename = filename.format(self.instrument,run,exp)
+           
+        return os.path.join(filepath,filename)
+    
+    def get_output_workspace(self, run, app=None):
+        
+        if self.instrument == 'HB2C':
+            ows = '{}_{}_{}'.format(self.instrument,run,app)
+        if self.instrument == 'HB3A':
+            ows = '{}_{}_{}'.format(self.instrument,app,run)
+        else:
+            ows = '{}_{}'.format(self.instrument,run)
+            
+        return ows
+
+    def get_event_workspace(self, run, app=None):
+        
+        return self.get_output_workspace(run, app)+'_md'
+    
+    def get_peaks_workspace(self, run, app=None):
+        
+        return self.get_output_workspace(run, app)+'_pk'

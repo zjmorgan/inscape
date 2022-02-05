@@ -1,15 +1,17 @@
-from mantid.simpleapi import LoadMD, BinMD, PlusMD, SetMDFrame
-from mantid.simpleapi import LoadNexus, LoadEventNexus, LoadParameterFile
-from mantid.simpleapi import ApplyCalibration, MaskDetectors
-from mantid.simpleapi import LoadIsawUB, SetGoniometer, ConvertUnits
-from mantid.simpleapi import ConvertToMD, CropWorkspaceForMDNorm
-from mantid.simpleapi import MDNorm, CloneMDWorkspace, DivideMD
-from mantid.simpleapi import PredictPeaks, PredictSatellitePeaks
-from mantid.simpleapi import CentroidPeaksMD, IntegratePeaksMD, SetUB
-from mantid.simpleapi import SetSampleMaterial, AnvredCorrection
-from mantid.simpleapi import DeleteWorkspace
-from mantid.simpleapi import ConvertHFIRSCDtoMDE, HFIRCalculateGoniometer
-from mantid.simpleapi import mtd
+from mantid.simpleapi import LoadMD, BinMD, PlusMD, SetMDFrame, \
+                             LoadNexus, LoadEventNexus, LoadParameterFile, \
+                             LoadIsawDetCal, ApplyCalibration, MaskDetectors, \
+                             LoadIsawUB, SetGoniometer, ConvertUnits, \
+                             ConvertToMD, CropWorkspaceForMDNorm, \
+                             MDNorm, CloneMDWorkspace, DivideMD, \
+                             PredictPeaks, PredictSatellitePeaks, \
+                             CentroidPeaksMD, IntegratePeaksMD, SetUB, \
+                             SetSampleMaterial, AnvredCorrection, \
+                             DeleteWorkspace, \
+                             ConvertHFIRSCDtoMDE, HFIRCalculateGoniometer, \
+                             mtd
+
+import os
 
 import numpy as np
 
@@ -730,7 +732,7 @@ def partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
     return pk, bkg
 
-def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, box_size=2.3,
+def norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, bin_size=0.013, box_size=1.65,
                     peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None, fit=False):
 
     principal_radii = 1/np.sqrt(D.diagonal())
@@ -763,7 +765,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
 
     for i, r in enumerate(runs):
 
-        if exp is None:
+        if facility == 'SNS':
             ows = '{}_{}'.format(instrument,r)
         else:
             ows = '{}_{}_{}'.format(instrument,exp,r)
@@ -792,7 +794,7 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
             extents = [Q_rot[0]-dQ[0],Q_rot[0]+dQ[0],Q_rot[1]-dQ[1],Q_rot[1]+dQ[1],Q_rot[2]-dQ[2],Q_rot[2]+dQ[2]]
             bins = [int(round(2*dQ[0]/dQp[0]))+1,int(round(2*dQ[1]/dQp[1]))+1,int(round(2*dQ[2]/dQp[2]))+1]
 
-        if exp is None:
+        if facility == 'SNS':
             MDNorm(InputWorkspace=omd,
                    SolidAngleWorkspace='sa',
                    FluxWorkspace='flux',
@@ -827,12 +829,12 @@ def norm_integrator(peak_envelope, instrument, runs, Q0, D, W, bin_size=0.013, b
                   OutputBins='{},{},{}'.format(*bins),
                   OutputWorkspace='tmpNormMD_{}'.format(i))
 
-            DivideMD(LHSWorkspace='tmpDataMD_{}'.format(i), RHSWorkspace='tmpNormMD_{}'.format(i), OutputWorkspace='__normDataMD_{}'.format(i))
+            DivideMD(LHSWorkspace='tmpDataMD_{}'.format(i), RHSWorkspace='tmpNormMD_{}'.format(i), OutputWorkspace='__normDataMD')
 
         if i == 0:
-            Qxaxis = mtd['__normDataMD'.format(i)].getXDimension()
-            Qyaxis = mtd['__normDataMD'.format(i)].getYDimension()
-            Qzaxis = mtd['__normDataMD'.format(i)].getZDimension()
+            Qxaxis = mtd['__normDataMD'].getXDimension()
+            Qyaxis = mtd['__normDataMD'].getYDimension()
+            Qzaxis = mtd['__normDataMD'].getZDimension()
 
             Qx = np.linspace(Qxaxis.getMinimum(), Qxaxis.getMaximum(), Qxaxis.getNBins()+1)
             Qy = np.linspace(Qyaxis.getMinimum(), Qyaxis.getMaximum(), Qyaxis.getNBins()+1)
@@ -1031,13 +1033,9 @@ class GaussianFit3D:
         self.params.add('sig1', value=sig[1], min=0.25*sig[0], max=4*sig[0])
         self.params.add('sig2', value=sig[2], min=0.25*sig[0], max=4*sig[0])
         
-        self.params.add('delta12', value=-0.5*(1/sig[1]+1/sig[2]), max=0)
-        self.params.add('delta02', value=-0.5*(1/sig[0]+1/sig[2]), max=0)
-        self.params.add('delta01', value=-0.5*(1/sig[0]+1/sig[1]), max=0)
-        
-        self.params.add('rho12', value=0., min=-1, max=1, expr='delta12+0.5*(1/sig1+1/sig2)')
-        self.params.add('rho02', value=0., min=-1, max=1, expr='delta02+0.5*(1/sig0+1/sig2)')
-        self.params.add('rho01', value=0., min=-1, max=1, expr='delta01+0.5*(1/sig0+1/sig1)')
+        self.params.add('rho12', value=0, min=-1, max=1)
+        self.params.add('rho02', value=0, min=-1, max=1)
+        self.params.add('rho01', value=0, min=-1, max=1)
         
         self.x = x
         self.y = y
@@ -1045,16 +1043,23 @@ class GaussianFit3D:
 
     def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
         
-        sigma = np.array([[sig0**2, rho01*sig0*sig1, rho02*sig0*sig2],
-                          [rho01*sig0*sig1, sig1**2, rho12*sig1*sig2],
-                          [rho02*sig0*sig2, rho12*sig1*sig2, sig2**2]])
+        U = np.array([[1, rho01, rho02],
+                      [0,     1, rho12],
+                      [0,     0,     1]])
+        L = U.T
+        
+        sigma = np.array([[sig0, 0, 0],
+                          [0, sig1, 0],
+                          [0, 0, sig2]])
+            
+        S = np.dot(np.dot(L,sigma),U)
 
-        inv_sig = np.linalg.inv(sigma)
+        inv_S = np.linalg.inv(S)
 
         x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
 
-        return A*np.exp(-0.5*(inv_sig[0,0]*x0**2+inv_sig[1,1]*x1**2+inv_sig[2,2]*x2**2\
-                          +2*(inv_sig[1,2]*x1*x2+inv_sig[0,2]*x0*x2+inv_sig[0,1]*x0*x1)))+B
+        return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))+B
 
     def residual(self, params, x, y, e):
         
@@ -1109,15 +1114,7 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                     tube_calibration, detector_calibration, reflection_condition,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, radius=0.15,
-                    chemical_formula=None, volume=None, z=1):
-
-    # peak prediction parameters ---------------------------------------------------
-    if instrument == 'CORELLI':
-        min_wavelength = 0.63
-        max_wavelength= 2.51
-    elif instrument == 'MANDI':
-        min_wavelength = 0.4
-        max_wavelength = 4
+                    chemical_formula=None, volume=None, z=1, exp=None):
 
     min_d_spacing = 0.7
     max_d_spacing= 20
@@ -1132,7 +1129,10 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
         LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
 
     if not mtd.doesExist('sa') and counts_file is not None:
-        LoadNexus(Filename=counts_file, OutputWorkspace='sa')
+        if facility == 'SNS':
+            LoadNexus(Filename=counts_file, OutputWorkspace='sa')
+        else:
+            LoadMD(Filename=counts_file, OutputWorkspace='van')
 
     if not mtd.doesExist('flux') and spectrum_file is not None:
         LoadNexus(Filename=spectrum_file, OutputWorkspace='flux')
@@ -1142,84 +1142,192 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
 
     for i, r in enumerate(runs):
         print('Processing run : {}'.format(r))
-        ows = '{}_{}'.format(instrument,r)
+        if facility == 'SNS':
+            ows = '{}_{}'.format(instrument,r)
+        else:
+            ows = '{}_{}_{}'.format(instrument,exp,r)
+            
         omd = ows+'_md'
         opk = ows+'_pks'
         merge_md.append(omd)
         merge_pk.append(opk)
-
+        
         if not mtd.doesExist(omd):
-            filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
-            LoadEventNexus(Filename=filename, OutputWorkspace=ows)
+            
+            if facility == 'SNS':
+                filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
+                LoadEventNexus(Filename=filename, OutputWorkspace=ows)
+    
+                if tube_calibration is not None:
+                    ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
+    
+                if counts_file is not None:
+                    MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
+    
+                if detector_calibration is not None:
+                    ext = os.path.splitext(detector_calibration)[1]
+                    if ext == '.xml':
+                        LoadParameterFile(Workspace=ows, Filename=detector_calibration)
+                    else:
+                        LoadIsawDetCal(Workspace=ows, Filename=detector_calibration)
 
-            if tube_calibration is not None:
-                ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
+                # NormaliseByCurrent(ows, OutputWorkspace=ows)
+    
+                if instrument == 'CORELLI':
+                    SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis))
+                else:
+                    SetGoniometer(Workspace=ows, Goniometers='Universal')
+                    
+                if chemical_formula is not None:
 
-            if counts_file is not None:
-                MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
-
-            if detector_calibration is not None:
-                LoadParameterFile(Workspace=ows, Filename=detector_calibration)
-
-            proton_charge = sum(mtd[ows].getRun().getLogData('proton_charge').value)/1e12
-            print('The current proton charge : {}'.format(proton_charge))
-
-            # NormaliseByCurrent(ows, OutputWorkspace=ows)
-
-            if instrument == 'CORELLI':
-                SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis))
+                    SetSampleMaterial(InputWorkspace=ows,
+                                      ChemicalFormula=chemical_formula,
+                                      ZParameter=z,
+                                      UnitCellVolume=volume)
+    
+                    AnvredCorrection(InputWorkspace=ows,
+                                     OnlySphericalAbsorption=True,
+                                     Radius=radius,
+                                     OutputWorkspace=ows)
+    
+                ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
+    
+                if instrument == 'CORELLI':
+                    CropWorkspaceForMDNorm(InputWorkspace=ows, XMin=2.5, XMax=10, OutputWorkspace=ows)
+    
+                #ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='dSpacing')
+    
+                ConvertToMD(InputWorkspace=ows,
+                            OutputWorkspace=omd,
+                            QDimensions='Q3D',
+                            dEAnalysisMode='Elastic',
+                            Q3DFrames='Q_sample',
+                            LorentzCorrection=False,
+                            MinValues='-20,-20,-20',
+                            MaxValues='20,20,20',
+                            Uproj='1,0,0',
+                            Vproj='0,1,0',
+                            Wproj='0,0,1',
+                            SplitInto=2,
+                            SplitThreshold=50,
+                            MaxRecursionDepth=13,
+                            MinRecursionDepth=7)   
+                    
             else:
-                SetGoniometer(Workspace=ows, Goniometers='Universal')
+                filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
+                LoadMD(Filename=filename, OutputWorkspace=ows)
+                
+                scale = mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value
+                norm = np.sum(mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value)
+                
+                scale /= norm
+                
+                temp = mtd[ows].getExperimentInfo(0).run().getProperty('coldtip').value
+                Q3, Q1 = np.percentile(temp,75), np.percentile(temp,25)
+                
+                IQR = Q3-Q1
+        
+                mask = (temp > Q3+1.5*IQR) | (temp < Q1-1.5*IQR)
+                
+                scale[mask] = 0
+                
+                d = mtd[ows].getSignalArray().copy()
+                d[...,mask] = 0
+                
+                v = mtd['van'].getSignalArray().copy()
+                
+                mtd[ows].setSignalArray(d)
+                mtd[ows].setErrorSquaredArray(d)
+                
+                SetGoniometer(Workspace=ows,
+                              Axis0='omega,0,1,0,-1',
+                              Axis1='chi,0,0,1,-1',
+                              Axis2='phi,0,1,0,-1',
+                              Average=False)
+                
+                wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
 
+                ConvertHFIRSCDtoMDE(InputWorkspace=ows,
+                                    Wavelength=wavelength,
+                                    MinValues='-10,-10,-10',
+                                    MaxValues='10,10,10',
+                                    SplitInto=5,
+                                    SplitThreshold=1000,
+                                    MaxRecursionDepth=13,
+                                    OutputWorkspace=omd)
+    
+                mtd[ows].setSignalArray(v.repeat(d.shape[2]).reshape(*d.shape)*scale)
+                mtd[ows].setErrorSquaredArray(v.repeat(d.shape[2]).reshape(*d.shape)*scale)
+    
+                ConvertHFIRSCDtoMDE(InputWorkspace=ows,
+                                    Wavelength=wavelength,
+                                    MinValues='-10,-10,-10',
+                                    MaxValues='10,10,10',
+                                    SplitInto=5,
+                                    SplitThreshold=1000,
+                                    MaxRecursionDepth=13,
+                                    OutputWorkspace=ows+'_van')
+                
             if type(ub_file) is list:
-                LoadIsawUB(InputWorkspace=ows, Filename=ub_file[i])
+                LoadIsawUB(InputWorkspace=omd, Filename=ub_file[i])
+            elif type(ub_file) is str:
+                LoadIsawUB(InputWorkspace=omd, Filename=ub_file)
             else:
-                LoadIsawUB(InputWorkspace=ows, Filename=ub_file)
+                UB = mtd[ows].getExperimentInfo(0).run().getProperty('ubmatrix').value
+                UB = [float(ub) for ub in UB.split(' ')]
+                UB = np.array(UB).reshape(3,3)
+                SetUB(omd, UB=UB)
 
-            if chemical_formula is not None:
+        else:
+            
+            if facility == 'HFIR':
+                ws = ows if mtd.doesExist(ows) else omd
+                wavelength = float(mtd[ws].getExperimentInfo(0).run().getProperty('wavelength').value)
 
-                SetSampleMaterial(InputWorkspace=ows,
-                                  ChemicalFormula=chemical_formula,
-                                  ZParameter=z,
-                                  UnitCellVolume=volume)
-
-                AnvredCorrection(InputWorkspace=ows,
-                                 OnlySphericalAbsorption=True,
-                                 Radius=radius,
-                                 OutputWorkspace=ows)
-
-            ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
-
-            if instrument == 'CORELLI':
-                CropWorkspaceForMDNorm(InputWorkspace=ows, XMin=2.5, XMax=10, OutputWorkspace=ows)
-
-            #ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='dSpacing')
-
-            ConvertToMD(InputWorkspace=ows,
-                        OutputWorkspace=omd,
-                        QDimensions='Q3D',
-                        dEAnalysisMode='Elastic',
-                        Q3DFrames='Q_sample',
-                        LorentzCorrection=False,
-                        MinValues='-20,-20,-20',
-                        MaxValues='20,20,20',
-                        Uproj='1,0,0',
-                        Vproj='0,1,0',
-                        Wproj='0,0,1',
-                        SplitInto=2,
-                        SplitThreshold=50,
-                        MaxRecursionDepth=13,
-                        MinRecursionDepth=7)
+        # peak prediction parameters ---------------------------------------------------
+        if instrument == 'CORELLI':
+            min_wavelength = 0.63
+            max_wavelength= 2.51
+        elif instrument == 'MANDI':
+            min_wavelength = 0.4
+            max_wavelength = 4
+        elif instrument == 'HB3A':
+            min_wavelength = 0.95*wavelength
+            max_wavelength = 1.05*wavelength
 
         if not mtd.doesExist(opk):
-            PredictPeaks(InputWorkspace=omd,
-                         WavelengthMin=min_wavelength,
-                         WavelengthMax=max_wavelength,
-                         MinDSpacing=min_d_spacing,
-                         MaxDSpacing=max_d_spacing,
-                         OutputType='Peak',
-                         ReflectionCondition=reflection_condition,
-                         OutputWorkspace=opk)
+
+            if facility == 'SNS':
+                PredictPeaks(InputWorkspace=omd,
+                             WavelengthMin=min_wavelength,
+                             WavelengthMax=max_wavelength,
+                             MinDSpacing=min_d_spacing,
+                             MaxDSpacing=max_d_spacing,
+                             OutputType='Peak',
+                             ReflectionCondition=reflection_condition,
+                             OutputWorkspace=opk)
+            else:
+                wavelength = float(mtd[omd].getExperimentInfo(0).run().getProperty('wavelength').value)
+    
+                PredictPeaks(InputWorkspace=omd,
+                             WavelengthMin=wavelength*0.95,
+                             WavelengthMax=wavelength*1.05,
+                             MinDSpacing=min_d_spacing,
+                             MaxDSpacing=max_d_spacing,
+                             ReflectionCondition=reflection_condition,
+                             CalculateGoniometerForCW=True,
+                             CalculateWavelength=False,
+                             Wavelength=wavelength,
+                             InnerGoniometer=True,
+                             FlipX=True,
+                             OutputType='Peak',
+                             OutputWorkspace=opk)
+    
+                HFIRCalculateGoniometer(Workspace=opk,
+                                        Wavelength=wavelength,
+                                        OverrideProperty=True,
+                                        InnerGoniometer=True,
+                                        FlipX=True)
 
             if max_order > 0:
                 PredictSatellitePeaks(Peaks=opk,
@@ -1250,137 +1358,29 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                              OutputWorkspace=opk)
 
         # delete ows save memory
-        if mtd.doesExist(ows):
-            DeleteWorkspace(ows)
+        # if mtd.doesExist(ows):
+            # DeleteWorkspace(ows)
             # md = GroupWorkspaces(merge_md)
             # pk = GroupWorkspaces(merge_pk)
-
-def pre_merging(instrument, ipts, exp, runs, ub_file, counts_file, reflection_condition):
-
-    # peak centroid radius ---------------------------------------------------------
-    centroid_radius = 0.125
-
-    min_d_spacing = 0.7
-    max_d_spacing= 20
-
-    if not mtd.doesExist('van'):
-        LoadMD(Filename=counts_file, OutputWorkspace='van')
-
-    merge_md = []
-    merge_pk = []
-
-    for r in runs:
-        print('Processing experiment : {}, scan : {}'.format(exp,r))
-        ows = '{}_{}_{}'.format(instrument,exp,r)
-        omd = ows+'_md'
-        opk = ows+'_pks'
-        merge_md.append(omd)
-        merge_pk.append(opk)
-
-        if not mtd.doesExist(omd):
-            filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
-            LoadMD(Filename=filename, OutputWorkspace=ows)
-
-            wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
-
-            SetGoniometer(Workspace=ows,
-                          Axis0='omega,0,1,0,-1',
-                          Axis1='chi,0,0,1,-1',
-                          Axis2='phi,0,1,0,-1',
-                          Average=False)
-
-            ConvertHFIRSCDtoMDE(InputWorkspace=ows,
-                                Wavelength=wavelength,
-                                MinValues='-10,-10,-10',
-                                MaxValues='10,10,10',
-                                OutputWorkspace=omd)
-
-        if not mtd.doesExist(ows+'_van'):
-
-            wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
-
-            d = mtd[ows].getSignalArray()
-            v = mtd['van'].getSignalArray().copy()
-
-            mtd[ows].setSignalArray(v.repeat(d.shape[2]).reshape(*d.shape))
-
-            ConvertHFIRSCDtoMDE(InputWorkspace=ows,
-                                Wavelength=wavelength,
-                                MinValues='-10,-10,-10',
-                                MaxValues='10,10,10',
-                                OutputWorkspace=ows+'_van')
-
-            if ub_file is None:
-                UB = mtd[ows].getExperimentInfo(0).run().getProperty('ubmatrix').value
-                UB = [float(ub) for ub in UB.split(' ')]
-                UB = np.array(UB).reshape(3,3)
-
-                SetUB(omd, UB=UB)
-            else:
-                LoadIsawUB(InputWorkspace=omd, Filename=ub_file)
-
-        if not mtd.doesExist(opk):
-
-            wavelength = float(mtd[omd].getExperimentInfo(0).run().getProperty('wavelength').value)
-
-            PredictPeaks(InputWorkspace=omd,
-                         WavelengthMin=wavelength*0.95,
-                         WavelengthMax=wavelength*1.05,
-                         MinDSpacing=min_d_spacing,
-                         MaxDSpacing=max_d_spacing,
-                         ReflectionCondition=reflection_condition,
-                         CalculateGoniometerForCW=True,
-                         CalculateWavelength=False,
-                         Wavelength=wavelength,
-                         InnerGoniometer=True,
-                         FlipX=True,
-                         OutputType='Peak',
-                         OutputWorkspace=opk)
-
-            HFIRCalculateGoniometer(Workspace=opk,
-                                    Wavelength=wavelength,
-                                    OverrideProperty=True,
-                                    InnerGoniometer=True,
-                                    FlipX=True)
-
-            CentroidPeaksMD(InputWorkspace=omd,
-                            PeakRadius=centroid_radius,
-                            PeaksWorkspace=opk,
-                            OutputWorkspace=opk)
-
-            CentroidPeaksMD(InputWorkspace=omd,
-                            PeakRadius=centroid_radius,
-                            PeaksWorkspace=opk,
-                            OutputWorkspace=opk)
-
-            IntegratePeaksMD(InputWorkspace=omd,
-                             PeakRadius=centroid_radius,
-                             BackgroundInnerRadius=centroid_radius+0.01,
-                             BackgroundOuterRadius=centroid_radius+0.02,
-                             PeaksWorkspace=opk,
-                             OutputWorkspace=opk)
-
-        # delete ows save memory
-        if mtd.doesExist(ows):
-            DeleteWorkspace(ows)
-            # md = GroupWorkspaces(merge_md)
-            # pk = GroupWorkspaces(merge_pk)
-
+            
 def set_instrument(instrument):
+    
+    tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ']
 
-    instrument = instrument.lower()
+    instrument = instrument.upper()
 
-    if (instrument == 'bl9' or instrument== 'corelli'):
-        facility, instrument = 'SNS', 'CORELLI'
-    if (instrument == 'bl11b' or instrument == 'mandi'):
-        facility, instrument = 'SNS', 'MANDI'
-    if (instrument == 'bl12' or instrument== 'topaz'):
-        facility, instrument = 'SNS', 'TOPAZ'
-    if (instrument == 'hb3a' or instrument == 'demand'):
-        facility, instrument = 'HFIR', 'HB3A'
-    if (instrument == 'hb2c' or instrument == 'wand2'):
-        facility, instrument = 'HFIR', 'HB2C'
-    if (instrument == 'cg4d' or instrument == 'imagine'):
-        facility, instrument = 'HFIR', 'CG4D'
-
+    if instrument == 'BL9':
+        instrument = 'CORELLI'
+    if instrument == 'BL11B':
+        instrument = 'MANDI'
+    if instrument == 'BL12':
+        instrument = 'TOPAZ'
+        
+    if instrument == 'DEMAND':
+        instrument = 'HB3A'
+    if instrument == 'WAND2':
+        instrument = 'HB2C'
+    
+    facility = 'SNS' if instrument in tof_instruments else 'HFIR'
+    
     return facility, instrument

@@ -143,10 +143,6 @@ class PeakEnvelope:
         self.line_Q2, self.caps_Q2, self.bars_Q2 = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=True, zorder=2)
         self.norm_Q2 = self.ax_Q2.plot([0], [0], '--', rasterized=True, zorder=1)
         self.Q2 = self.ax_Q2.plot([0], [0], ':.', rasterized=True, zorder=0)
-        
-        self.ax_Qu_fit.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
-        self.ax_Qv_fit.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
-        self.ax_uv_fit.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
 
         self.im_Qu = self.ax_Qu.imshow([[0,1],[0,1]], interpolation='nearest',
                                        origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
@@ -856,7 +852,7 @@ class PeakInformation:
             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
 
             intens = np.nansum(data_norm)
-            bkg_intens = np.nanmedian(bkg_data_norm)
+            bkg_intens = np.nansum(bkg_data_norm)
 
             intensity = (intens-bkg_intens*volume_ratio)*constant
 
@@ -882,21 +878,18 @@ class PeakInformation:
             bin_size = self.__bin_size
             constant = self.__scale_constant*np.prod(bin_size)
 
-            norm_sum = np.nansum(np.multiply(norm, scale_norm), axis=0)
-            bkg_norm_sum = np.nansum(np.multiply(bkg_norm, scale_norm), axis=0)
+            data_norm = np.nansum(data, axis=0)/np.nansum(np.multiply(norm, scale_norm), axis=0)
+            bkg_data_norm = np.nansum(bkg_data, axis=0)/np.nansum(np.multiply(bkg_norm, scale_norm), axis=0)
 
-            var_data_norm = np.nansum(data, axis=0)/norm_sum
-            var_bkg_data_norm = np.nansum(bkg_data, axis=0)/bkg_norm_sum
+            data_norm[np.isinf(data_norm)] = np.nan
+            bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
 
-            top_5_percent = np.sort(norm_sum)[-norm_sum.size//20:-1].mean()
-            top_5_percent_bkg = np.sort(bkg_norm_sum)[-bkg_norm_sum.size//20:-1].mean()
+            intens = np.nansum(data_norm)
+            bkg_intens = np.nansum(bkg_data_norm)
 
-            sig_data_norm = np.sqrt(np.nansum(var_data_norm*top_5_percent))/top_5_percent
-            sig_data_norm_bkg = np.sqrt(np.nansum(var_data_norm*top_5_percent))/top_5_percent
+            intensity = np.sqrt(intens+bkg_intens*volume_ratio)*constant
 
-            sig_intensity = np.sqrt(sig_data_norm**2+np.multiply(sig_data_norm_bkg,volume_ratio)**2)*constant
-
-            return sig_intensity
+            return intensity
 
     def __pk_bkg_ratio(self):
 
@@ -964,18 +957,18 @@ class PeakInformation:
             bin_size = self.__bin_size
             constant = self.__scale_constant*np.prod(bin_size)
 
-            sig_data_norm = np.sqrt(data)/np.multiply(norm, scale_norm)
-            sig_bkg_data_norm = np.sqrt(bkg_data)/np.multiply(bkg_norm, scale_norm)
+            data_norm = data/np.multiply(norm, scale_norm)
+            bkg_data_norm = bkg_data/np.multiply(bkg_norm, scale_norm)
 
-            sig_data_norm[np.isinf(sig_data_norm)] = 0
-            sig_bkg_data_norm[np.isinf(sig_bkg_data_norm)] = 0
+            data_norm[np.isinf(data_norm)] = 0
+            bkg_data_norm[np.isinf(bkg_data_norm)] = 0
 
-            sig_intens = np.nansum(sig_data_norm, axis=1)
-            sig_bkg_intens = np.nansum(sig_bkg_data_norm, axis=1)
+            intens = np.nansum(data_norm, axis=1)
+            bkg_intens = np.nansum(bkg_data_norm, axis=1)
 
-            sig_intensity = (sig_intens+np.multiply(sig_bkg_intens,volume_ratio))*constant
+            intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio))*constant
 
-            return sig_intensity
+            return intensity
 
 class PeakDictionary:
 
@@ -1130,8 +1123,10 @@ class PeakDictionary:
 
                 intens = peak.getIntensity()
                 sig_intens = peak.getSigmaIntensity()
+                
+                print(bank, intens, sig_intens)
 
-                if bank != 'None' and col > 0 and col < 16 and row > 0 and row < 256 and intens > 0 and sig_intens > 0:
+                if bank != 'None' and intens > 0 and sig_intens > 0: # and col > 0 and col < 16 and row > 0 and row < 256
 
                     h, k, l = peak.getIntHKL()
                     m, n, p = peak.getIntMNP()

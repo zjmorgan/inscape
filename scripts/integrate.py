@@ -5,6 +5,8 @@ import numpy as np
      
 import sys, os, imp
 
+sys.path.append('/home/zgf/.git/inscape/integration')
+
 import merge, peak, parameters
 
 imp.reload(merge)
@@ -15,7 +17,7 @@ from peak import PeakDictionary, PeakEnvelope
 
 CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
-filename = sys.argv[1]
+filename = '/home/zgf/.git/inscape/integration/hb3a.txt' #sys.argv[1]
 
 dictionary = parameters.load_input_file(filename)
 
@@ -43,27 +45,45 @@ ipts = dictionary['ipts']
 working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument,ipts)
 shared_directory = '/{}/{}/shared/'.format(facility,instrument)
 
+run_nos = dictionary['runs'] if type(dictionary['runs']) is list else [dictionary['runs']]
+
 runs = []
-for r in dictionary['runs']:
+for r in run_nos:
     if type(r) is list:
         runs += r
     else:
         runs += [r]
 
 experiment = dictionary['experiment']
-ub_file = os.path.join(working_directory, dictionary['ub-file'])
+
+if dictionary['ub-file'] is not None:
+    ub_file = os.path.join(working_directory, dictionary['ub-file'])
 
 split_angle = dictionary['split-angle']
 
 directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
-spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
-counts_file = os.path.join(shared_directory+'Vanadium', dictionary['vanadium-file'])
+if dictionary['flux-file'] is not None:
+    spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
+else:
+    spectrum_file = None
 
-tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
-detector_calibration = os.path.join(shared_directory+'Calibration', dictionary['detector-file'])
+if dictionary['vanadium-file'] is not None:
+    counts_file = os.path.join(shared_directory+'Vanadium', dictionary['vanadium-file'])
+else:
+    counts_file = None
 
+if dictionary['tube-file'] is not None:
+    tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
+else:
+    tube_calibration = None
+    
+if dictionary['detector-file'] is not None:
+    detector_calibration = os.path.join(shared_directory+'calibration', dictionary['detector-file'])
+else:
+    detector_calibration = None
+    
 mod_vector_1 = dictionary['modulation-vector-1']
 mod_vector_2 = dictionary['modulation-vector-2']
 mod_vector_3 = dictionary['modulation-vector-3']
@@ -77,12 +97,12 @@ else:
 
 volume = mtd['sample'].sample().getOrientedLattice().volume()
 
-ref_dict = dictionary['peak-dictionary']
+ref_dict = dictionary.get('peak-dictionary')
 
 merge.pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file, 
                       tube_calibration, detector_calibration, reflection_condition,
                       mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
-                      radius=sample_radius, chemical_formula=chemical_formula, volume=volume, z=z_parameter)
+                      radius=sample_radius, chemical_formula=chemical_formula, volume=volume, z=z_parameter, exp=experiment)
 
 if ref_dict is not None:
     ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
@@ -90,10 +110,14 @@ if ref_dict is not None:
 
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+peak_dictionary.set_scale_constant(1e+3)
 
 for r in runs:
         
-    ows = '{}_{}'.format(instrument,r)
+    if facility == 'HFIR':
+        ows = '{}_{}_{}'.format(instrument,experiment,r)
+    else:
+        ows = '{}_{}'.format(instrument,r)
     opk = ows+'_pks'
     
     peak_dictionary.add_peaks(opk)
@@ -113,7 +137,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
     if ref_dict is not None:
         ref_peaks = ref_peak_dictionary.peak_dict.get(key)
         if ref_peaks is not None:
-            if len(ref_peaks) >= len(redudancies):
+            if len(ref_peaks) == len(redudancies):
                 fixed = True
                 
     h, k, l, m, n, p = key
@@ -143,14 +167,12 @@ for i, key in enumerate(list(peaks.keys())[:]):
                 data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
 
                 peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
-                
-                peak_envelope.write_figure()
         
         else:
         
             remove = False
                     
-            Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15)
+            Q, Qx, Qy, Qz, weights, Q0 = merge.box_integrator(instrument, runs, numbers, binsize=0.005, radius=0.15, exp=experiment)
 
             center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = merge.Q_profile(peak_envelope, key, Q, weights, 
                                                                                                                  Q0, radius=0.15, bins=31)
@@ -205,7 +227,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
 
                 if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
 
-                    data = merge.norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=True)
+                    data = merge.norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, exp=experiment, fit=False)
 
                     peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
 
@@ -218,7 +240,7 @@ for i, key in enumerate(list(peaks.keys())[:]):
             if remove:
 
                 peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, j)
-    
+
     if i % 15 == 0:
 
         peak_dictionary.save(directory+'/{}.pkl'.format(outname))
@@ -227,3 +249,5 @@ for i, key in enumerate(list(peaks.keys())[:]):
 peak_dictionary.save(directory+'/{}.pkl'.format(outname))
 peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))
 peak_envelope.create_pdf()
+
+peak_dictionary(1,0,1)
