@@ -19,7 +19,7 @@ from peak import PeakDictionary
 
 CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
-filename, n_proc = sys.argv[1] sys.argv[2]
+filename, n_proc = sys.argv[1], sys.argv[2]
 
 if n_proc > 16:
     n_proc = 16
