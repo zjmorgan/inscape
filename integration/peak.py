@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import pprint
-import pickle
+import dill as pickle
+
 #pickle.settings['recurse'] = True
 
 class CustomUnpickler(pickle.Unpickler):
@@ -562,6 +563,10 @@ class PeakInformation:
 
         return self.__Q
 
+    def set_Q(self, Q):
+
+        self.__Q = Q
+
     def get_A(self):
 
         return self.__A
@@ -878,8 +883,8 @@ class PeakInformation:
             bin_size = self.__bin_size
             constant = self.__scale_constant*np.prod(bin_size)
 
-            data_norm = np.nansum(data, axis=0)/np.nansum(np.multiply(norm, scale_norm), axis=0)
-            bkg_data_norm = np.nansum(bkg_data, axis=0)/np.nansum(np.multiply(bkg_norm, scale_norm), axis=0)
+            data_norm = np.nansum(data, axis=0)/np.nansum(np.multiply(norm, scale_norm), axis=0)**2*(1+np.nansum(data, axis=0)/np.nansum(np.multiply(norm, scale_norm), axis=0))
+            bkg_data_norm = np.nansum(bkg_data, axis=0)/np.nansum(np.multiply(bkg_norm, scale_norm), axis=0)**2*(1+np.nansum(bkg_data, axis=0)/np.nansum(np.multiply(bkg_norm, scale_norm), axis=0))
 
             data_norm[np.isinf(data_norm)] = np.nan
             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
@@ -887,7 +892,7 @@ class PeakInformation:
             intens = np.nansum(data_norm)
             bkg_intens = np.nansum(bkg_data_norm)
 
-            intensity = np.sqrt(intens+bkg_intens*volume_ratio)*constant
+            intensity = np.sqrt(intens+bkg_intens*volume_ratio**2)*constant
 
             return intensity
 
@@ -957,8 +962,8 @@ class PeakInformation:
             bin_size = self.__bin_size
             constant = self.__scale_constant*np.prod(bin_size)
 
-            data_norm = data/np.multiply(norm, scale_norm)
-            bkg_data_norm = bkg_data/np.multiply(bkg_norm, scale_norm)
+            data_norm = data/np.multiply(norm, scale_norm)**2*(1+data/np.multiply(norm, scale_norm))
+            bkg_data_norm = bkg_data/np.multiply(bkg_norm, scale_norm)**2*(1+bkg_data/np.multiply(bkg_norm, scale_norm))
 
             data_norm[np.isinf(data_norm)] = 0
             bkg_data_norm[np.isinf(bkg_data_norm)] = 0
@@ -966,7 +971,7 @@ class PeakInformation:
             intens = np.nansum(data_norm, axis=1)
             bkg_intens = np.nansum(bkg_data_norm, axis=1)
 
-            intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio))*constant
+            intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio**2))*constant
 
             return intensity
 
@@ -979,8 +984,6 @@ class PeakDictionary:
         self.set_constants(a, b, c, alpha, beta, gamma)
 
         self.scale_constant = 1e+8
-
-        self.g = Goniometer()
 
     def __call_peak(self, h, k, l, m=0, n=0, p=0):
 
@@ -1124,9 +1127,7 @@ class PeakDictionary:
                 intens = peak.getIntensity()
                 sig_intens = peak.getSigmaIntensity()
                 
-                print(bank, intens, sig_intens)
-
-                if bank != 'None' and intens > 0 and sig_intens > 0: # and col > 0 and col < 16 and row > 0 and row < 256
+                if bank != 'None' and bank != '' and intens > 0 and sig_intens > 0: # and col > 0 and col < 16 and row > 0 and row < 256
 
                     h, k, l = peak.getIntHKL()
                     m, n, p = peak.getIntMNP()
@@ -1138,20 +1139,24 @@ class PeakDictionary:
                     run = peak.getRunNumber()
                     if run == 0 and ws.split('_')[-2].isnumeric():
                         _, exp, run, _ = ws.split('_')
-
+                    
                     bank = 1 if bank == 'panel' else int(bank.strip('bank'))
                     ind = peak.getPeakNumber()
+                    
+                    Q = peak.getQSampleFrame()
 
                     wl = peak.getWavelength()
                     two_theta = peak.getScattering()
                     az_phi = peak.getAzimuthal()
 
                     R = peak.getGoniometerMatrix()
-                    self.g.setR(R)
-                    phi, chi, omega = self.g.getEulerAngles('YZY')
+
+                    #self.g.setR(R)
+                    #phi, chi, omega = self.g.getEulerAngles('YZY')
 
                     #if np.isclose(chi,0) and np.isclose(omega,0):
-                    #    phi, omega = 0, np.rad2deg(np.arctan2(R[0,2],R[0,0]))
+                    chi = 0
+                    phi, omega = 0, np.rad2deg(np.arctan2(R[0,2],R[0,0]))
 
                     if self.peak_dict.get(key) is None:
 
@@ -1171,6 +1176,9 @@ class PeakDictionary:
 
                     self.peak_dict[key][0].add_information(run, bank, ind, row, col, wl, two_theta, az_phi,
                                                            phi, chi, omega, intens, sig_intens)
+                                                           
+                    self.peak_dict[key][0].set_Q(Q)
+                    
         else:
             print('{} does not exist'.format(ws))
 
@@ -1227,6 +1235,7 @@ class PeakDictionary:
                 intens = peak.get_estimated_intensities()
                 sig_intens = peak.get_estimated_intensity_errors()
                 R = peak.get_goniometers()[0]
+                Q = peak.get_Q()[0]
 
                 clusters = self.__dbscan_1d(phi, eps)
                 
@@ -1247,11 +1256,13 @@ class PeakDictionary:
                         pk.setIntMNP(V3D(m,n,p))
                         pk.setPeakNumber(peak_num)
                         pk.setGoniometerMatrix(R)
-
+                        pk.setQSampleFrame(Q)
+                        
                         self.pws.addPeak(pk)
 
                         new_peak.set_peak_number(peak_num)
-
+                        new_peak.set_Q(Q)
+                        
                         new_peak.set_rows(rows[cluster])
                         new_peak.set_cols(cols[cluster])
                         new_peak.set_run_numbers(runs[cluster])

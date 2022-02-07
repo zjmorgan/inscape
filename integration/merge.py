@@ -7,9 +7,9 @@ from mantid.simpleapi import LoadMD, BinMD, PlusMD, SetMDFrame, \
                              PredictPeaks, PredictSatellitePeaks, \
                              CentroidPeaksMD, IntegratePeaksMD, SetUB, \
                              SetSampleMaterial, AnvredCorrection, \
-                             DeleteWorkspace, \
+                             DeleteWorkspace, SaveNexus, FilterPeaks, \
                              ConvertHFIRSCDtoMDE, HFIRCalculateGoniometer, \
-                             mtd
+                             CopyInstrumentParameters, NormaliseByCurrent, mtd
 
 import os
 
@@ -17,7 +17,10 @@ import numpy as np
 
 from lmfit import Parameters, Minimizer, report_fit
 
-def box_integrator(instrument, runs, indices, binsize=0.001, radius=0.15, exp=None):
+import peak
+from peak import PeakEnvelope, PeakDictionary
+
+def box_integrator(instrument, runs, Q0, binsize=0.001, radius=0.15, exp=None):
 
     for i, r in enumerate(runs):
 
@@ -27,12 +30,8 @@ def box_integrator(instrument, runs, indices, binsize=0.001, radius=0.15, exp=No
             ows = '{}_{}_{}'.format(instrument,exp,r)
 
         omd = ows+'_md'
-        opk = ows+'_pks'
 
         if i == 0:
-
-            Q0 = mtd[opk].getPeak(indices[i]).getQSampleFrame()
-            #UB = mtd[opk].sample().getOrientedLattice().getUB()
 
             Qr = np.array([radius,radius,radius])
 
@@ -69,7 +68,7 @@ def box_integrator(instrument, runs, indices, binsize=0.001, radius=0.15, exp=No
 
     weights = mtd['box'].getSignalArray()[mask]
 
-    return Q, Qx[mask], Qy[mask], Qz[mask], weights, Q0
+    return Q, Qx[mask], Qy[mask], Qz[mask], weights
 
 def Q_profile(peak_envelope, key, Q, weights, Q0, radius=0.15, bins=30):
 
@@ -916,47 +915,47 @@ def norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, bin_siz
                                    x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv)
     
     # ---
-    
+
     if fit:
-        
+
         xdata = np.vstack((Qx.ravel(), Qy.ravel(), Qz.ravel()))
         ydata = signal.copy().ravel()
         edata = error_sq.copy().ravel()
-        
+
         mask = ~(np.isnan(ydata) | np.isinf(ydata) | np.isnan(edata) | np.isinf(edata))
-            
+
         yreal = ydata[mask]
         ereal = edata[mask]
         xreal = xdata.T[mask].T
-        
+
         mask = (yreal > 0) & (ereal > 0)
-            
+
         y = yreal[mask]
         e = ereal[mask]
         x = xreal.T[mask].T
-                    
+
         sig = 0.25/np.sqrt(D.diagonal())
-        
+
         fitting = GaussianFit3D(x, y, e, Q_rot, sig) 
-     
+
         popt = fitting.fit()
-        
+
         Q_rot = [popt[2],popt[3],popt[4]]
-        
+
         radii = 4*np.array([popt[5],popt[6],popt[7]])
-        
+
         D[0,0] = 1/radii[0]**2
         D[1,1] = 1/radii[1]**2
         D[2,2] = 1/radii[2]**2
-        
+
         D_pk = D/peak_ellipsoid**2
         D_bkg_in = D/inner_bkg_ellipsoid**2
         D_bkg_out = D/outer_bkg_ellipsoid**2
 
         ymodl = fitting.gaussian_3d(xdata[0], xdata[1], xdata[2], *popt)
-        
+
         signal = ymodl.reshape(*error_sq.shape)
-        
+
         radii_pk_u = 1/np.sqrt(D_pk[0,0])
         radii_pk_v = 1/np.sqrt(D_pk[1,1])
         radii_pk_Q = 1/np.sqrt(D_pk[2,2])
@@ -987,10 +986,10 @@ def norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, bin_siz
                                            x_pk_Qu, y_pk_Qu, x_pk_Qv, y_pk_Qv, x_pk_uv, y_pk_uv,
                                            x_in_Qu, y_in_Qu, x_in_Qv, y_in_Qv, x_in_uv, y_in_uv,
                                            x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv)
-        
+
         pk_data, pk_norm = [], []
         bkg_data, bkg_norm = [], []
-        
+
         for i, r in enumerate(runs):
 
             signal = mtd['tmpDataMD_{}'.format(i)].getSignalArray().copy()
@@ -1010,7 +1009,7 @@ def norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, bin_siz
             signal = mtd['tmpNormMD_{}'.format(i)].getSignalArray().copy()
 
             pk, bkg = partial_integration(signal, Qx, Qy, Qz, Q_rot, D_pk, D_bkg_in, D_bkg_out)
-            
+
             pk_norm.append(pk)
             bkg_norm.append(bkg)
 
@@ -1024,34 +1023,34 @@ class GaussianFit3D:
 
         self.params.add('A', value=y.max()-np.median(y), min=0, max=y.max())
         self.params.add('B', value=np.median(y), min=0, max=y.mean())
-        
+
         self.params.add('mu0', value=Q[0], min=Q[0]-0.1, max=Q[0]+0.1)
         self.params.add('mu1', value=Q[1], min=Q[1]-0.1, max=Q[1]+0.1)
         self.params.add('mu2', value=Q[2], min=Q[2]-0.1, max=Q[2]+0.1)
-        
+
         self.params.add('sig0', value=sig[0], min=0.25*sig[0], max=4*sig[0])
         self.params.add('sig1', value=sig[1], min=0.25*sig[0], max=4*sig[0])
         self.params.add('sig2', value=sig[2], min=0.25*sig[0], max=4*sig[0])
-        
+
         self.params.add('rho12', value=0, min=-1, max=1)
         self.params.add('rho02', value=0, min=-1, max=1)
         self.params.add('rho01', value=0, min=-1, max=1)
-        
+
         self.x = x
         self.y = y
         self.e = np.sqrt(e)
 
     def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
-        
+
         U = np.array([[1, rho01, rho02],
                       [0,     1, rho12],
                       [0,     0,     1]])
         L = U.T
-        
+
         sigma = np.array([[sig0, 0, 0],
                           [0, sig1, 0],
                           [0, 0, sig2]])
-            
+
         S = np.dot(np.dot(L,sigma),U)
 
         inv_S = np.linalg.inv(S)
@@ -1109,12 +1108,33 @@ class GaussianFit3D:
         rho01 = result.params['rho01'].value
         
         return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01
+        
+def load_normalization_calibration(facility, spectrum_file, counts_file,
+                                   tube_calibration, detector_calibration):
 
-def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, counts_file,
-                    tube_calibration, detector_calibration, reflection_condition,
+    if not mtd.doesExist('tube_table') and tube_calibration is not None:
+        LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
+
+    if not mtd.doesExist('sa') and counts_file is not None:
+        if facility == 'SNS':
+            LoadNexus(Filename=counts_file, OutputWorkspace='sa')
+            NormaliseByCurrent('sa', OutputWorkspace='sa')
+        else:
+            LoadMD(Filename=counts_file, OutputWorkspace='van')
+
+    if not mtd.doesExist('flux') and spectrum_file is not None:
+        LoadNexus(Filename=spectrum_file, OutputWorkspace='flux')
+        
+    if detector_calibration is not None:
+        ext = os.path.splitext(detector_calibration)[1]
+        if ext == '.xml':
+            LoadParameterFile(Workspace='sa', Filename=detector_calibration)
+        else:
+            LoadIsawDetCal(Workspace='sa', Filename=detector_calibration)
+
+def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflection_condition,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
-                    max_order=0, cross_terms=False, radius=0.15,
-                    chemical_formula=None, volume=None, z=1, exp=None):
+                    max_order=0, cross_terms=False, exp=None):
 
     min_d_spacing = 0.7
     max_d_spacing= 20
@@ -1125,78 +1145,34 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
     # goniometer axis --------------------------------------------------------------
     gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
 
-    if not mtd.doesExist('tube_table') and tube_calibration is not None:
-        LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
-
-    if not mtd.doesExist('sa') and counts_file is not None:
-        if facility == 'SNS':
-            LoadNexus(Filename=counts_file, OutputWorkspace='sa')
-        else:
-            LoadMD(Filename=counts_file, OutputWorkspace='van')
-
-    if not mtd.doesExist('flux') and spectrum_file is not None:
-        LoadNexus(Filename=spectrum_file, OutputWorkspace='flux')
-
-    merge_md = []
-    merge_pk = []
-
     for i, r in enumerate(runs):
         print('Processing run : {}'.format(r))
         if facility == 'SNS':
             ows = '{}_{}'.format(instrument,r)
         else:
             ows = '{}_{}_{}'.format(instrument,exp,r)
-            
+
         omd = ows+'_md'
-        opk = ows+'_pks'
-        merge_md.append(omd)
-        merge_pk.append(opk)
-        
-        if not mtd.doesExist(omd):
-            
+        opk = ows+'_pk'
+
+        if not mtd.doesExist(opk):
+
             if facility == 'SNS':
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
                 LoadEventNexus(Filename=filename, OutputWorkspace=ows)
-    
-                if tube_calibration is not None:
-                    ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
-    
-                if counts_file is not None:
-                    MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
-    
-                if detector_calibration is not None:
-                    ext = os.path.splitext(detector_calibration)[1]
-                    if ext == '.xml':
-                        LoadParameterFile(Workspace=ows, Filename=detector_calibration)
-                    else:
-                        LoadIsawDetCal(Workspace=ows, Filename=detector_calibration)
 
-                # NormaliseByCurrent(ows, OutputWorkspace=ows)
-    
+                if mtd.doesExist('tube_table'):
+                    ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
+
+                if mtd.doesExist('sa'):
+                    MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
+                    CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+
                 if instrument == 'CORELLI':
                     SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis))
                 else:
                     SetGoniometer(Workspace=ows, Goniometers='Universal')
-                    
-                if chemical_formula is not None:
 
-                    SetSampleMaterial(InputWorkspace=ows,
-                                      ChemicalFormula=chemical_formula,
-                                      ZParameter=z,
-                                      UnitCellVolume=volume)
-    
-                    AnvredCorrection(InputWorkspace=ows,
-                                     OnlySphericalAbsorption=True,
-                                     Radius=radius,
-                                     OutputWorkspace=ows)
-    
-                ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
-    
-                if instrument == 'CORELLI':
-                    CropWorkspaceForMDNorm(InputWorkspace=ows, XMin=2.5, XMax=10, OutputWorkspace=ows)
-    
-                #ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='dSpacing')
-    
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
                             QDimensions='Q3D',
@@ -1212,39 +1188,39 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                             SplitThreshold=50,
                             MaxRecursionDepth=13,
                             MinRecursionDepth=7)   
-                    
+
             else:
                 filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
                 LoadMD(Filename=filename, OutputWorkspace=ows)
-                
+
                 scale = mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value
                 norm = np.sum(mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value)
-                
+
                 scale /= norm
-                
+
                 temp = mtd[ows].getExperimentInfo(0).run().getProperty('coldtip').value
                 Q3, Q1 = np.percentile(temp,75), np.percentile(temp,25)
-                
+
                 IQR = Q3-Q1
-        
+
                 mask = (temp > Q3+1.5*IQR) | (temp < Q1-1.5*IQR)
-                
+
                 scale[mask] = 0
-                
+
                 d = mtd[ows].getSignalArray().copy()
                 d[...,mask] = 0
-                
+
                 v = mtd['van'].getSignalArray().copy()
-                
+
                 mtd[ows].setSignalArray(d)
                 mtd[ows].setErrorSquaredArray(d)
-                
+
                 SetGoniometer(Workspace=ows,
                               Axis0='omega,0,1,0,-1',
                               Axis1='chi,0,0,1,-1',
                               Axis2='phi,0,1,0,-1',
                               Average=False)
-                
+
                 wavelength = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
 
                 ConvertHFIRSCDtoMDE(InputWorkspace=ows,
@@ -1255,10 +1231,10 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                                     SplitThreshold=1000,
                                     MaxRecursionDepth=13,
                                     OutputWorkspace=omd)
-    
+
                 mtd[ows].setSignalArray(v.repeat(d.shape[2]).reshape(*d.shape)*scale)
                 mtd[ows].setErrorSquaredArray(v.repeat(d.shape[2]).reshape(*d.shape)*scale)
-    
+
                 ConvertHFIRSCDtoMDE(InputWorkspace=ows,
                                     Wavelength=wavelength,
                                     MinValues='-10,-10,-10',
@@ -1267,7 +1243,7 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                                     SplitThreshold=1000,
                                     MaxRecursionDepth=13,
                                     OutputWorkspace=ows+'_van')
-                
+
             if type(ub_file) is list:
                 LoadIsawUB(InputWorkspace=omd, Filename=ub_file[i])
             elif type(ub_file) is str:
@@ -1308,7 +1284,7 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                              OutputWorkspace=opk)
             else:
                 wavelength = float(mtd[omd].getExperimentInfo(0).run().getProperty('wavelength').value)
-    
+
                 PredictPeaks(InputWorkspace=omd,
                              WavelengthMin=wavelength*0.95,
                              WavelengthMax=wavelength*1.05,
@@ -1322,7 +1298,7 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                              FlipX=True,
                              OutputType='Peak',
                              OutputWorkspace=opk)
-    
+
                 HFIRCalculateGoniometer(Workspace=opk,
                                         Wavelength=wavelength,
                                         OverrideProperty=True,
@@ -1357,14 +1333,116 @@ def pre_integration(facility, instrument, ipts, runs, ub_file, spectrum_file, co
                              PeaksWorkspace=opk,
                              OutputWorkspace=opk)
 
-        # delete ows save memory
-        # if mtd.doesExist(ows):
-            # DeleteWorkspace(ows)
-            # md = GroupWorkspaces(merge_md)
-            # pk = GroupWorkspaces(merge_pk)
-            
+            FilterPeaks(InputWorkspace=opk,
+                        FilterVariable='QMod',
+                        FilterValue=0,
+                        Operator='>',
+                        OutputWorkspace=opk)
+
+            SaveNexus(InputWorkspace=opk, Filename=os.path.join(directory,opk+'.nxs'))
+
+        if facility == 'SNS':
+            if mtd.doesExist(ows):
+                DeleteWorkspace(ows)
+            if mtd.doesExist(omd):
+                DeleteWorkspace(omd)
+            if mtd.doesExist(opk):
+                DeleteWorkspace(opk)
+
+def partial_load(runs, banks, directory, facility, instrument, ipts, Q,
+                 sample_radius=0.15, chemical_formula=None,
+                 volume=0, z_parameter=1, exp=None):
+
+    # goniometer axis --------------------------------------------------------------
+    gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
+
+    for i, (r, b) in enumerate(zip(runs, banks)):
+        print('Processing run : {}'.format(r))
+        if facility == 'SNS':
+            ows = '{}_{}'.format(instrument,r)
+        else:
+            ows = '{}_{}_{}'.format(instrument,exp,r)
+
+        omd = ows+'_md'
+
+        if not mtd.doesExist(omd):
+
+            if facility == 'SNS':
+                filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
+                LoadEventNexus(Filename=filename, BankName='bank{}'.format(b), SingleBankPixelsOnly=True, OutputWorkspace=ows) #
+
+                if mtd.doesExist('tube_table'):
+                    ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
+
+                if mtd.doesExist('sa'):
+                    #MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
+                    CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+
+                if instrument == 'CORELLI':
+                    SetGoniometer(Workspace=ows, Axis0='{},0,1,0,1'.format(gon_axis))
+                else:
+                    SetGoniometer(Workspace=ows, Goniometers='Universal')
+
+                NormaliseByCurrent(ows, OutputWorkspace=ows)
+
+                ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
+
+                if instrument == 'CORELLI':
+                    CropWorkspaceForMDNorm(InputWorkspace=ows, XMin=2.5, XMax=10, OutputWorkspace=ows)
+
+                #ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='dSpacing')
+
+                Qmin = [Qi-0.5 for Qi in Q]
+                Qmax = [Qi+0.5 for Qi in Q]
+
+                ConvertToMD(InputWorkspace=ows,
+                            OutputWorkspace=omd,
+                            QDimensions='Q3D',
+                            dEAnalysisMode='Elastic',
+                            Q3DFrames='Q_sample',
+                            LorentzCorrection=False,
+                            MinValues='{},{},{}'.format(*Qmin),#'-10,-10,-10',#
+                            MaxValues='{},{},{}'.format(*Qmax),#'10,10,10',#
+                            PreprocDetectorsWS='-',
+                            Uproj='1,0,0',
+                            Vproj='0,1,0',
+                            Wproj='0,0,1',
+                            SplitInto=2,
+                            SplitThreshold=50,
+                            MaxRecursionDepth=13,
+                            MinRecursionDepth=7)   
+
+            if chemical_formula is not None:
+
+                SetSampleMaterial(InputWorkspace=ows,
+                                  ChemicalFormula=chemical_formula,
+                                  ZParameter=z,
+                                  UnitCellVolume=volume)
+
+                AnvredCorrection(InputWorkspace=ows,
+                                 OnlySphericalAbsorption=True,
+                                 Radius=radius,
+                                 OutputWorkspace=ows)
+
+def partial_cleanup(runs, facility, instrument):
+
+    for r in runs:
+
+        if facility == 'SNS':
+            ows = '{}_{}'.format(instrument,r)
+        else:
+            ows = '{}_{}_{}'.format(instrument,exp,r)
+
+        omd = ows+'_md'
+
+        if facility == 'SNS':
+            if mtd.doesExist(ows):
+                DeleteWorkspace(ows)
+            if mtd.doesExist(omd):
+                DeleteWorkspace(omd)
+
 def set_instrument(instrument):
-    
+
     tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ']
 
     instrument = instrument.upper()
@@ -1375,12 +1453,174 @@ def set_instrument(instrument):
         instrument = 'MANDI'
     if instrument == 'BL12':
         instrument = 'TOPAZ'
-        
+
     if instrument == 'DEMAND':
         instrument = 'HB3A'
     if instrument == 'WAND2':
         instrument = 'HB2C'
-    
+
     facility = 'SNS' if instrument in tof_instruments else 'HFIR'
-    
+
     return facility, instrument
+
+def integration_loop(keys, outname, ref_peak_dictionary, ref_dict,
+                     directory, facility, instrument, ipts, runs,
+                     split_angle, a, b, c, alpha, beta, gamma,
+                     mod_vector_1, mod_vector_2, mod_vector_3, max_order,
+                     sample_radius, chemical_formula, volume, z_parameter, experiment):
+
+    if facility == 'HFIR':
+        ows = '{}_{}'.format(instrument,experiment)+'_{}'
+    else:
+        ows = '{}'.format(instrument)+'_{}'
+
+    opk = ows+'_pk'
+    omd = ows+'_md'
+
+    peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+    peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+    peak_dictionary.set_scale_constant(1e+6)
+
+    for r in runs:
+        peak_dictionary.add_peaks(opk.format(r))
+
+    peak_dictionary.split_peaks(split_angle)
+    peaks = peak_dictionary.to_be_integrated()
+
+    peak_envelope = PeakEnvelope(directory+'/{}.pdf'.format(outname))
+    peak_envelope.show_plots(False)
+
+    for i, key in enumerate(keys):
+
+        key = tuple(key)
+
+        print('Integrating peak : {}'.format(key))
+        print(peak_dictionary.peak_dict.get(key))
+
+        redundancies = peaks[key]
+
+        peaks_list = peak_dictionary.peak_dict.get(key)
+
+        fixed = False
+        if ref_dict is not None:
+            ref_peaks = ref_peak_dictionary.peak_dict.get(key)
+            if ref_peaks is not None:
+                if len(ref_peaks) == len(redundancies):
+                    fixed = True
+
+        h, k, l, m, n, p = key
+
+        d = peak_dictionary.get_d(h, k, l, m, n, p)
+
+        for j, redudancy in enumerate(redundancies):
+
+            runs, numbers = redudancy
+
+            peak_envelope.clear_plots()
+
+            banks = peaks_list[j].get_bank_numbers()
+
+            Q0 = peaks_list[j].get_Q()
+
+            partial_load(runs, banks, directory, 
+                               facility, instrument, ipts, Q0,
+                               sample_radius, chemical_formula,
+                               volume, z_parameter, experiment)
+
+            if fixed:
+
+                ref_peak = ref_peaks[j]
+                Q0 = ref_peak.get_Q()
+                A = ref_peak.get_A()
+                D, W = np.linalg.eig(A)
+                D = np.diag(D)
+
+                radii = 1/np.sqrt(np.diagonal(D)) 
+
+                peak_fit, peak_bkg_ratio, peak_score2d = 0, 0, 0
+
+                if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
+
+                    data = norm_integrator(peak_envelope, instrument, runs, Q0, D, W, fit=False)
+
+                    peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
+
+            else:
+
+                remove = False
+
+                Q, Qx, Qy, Qz, weights = box_integrator(instrument, runs, Q0, binsize=0.005, radius=0.15, exp=experiment)
+
+                center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = Q_profile(peak_envelope, key, Q, weights, 
+                                                                                                                     Q0, radius=0.15, bins=31)
+
+                print('Peak-fit Q: {}'.format(peak_fit))
+                print('Peak background ratio Q: {}'.format(peak_bkg_ratio))
+                print('Signal-noise ratio Q: {}'.format(sig_noise_ratio))
+                print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
+
+                if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Q0)-center) < 0.1):
+
+                    remove = True
+
+                n, u, v = projection_axes(Q0)
+
+                center2d, covariance2d, peak_score2d, sig_noise_ratio2d = projected_profile(peak_envelope, d, Q, Qx, Qy, Qz, weights,
+                                                                                                  Q0, u, v, center, variance, radius=0.1,
+                                                                                                  bins=21, bins2d=21)
+
+                print('Peak-score 2d: {}'.format(peak_score2d))
+                print('Signal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
+
+                if (peak_score2d > 2 and not np.isinf(peak_score2d) and not np.isnan(peak_score2d) and np.linalg.norm(center2d) < 0.15 and sig_noise_ratio2d > 3):
+
+                    remove = True
+
+                Qc, A, W, D = ellipsoid(Q0, center, variance, center2d, covariance2d, 
+                                              n, u, v, xsigma=4, lscale=5)
+
+                peak_envelope.plot_projection_ellipse(*peak.draw_ellispoid(center2d, covariance2d, lscale=5))
+
+                center, variance, peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights, 
+                                                                                                                               Q0, u, v, center, variance, center2d, covariance2d, bins=21)
+
+                print('Peak-fit Q second pass: {}'.format(peak_fit))
+                print('Peak background ratio Q second pass: {}'.format(peak_bkg_ratio))
+                print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
+                print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
+
+                if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Qc)-center) < 0.1 and peak_total_data_ratio < 3):
+
+                    remove = True
+
+                if not np.isnan(covariance2d).any():
+
+                    Q0, A, W, D = ellipsoid(Q0, center, variance, center2d, covariance2d, 
+                                                  n, u, v, xsigma=4, lscale=5)
+
+                    radii = 1/np.sqrt(np.diagonal(D)) 
+
+                    print('Peak-radii: {}'.format(radii))
+
+                    if np.isclose(np.abs(np.linalg.det(W)),1) and (radii < 0.3).all() and (radii > 0).all():
+
+                        data = norm_integrator(peak_envelope, facility, instrument, runs, Q0, D, W, exp=experiment, fit=False)
+
+                        peak_dictionary.integrated_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, data, j)
+
+                        peak_envelope.write_figure()
+
+                    else:
+
+                        remove = True
+
+                if remove:
+
+                    peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, j)
+
+            partial_cleanup(runs, facility, instrument)
+
+        peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))        
+
+    peak_dictionary.save(directory+'/{}.pkl'.format(outname))
+    peak_envelope.create_pdf()
