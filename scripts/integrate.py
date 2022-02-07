@@ -19,7 +19,10 @@ from peak import PeakDictionary
 
 CreatePeaksWorkspace(NumberOfPeaks=0, OutputWorkspace='sample', OutputType='LeanElasticPeak')
 
-filename = '/home/zgf/Documents/data/Mn3Si2Te6/Mn3Si2Te6_current.txt' #sys.argv[1]
+filename, n_proc = sys.argv[1] sys.argv[2]
+
+if n_proc > 16:
+    n_proc = 16
 
 dictionary = parameters.load_input_file(filename)
 
@@ -134,9 +137,9 @@ if os.path.exists(filename) and not mtd.doesExist(tmp):
 
 if not mtd.doesExist(tmp):
 
-    with multiprocessing.get_context('spawn').Pool(processes=8) as pool:
+    with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
 
-        split_runs = [split.tolist() for split in np.array_split(runs, 8)]
+        split_runs = [split.tolist() for split in np.array_split(runs, n_proc)]
 
         args = [directory, facility, instrument, ipts, ub_file, reflection_condition,
                 mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment]
@@ -184,10 +187,10 @@ if __name__ == '__main__':
     multiprocessing.freeze_support()
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
 
-    with multiprocessing.get_context('spawn').Pool(processes=8) as pool:
+    with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
 
         keys = list(peaks.keys())
-        split_keys = [split.tolist() for split in np.array_split(keys, 8)]
+        split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
 
         args = [ref_peak_dictionary, ref_dict,
                 directory, facility, instrument, ipts, runs,
