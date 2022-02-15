@@ -13,7 +13,7 @@ def load_input_file(filename):
         for line in lines:
             if line[0] != '#' and line.count('=') > 0:
                 if line.count('#') > 0:
-                    line, _ = line.split('#')
+                    line = line.split('#')[0]
                 line = line.replace(' ', '').replace('\n', '')
                 var, val = line.split('=')
                 
@@ -42,47 +42,63 @@ def load_input_file(filename):
                 dictionary[var] = val
 
         return dictionary
-    
+        
+def output_input_file(filename, directory, outname):
+
+    output_input = os.path.join(directory, outname+'.inp')
+
+    with open(filename, 'r') as f:
+
+        lines = f.readlines()
+
+    with open(output_input, 'w') as f:
+
+        for line in lines:
+            if line[0] != '#' and line.count('=') > 0:
+                if line.count('#') > 0:
+                    line = line.split('#')[0]+'\n'
+            f.write(line)
+
 class Experiment:
     
     def __init__(self, instrument, ipts, run_numbers):
-        
+
         tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ']
-    
+
         instrument = instrument.upper()
-    
+
         if instrument == 'BL9':
             instrument = 'CORELLI'
         if instrument == 'BL11B':
             instrument = 'MANDI'
         if instrument == 'BL12':
             instrument = 'TOPAZ'
-            
+
         if instrument == 'DEMAND':
             instrument = 'HB3A'
         if instrument == 'WAND2':
             instrument = 'HB2C'
-        
+
         facility = 'SNS' if instrument in tof_instruments else 'HFIR'
-        
+
         self.facility, self.instrument = facility, instrument
-        
+
         self.ipts = ipts
-        
+
     def get_nexus_file(self, run, exp=None):
-        
+
         if self.instrument == 'HB3A':
             filepath = '/{}/{}/IPTS-{}/shared/autoreduce/'
             filename = '{}_exp{:04}_scan{:04}.nxs'
-        else: 
+        else:
            filepath = '/{}/{}/IPTS-{}/nexus/'
            filename = '{}_{}.nxs.h5'
-           
+
         filepath = filepath.format(self.facility,self.instrument,self.ipts)
         filename = filename.format(self.instrument,run,exp)
-           
+
         return os.path.join(filepath,filename)
-    
+
     def get_output_workspace(self, run, app=None):
         
         if self.instrument == 'HB2C':

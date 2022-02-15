@@ -3,12 +3,10 @@ from mantid.simpleapi import *
 import matplotlib.pyplot as plt
 import numpy as np
 
-from scipy.optimize import curve_fit
-
 import sys 
 import os 
 
-directory = os.path.dirname(os.path.realpath(__file__))
+directory = '/home/zgf/Documents/data/Mn3Si2Te6'
 sys.path.append('/home/zgf/.git/inscape/integration/')
 
 # calibration calibration -----------------------------------------------------
@@ -27,15 +25,17 @@ LoadParameterFile(Workspace=ws, Filename=detector_calibration)
 
 inst = mtd['sa'].getInstrument()
 
-import merge
+import peak
 
 import imp
-imp.reload(merge)
+imp.reload(peak)
 
-outname = 'Mn3Si2Te6_SS_100K_0T'
+from peak import PeakDictionary
 
-new_peak_dictionary = merge.PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
-new_peak_dictionary.load(directory+'/{}_integration_fixed.pkl'.format(outname))
+outname = 'Mn3Si2Te6_5T_005K'
+
+new_peak_dictionary = PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
+new_peak_dictionary.load(directory+'/{}.pkl'.format(outname))
 
 bank_corr = np.loadtxt(os.path.join('/SNS/CORELLI/shared/Integration', 'bank-corrections.txt'), delimiter=',', 
                        dtype={ 'names': ('bank', 'm', 'b'), 'formats': (int,float,float) }, skiprows=1)
@@ -66,80 +66,40 @@ for key in list(peaks.keys()):
 
     # print('Integrating peak : {}'.format(key))
 
-    h, k, l = key
+    h, k, l, m, n, p = key
 
-    peak = new_peak_dictionary.peak_dict.get(key)
+    peaks = new_peak_dictionary.peak_dict.get(key)
 
-    pk_by_bank = peak._PeakInformation__bank_num
-    pk_by_row = peak._PeakInformation__row
-    pk_by_col = peak._PeakInformation__col
-    norm_scale = peak._PeakInformation__norm_scale.copy()
+    for peak in peaks:
 
-    intens = peak.get_merged_intensity()
-    print(intens)
+        pk_by_bank = peak._PeakInformation__bank_num
+        pk_by_row = peak._PeakInformation__row
+        pk_by_col = peak._PeakInformation__col
+        norm_scale = peak._PeakInformation__norm_scale.copy()
 
-    if intens > 0 and not np.isinf(intens):
+        intens = peak.get_merged_intensity()
 
-        for i in range(len(norm_scale)):
-            bank = pk_by_bank[i]
-            row = pk_by_row[i]
-            col = pk_by_col[i]
-            y = inst.getComponentByName('bank{}/sixteenpack/tube{}/pixel{}'.format(bank,col,row)).getPos().Y()
-            coeffs = coefficients.get(bank)
-            if coeffs is not None:
-                if bank in rowC:
-                    scale = coeffs[0]*np.abs(y)+coeffs[1]
-                elif bank in rowB:
-                    if y > 0:
+        if intens > 0 and not np.isinf(intens):
+
+            for i in range(len(norm_scale)):
+                bank = pk_by_bank[i]
+                row = pk_by_row[i]
+                col = pk_by_col[i]
+                y = inst.getComponentByName('bank{}/sixteenpack/tube{}/pixel{}'.format(bank,col,row)).getPos().Y()
+                coeffs = coefficients.get(bank)
+                if coeffs is not None:
+                    if bank in rowC:
                         scale = coeffs[0]*np.abs(y)+coeffs[1]
+                    elif bank in rowB:
+                        if y > 0:
+                            scale = coeffs[0]*np.abs(y)+coeffs[1]
+                        else:
+                            scale = 1.0
                     else:
                         scale = 1.0
-                else:
-                    scale = 1.0
-                norm_scale[i] = scale
+                    norm_scale[i] = scale
 
-        peak._PeakInformation__norm_scale = norm_scale
-
-    #intens = peak.get_merged_intensity()
-    #print(intens)
-
-def merge_pk_vol(pk_data, pk_norm):
-
-    data = np.sum(pk_data, axis=0)
-    norm = np.sum(pk_norm, axis=0)
-    print(norm)
-
-    #pk_vol = np.sum(~np.isnan(data/norm))/data.size
-    pk_vol = np.sum(~(np.isnan(data/norm)))/data.size
-
-    return pk_vol
-
-for p in range(mtd['iws'].getNumberPeaks()):
-
-    pk = mtd['iws'].getPeak(p)
-
-    h, k, l = pk.getHKL()
-
-    key = h,k,l
-
-    peak = new_peak_dictionary.peak_dict.get(key)
-
-    if peak._PeakInformation__pk_data is not None:
-
-        peak_vol = merge_pk_vol(peak._PeakInformation__pk_data, peak._PeakInformation__pk_norm)
-
-        #print('[{:4.0f} {:4.0f} {:4.0f}], peak_vol:{:6.2f}'.format(h,k,l,peak_vol))
-
-        if (peak_vol > 0.6):
-            intens = peak.get_merged_intensity()
-            sig_intens = peak.get_merged_intensity_error()
-        else:
-            intens = 0
-            sig_intens = 0
-
-        pk.setIntensity(intens)
-        pk.setSigmaIntensity(sig_intens)
+            peak._PeakInformation__norm_scale = norm_scale
 
 new_peak_dictionary._PeakDictionary__iws = mtd['iws']
-
-new_peak_dictionary.save_hkl(directory+'/{}_correction.hkl'.format(outname))
+new_peak_dictionary.save_hkl(directory+'/{}_correction.hkl'.format(outname), min_signal_noise_ratio=1, min_pk_vol_fract=0.6)
