@@ -1,6 +1,8 @@
 from mantid.simpleapi import *
 
 import os
+import re
+import psutil
 
 import numpy as np
 
@@ -72,6 +74,9 @@ def Q_profile(peak_envelope, key, Q, weights, Q0, radius=0.15, bins=30):
 
     A = (np.array([x*0+1, x])).T
     B = y.flatten()
+    
+    if np.size(y) <= 2:
+        return Qmod, np.nan, np.nan, np.nan, np.nan, np.nan
 
     coeff, r, rank, s = np.linalg.lstsq(A, B)
 
@@ -137,7 +142,7 @@ def Q_profile(peak_envelope, key, Q, weights, Q0, radius=0.15, bins=30):
             sigma[~nonzero] = med
         else:
             print('Q-profile failed: cannot find medium sigma')
-            return Qmod, np.nan, np.nan, np.nan, np.nan
+            return Qmod, np.nan, np.nan, np.nan, np.nan, np.nan
 
         expected_data = norm(bin_centers, variance, center)*data.max()
 
@@ -188,6 +193,9 @@ def extracted_Q_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
 
     A = (np.array([x*0+1, x])).T
     B = y.flatten()
+
+    if np.size(y) <= 2:
+        return Qmod, np.nan, np.nan, np.nan, np.nan, np.nan
 
     coeff, r, rank, s = np.linalg.lstsq(A, B)
 
@@ -302,6 +310,9 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
         A = (np.array([x*0+1, x, y])*weights[~mask]**2).T
         B = z.flatten()*weights[~mask]**2
 
+        if np.size(B) < 3:
+            return np.array([0,0]), np.array([[1,0],[0,1]]), np.nan, np.nan
+            
         coeff, r, rank, s = np.linalg.lstsq(A, B)
 
         bkg_weights = (coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
@@ -365,6 +376,9 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
 
         A = (np.array([x*0+1, x, y])*weights[~mask]**2).T
         B = z.flatten()*weights[~mask]**2
+
+        if np.size(B) < 3:
+            return np.array([0,0]), np.array([[1,0],[0,1]]), np.nan, np.nan
 
         coeff, r, rank, s = np.linalg.lstsq(A, B)
 
@@ -433,6 +447,9 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
         A = (np.array([x*0+1, x, y])*weights[~mask]**2).T
         B = z.flatten()*weights[~mask]**2
 
+        if np.size(B) < 3:
+            return np.array([0,0]), np.array([[1,0],[0,1]]), np.nan, np.nan
+            
         coeff, r, rank, s = np.linalg.lstsq(A, B)
 
         bkg_weights = (coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
@@ -443,6 +460,9 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
 
         range2d = [[u_center-u_width,u_center+u_width],
                    [v_center-v_width,v_center+v_width]]
+             
+        if (np.diff(range2d, axis=1) < 0.0001).any() or data_weights[mask].size < 4:
+            return np.array([0,0]), np.array([[1,0],[0,1]]), np.nan, np.nan
 
         uv_bin_counts, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
                                                                  range=range2d, weights=data_weights[mask])
@@ -528,6 +548,9 @@ def projected_profile(peak_envelope, key, Q, Qx, Qy, Qz, weights,
         A = (np.array([x*0+1, x, y])*z.flatten()**2).T
         B = z.flatten()*z.flatten()**2
 
+        if np.size(B) < 3:
+            return np.array([0,0]), np.array([[1,0],[0,1]]), np.nan, np.nan
+            
         coeff, r, rank, s = np.linalg.lstsq(A, B)
 
         bkg_weights = (coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
@@ -789,7 +812,7 @@ def norm_integrator(peak_envelope, facility, instrument, runs, banks, Q0, D, W, 
 
         if facility == 'SNS':
             MDNorm(InputWorkspace=omd,
-                   SolidAngleWorkspace='sa_{}'.format(b),
+                   SolidAngleWorkspace='sa',
                    FluxWorkspace='flux',
                    RLU=True, # not actually HKL
                    QDimension0='{},{},{}'.format(*W[:,0]),
@@ -908,8 +931,17 @@ def norm_integrator(peak_envelope, facility, instrument, runs, banks, Q0, D, W, 
 
     return pk_data, pk_norm, bkg_data, bkg_norm, dQp
 
-def load_normalization_calibration(facility, spectrum_file, counts_file,
+def load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration):
+                                       
+    if instrument == 'CORELLI':
+        k_min, k_max = 2.5, 8
+    elif instrument == 'TOPAZ':
+        k_min, k_max = 1.8, 12.5
+    elif instrument == 'MANDI':
+        k_min, k_max = 1.5, 6.3
+    elif instrument == 'SNAP':
+        k_min, k_max = 0.7, 12
 
     if not mtd.doesExist('tube_table') and tube_calibration is not None:
         LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
@@ -917,9 +949,23 @@ def load_normalization_calibration(facility, spectrum_file, counts_file,
     if not mtd.doesExist('sa') and counts_file is not None:
         if facility == 'SNS':
             LoadNexus(Filename=counts_file, OutputWorkspace='sa')
-            NormaliseByCurrent('sa', OutputWorkspace='sa')
+            if not mtd['sa'].run().hasProperty('NormalizationFactor'):
+                NormaliseByCurrent('sa', OutputWorkspace='sa')
         else:
             LoadMD(Filename=counts_file, OutputWorkspace='van')
+
+    elif facility == 'SNS':
+        CreateSimulationWorkspace(Instrument=instrument, BinParams='{},0.01,{}'.format(k_min,k_max), OutputWorkspace='tmp', UnitX='Momentum')
+        mtd['tmp'] /= mtd['tmp'].getMaxNumberBins()
+        Rebin(InputWorkspace='tmp', Params='{},{},{}'.format(k_min,k_max,k_max), PreserveEvents=False, OutputWorkspace='sa')
+        mtd['tmp'] /= mtd['tmp'].getNumberHistograms()
+        CreateGroupingWorkspace(InputWorkspace='tmp', GroupDetectorsBy='bank', OutputWorkspace='group')
+        GroupDetectors(InputWorkspace='tmp', OutputWorkspace='tmp', CopyGroupingFromWorkspace='group')
+        mtd['tmp'] *= mtd['tmp'].getNumberHistograms()
+        Rebin(InputWorkspace='tmp', Params='{},0.001,{}'.format(k_min,k_max), OutputWorkspace='tmp')
+        IntegrateFlux(InputWorkspace='tmp', OutputWorkspace='flux')
+        DeleteWorkspace('tmp')
+        DeleteWorkspace('group')
 
     if not mtd.doesExist('flux') and spectrum_file is not None:
         LoadNexus(Filename=spectrum_file, OutputWorkspace='flux')
@@ -929,6 +975,7 @@ def load_normalization_calibration(facility, spectrum_file, counts_file,
             ApplyCalibration(Workspace='sa', CalibrationTable='tube_table')
         if mtd.doesExist('flux'):
             ApplyCalibration(Workspace='flux', CalibrationTable='tube_table')
+        DeleteWorkspace('tube_table')
 
     if detector_calibration is not None:
         ext = os.path.splitext(detector_calibration)[1]
@@ -936,14 +983,14 @@ def load_normalization_calibration(facility, spectrum_file, counts_file,
             if ext == '.xml':
                 LoadParameterFile(Workspace='sa', Filename=detector_calibration)
             else:
-                LoadIsawDetCal(Workspace='sa', Filename=detector_calibration)
+                LoadIsawDetCal(InputWorkspace='sa', Filename=detector_calibration)
         if mtd.doesExist('flux'):
             if ext == '.xml':
                 LoadParameterFile(Workspace='flux', Filename=detector_calibration)
             else:
-                LoadIsawDetCal(Workspace='flux', Filename=detector_calibration)
+                LoadIsawDetCal(InputWorkspace='flux', Filename=detector_calibration)
 
-def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflection_condition,
+def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_file, reflection_condition,
                     spectrum_file, counts_file, tube_calibration, detector_calibration,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, exp=None):
@@ -957,8 +1004,10 @@ def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflec
     # goniometer axis --------------------------------------------------------------
     gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
 
-    load_normalization_calibration(facility, spectrum_file, counts_file,
+    load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration)
+
+    CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
 
     for i, r in enumerate(runs):
         print('Processing run : {}'.format(r))
@@ -995,11 +1044,7 @@ def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflec
                             MaxValues='20,20,20',
                             Uproj='1,0,0',
                             Vproj='0,1,0',
-                            Wproj='0,0,1',
-                            SplitInto=2,
-                            SplitThreshold=50,
-                            MaxRecursionDepth=13,
-                            MinRecursionDepth=7)   
+                            Wproj='0,0,1')   
 
             else:
                 filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
@@ -1066,29 +1111,24 @@ def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflec
                 UB = np.array(UB).reshape(3,3)
                 SetUB(omd, UB=UB)
 
-        else:
-
-            if facility == 'HFIR':
-                ws = ows if mtd.doesExist(ows) else omd
-                wavelength = float(mtd[ws].getExperimentInfo(0).run().getProperty('wavelength').value)
-
-        # peak prediction parameters ---------------------------------------------------
-        if instrument == 'CORELLI':
-            min_wavelength = 0.63
-            max_wavelength= 2.51
-        elif instrument == 'MANDI':
-            min_wavelength = 0.4
-            max_wavelength = 4
-        elif instrument == 'HB3A':
-            min_wavelength = 0.95*wavelength
-            max_wavelength = 1.05*wavelength
-
         if not mtd.doesExist(opk):
 
             if facility == 'SNS':
+                
+                if instrument == 'CORELLI':
+                    k_min, k_max = 2.5, 8
+                elif instrument == 'TOPAZ':
+                    k_min, k_max = 1.8, 12.5
+                elif instrument == 'MANDI':
+                    k_min, k_max = 1.5, 6.3
+                elif instrument == 'SNAP':
+                    k_min, k_max = 0.7, 12
+                    
+                lamda_min, lamda_max = 2*np.pi/k_max, 2*np.pi/k_min
+                
                 PredictPeaks(InputWorkspace=omd,
-                             WavelengthMin=min_wavelength,
-                             WavelengthMax=max_wavelength,
+                             WavelengthMin=lamda_min,
+                             WavelengthMax=lamda_max,
                              MinDSpacing=min_d_spacing,
                              MaxDSpacing=max_d_spacing,
                              OutputType='Peak',
@@ -1151,20 +1191,18 @@ def pre_integration(runs, directory, facility, instrument, ipts, ub_file, reflec
                         Operator='>',
                         OutputWorkspace=opk)
 
-            SaveNexus(InputWorkspace=opk, Filename=os.path.join(directory,opk+'.nxs'))
-
         if facility == 'SNS':
             if mtd.doesExist(ows):
                 DeleteWorkspace(ows)
             if mtd.doesExist(omd):
                 DeleteWorkspace(omd)
-            if mtd.doesExist(opk):
-                DeleteWorkspace(opk)
+                
+        CombinePeaksWorkspaces(LHSWorkspace=opk, RHSWorkspace='tmp', OutputWorkspace='tmp')
+            
+    SaveNexus(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'.nxs'))
 
 def partial_load(runs, banks, phi, chi, omega, proton_charge,
-                 directory, facility, instrument, ipts, Q,
-                 sample_radius=0.15, chemical_formula=None,
-                 volume=0, z_parameter=1, exp=None):
+                 directory, facility, instrument, ipts, Q, exp=None):
 
     for i, (r, b, p, c, o) in enumerate(zip(runs, banks, phi, chi, omega)):
         print('Processing run : {}'.format(r))
@@ -1175,7 +1213,7 @@ def partial_load(runs, banks, phi, chi, omega, proton_charge,
 
         omd = ows+'_md'
 
-        if not mtd.doesExist(ows):
+        if not mtd.doesExist(omd):
 
             if facility == 'SNS':
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
@@ -1221,44 +1259,28 @@ def partial_load(runs, banks, phi, chi, omega, proton_charge,
 
                 SetGoniometer(Workspace=ows, Goniometers='Universal')
 
-                NormaliseByCurrent(InputWorkspace=ows, OutputWorkspace=ows)
-
-                if chemical_formula is not None:
-                    
-                    SetSampleMaterial(InputWorkspace=ows,
-                                      ChemicalFormula=chemical_formula,
-                                      ZParameter=z_parameter,
-                                      UnitCellVolume=volume)
-
-                    AnvredCorrection(InputWorkspace=ows,
-                                     OnlySphericalAbsorption=True,
-                                     Radius=sample_radius,
-                                     OutputWorkspace=ows)
-
                 ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
 
-                if instrument == 'CORELLI':
-                    CropWorkspaceForMDNorm(InputWorkspace=ows, XMin=2.5, XMax=10, OutputWorkspace=ows)
+                if mtd.doesExist('flux'):
+                    CropWorkspaceForMDNorm(InputWorkspace=ows,
+                                           XMin=mtd['flux'].dataX(0).min(),
+                                           XMax=mtd['flux'].dataX(0).max(),
+                                           OutputWorkspace=ows)
 
-        if facility == 'SNS':
+                ConvertToMD(InputWorkspace=ows,
+                            OutputWorkspace=omd,
+                            QDimensions='Q3D',
+                            dEAnalysisMode='Elastic',
+                            Q3DFrames='Q_sample',
+                            LorentzCorrection=False,
+                            PreprocDetectorsWS='-',
+                            Uproj='1,0,0',
+                            Vproj='0,1,0',
+                            Wproj='0,0,1')
 
-            Qmin = [Qi-0.5 for Qi in Q]
-            Qmax = [Qi+0.5 for Qi in Q]
+                DeleteWorkspace(ows)
 
-            ConvertToMD(InputWorkspace=ows,
-                        OutputWorkspace=omd,
-                        QDimensions='Q3D',
-                        dEAnalysisMode='Elastic',
-                        Q3DFrames='Q_sample',
-                        LorentzCorrection=False,
-                        MinValues='{},{},{}'.format(*Qmin),
-                        MaxValues='{},{},{}'.format(*Qmax),
-                        PreprocDetectorsWS='-',
-                        Uproj='1,0,0',
-                        Vproj='0,1,0',
-                        Wproj='0,0,1')   
-
-def partial_cleanup(runs, banks, facility, instrument, runs_banks, key):
+def partial_cleanup(runs, banks, facility, instrument, runs_banks, bank_keys, bank_group, key):
 
     for r, b in zip(runs, banks):
 
@@ -1272,16 +1294,25 @@ def partial_cleanup(runs, banks, facility, instrument, runs_banks, key):
         peak_keys = runs_banks[(r,b)]
         peak_keys.remove(key)
         runs_banks[(r,b)] = peak_keys
- 
+
+        key_list = bank_keys[b]
+        key_list.remove(key)
+        bank_keys[b] = key_list
+
         if facility == 'SNS':
-            if mtd.doesExist(omd):
-                DeleteWorkspace(omd)
 
-            if len(peak_keys) == 0:
-                if mtd.doesExist(ows):
-                    DeleteWorkspace(ows)
+            if len(peak_keys) == 0 or psutil.virtual_memory().percent > 85:
+                if mtd.doesExist(omd):
+                    DeleteWorkspace(omd)
 
-    return runs_banks
+            if len(key_list) == 0:
+                MaskBTP(Workspace='sa', Bank=b)
+                MaskSpectra(InputWorkspace='flux', 
+                            InputWorkspaceIndexType='SpectrumNumber',
+                            InputWorkspaceIndexSet=bank_group[b],
+                            OutputWorkspace='flux')
+
+    return runs_banks, bank_keys
 
 def set_instrument(instrument):
 
@@ -1310,11 +1341,13 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
                      directory, facility, instrument, ipts, runs,
                      split_angle, a, b, c, alpha, beta, gamma,
                      mod_vector_1, mod_vector_2, mod_vector_3, max_order,
-                     sample_radius, chemical_formula, volume, z_parameter, experiment):
+                     chemical_formula, z_parameter, sample_mass, experiment):
+                         
+    scale_constant = 1e+4
 
-    load_normalization_calibration(facility, spectrum_file, counts_file,
+    load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration)
-                                             
+
     if facility == 'HFIR':
         ows = '{}_{}'.format(instrument,experiment)+'_{}'
     else:
@@ -1322,31 +1355,34 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
 
     opk = ows+'_pk'
     omd = ows+'_md'
-    
+
     LoadNexus(Filename=filename, OutputWorkspace='tmp')
-    
+
     for r in runs:
         FilterPeaks(InputWorkspace='tmp', 
                     FilterVariable='RunNumber',
                     FilterValue=r,
                     Operator='=',
                     OutputWorkspace=opk.format(r))
-                    
+
     proton_charge = {}
-    
+
     if facility == 'SNS':
         LoadEmptyInstrument(InstrumentName=instrument, OutputWorkspace=instrument+'_empty')
         for r in runs:
             logfile = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
-            LoadNexusLogs(Workspace=instrument+'_empty', Filename=logfile, OverwriteLogs=True)
+            LoadNexusLogs(Workspace=instrument+'_empty', Filename=logfile, OverwriteLogs=True, AllowList='gd_prtn_chrg')
             proton_charge[r] = mtd[instrument+'_empty'].getRun().getPropertyAsSingleValueWithTimeAveragedMean('gd_prtn_chrg')
+        DeleteWorkspace(instrument+'_empty')
 
     peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
     peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
-    peak_dictionary.set_scale_constant(1e+6)
+    peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
+    peak_dictionary.set_scale_constant(scale_constant)
 
     for r in runs:
         peak_dictionary.add_peaks(opk.format(r))
+        DeleteWorkspace(opk.format(r))
 
     peak_dictionary.split_peaks(split_angle)
     peaks = peak_dictionary.to_be_integrated()
@@ -1354,33 +1390,30 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
     peak_envelope = PeakEnvelope(directory+'/{}.pdf'.format(outname))
     peak_envelope.show_plots(False)
 
-    if mtd.doesExist('sa'):
+    DeleteWorkspace('tmp')
 
-        banks = list(set(mtd['tmp'].column(13)))
-        banks = [int(bank.replace('bank', '')) for bank in banks]
+    bank_set = set()
 
-        for b in banks:
-            CropToComponent(InputWorkspace='sa', 
-                            ComponentNames='bank{}'.format(b),
-                            OutputWorkspace='sa_{}'.format(b))
-    
     runs_banks = {}
-    
+    bank_keys = {}
+
     for key in keys:
-        
+
         key = tuple(key)
 
         peaks_list = peak_dictionary.peak_dict.get(key)
 
         redundancies = peaks[key]
-       
+
         for j, redundancy in enumerate(redundancies):
-            
+
             runs = peaks_list[j].get_run_numbers()
             banks = peaks_list[j].get_bank_numbers()
-            
+
             for r, b in zip(runs, banks):
                 
+                bank_set.add(b)
+
                 if runs_banks.get((r,b)) is None:
                     runs_banks[(r,b)] = [key]
                 else:
@@ -1388,12 +1421,42 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
                     peak_keys.append(key)
                     runs_banks[(r,b)] = peak_keys
 
+                if bank_keys.get(b) is None:
+                    bank_keys[b] = [key]
+                else:
+                    key_list = bank_keys[b]
+                    key_list.append(key)
+                    bank_keys[b] = key_list
+
+    banks = list(bank_set)
+
+    if mtd.doesExist('flux'):
+
+        bank_group = {}
+
+        for hn, sn in zip(range(mtd['flux'].getNumberHistograms()), mtd['flux'].getSpectrumNumbers()):
+
+            idx = mtd['flux'].getSpectrum(hn).getDetectorIDs()[0]
+            comp_path = mtd['flux'].getInstrument().getDetector(idx).getFullName()
+            b = int(re.search('bank[0-9]+', comp_path).group().lstrip('bank'))
+            
+            bank_group[b] = sn
+            
+        all_banks = list(bank_group.keys())
+        
+        for b in all_banks:
+            if b not in banks:
+                MaskBTP(Workspace='sa', Bank=b)
+                MaskSpectra(InputWorkspace='flux', 
+                            InputWorkspaceIndexType='SpectrumNumber',
+                            InputWorkspaceIndexSet=bank_group[b],
+                            OutputWorkspace='flux')
+
     for i, key in enumerate(keys):
 
         key = tuple(key)
 
         print('Integrating peak : {}'.format(key))
-        print(peak_dictionary.peak_dict.get(key))
 
         redundancies = peaks[key]
 
@@ -1416,18 +1479,16 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
 
             peak_envelope.clear_plots()
 
-            banks = peaks_list[j].get_bank_numbers()
+            banks = peaks_list[j].get_bank_numbers().tolist()
 
             Q0 = peaks_list[j].get_Q()
-            
+
             phi = peaks_list[j].get_phi_angles()
             chi = peaks_list[j].get_chi_angles()
             omega = peaks_list[j].get_omega_angles()
 
             partial_load(runs, banks, phi, chi, omega, proton_charge,
-                         directory, facility, instrument, ipts, Q0,
-                         sample_radius, chemical_formula,
-                         volume, z_parameter, experiment)
+                         directory, facility, instrument, ipts, Q0, experiment)
 
             if fixed:
 
@@ -1461,7 +1522,7 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
                 print('Signal-noise ratio Q: {}'.format(sig_noise_ratio))
                 print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
 
-                if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Q0)-center) < 0.1):
+                if (sig_noise_ratio < 3 or 3*np.sqrt(variance) > 0.1 or np.abs(np.linalg.norm(Q0)-center) > 0.1 or peak_total_data_ratio > 2.5):
 
                     remove = True
 
@@ -1491,7 +1552,7 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
                 print('Signal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
                 print('Peak-total to subtrated-data ratio Q: {}'.format(peak_total_data_ratio))
 
-                if (sig_noise_ratio > 3 and 3*np.sqrt(variance) < 0.1 and np.abs(np.linalg.norm(Qc)-center) < 0.1 and peak_total_data_ratio < 3):
+                if (sig_noise_ratio < 3 or 3*np.sqrt(variance) > 0.1 or np.abs(np.linalg.norm(Qc)-center) > 0.1 or peak_total_data_ratio > 2.5):
 
                     remove = True
 
@@ -1520,7 +1581,7 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
 
                     peak_dictionary.partial_result(key, Q0, A, peak_fit, peak_bkg_ratio, peak_score2d, j)
 
-            runs_banks = partial_cleanup(runs, banks, facility, instrument, runs_banks, key)
+            runs_banks, bank_keys = partial_cleanup(runs, banks, facility, instrument, runs_banks, bank_keys, bank_group, key)
 
         if i % 15 == 0:
             peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))       
@@ -1529,3 +1590,6 @@ def integration_loop(keys, outname, ref_peak_dictionary, ref_dict, filename,
     peak_dictionary.save_hkl(directory+'/{}.hkl'.format(outname))       
     peak_dictionary.save(directory+'/{}.pkl'.format(outname))
     peak_envelope.create_pdf()
+    
+    DeleteWorkspace('sa')
+    DeleteWorkspace('flux')

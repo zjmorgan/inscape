@@ -100,20 +100,20 @@ class Experiment:
         return os.path.join(filepath,filename)
 
     def get_output_workspace(self, run, app=None):
-        
+
         if self.instrument == 'HB2C':
             ows = '{}_{}_{}'.format(self.instrument,run,app)
         if self.instrument == 'HB3A':
             ows = '{}_{}_{}'.format(self.instrument,app,run)
         else:
             ows = '{}_{}'.format(self.instrument,run)
-            
+
         return ows
 
     def get_event_workspace(self, run, app=None):
-        
+
         return self.get_output_workspace(run, app)+'_md'
-    
+
     def get_peaks_workspace(self, run, app=None):
-        
+
         return self.get_output_workspace(run, app)+'_pk'
