@@ -11,6 +11,8 @@ def load_input_file(filename):
         lines = f.readlines()
         
         for line in lines:
+            line = line.lstrip(' ')
+            line = line.rstrip(' ')
             if line[0] != '#' and line.count('=') > 0:
                 if line.count('#') > 0:
                     line = line.split('#')[0]
@@ -28,9 +30,9 @@ def load_input_file(filename):
                     elif val.lower() == 'true':
                         val = True
                     elif val.count(',') > 0:
-                        val = [int(v) if v.isdigit() else \
-                               float(v) if v.isdecimal() else \
-                               np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 else \
+                        val = [np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 and val[0] != '-' else \
+                               int(v) if v.isdigit() else \
+                               float(v) if v.replace('-','',1).replace('.','',1).isdigit() else \
                                v for v in val.split(',')]
                     elif val.count('-') > 0 and val.count('/') == 0:
                         val = [int(v)+i if v.isdigit() else \
@@ -38,11 +40,11 @@ def load_input_file(filename):
                                v for i, v in enumerate(val.split('-'))]
                         if type(val[0]) is int:
                             val = np.arange(*val).tolist()
-                            
+
                 dictionary[var] = val
 
         return dictionary
-        
+
 def output_input_file(filename, directory, outname):
 
     output_input = os.path.join(directory, outname+'.inp')
@@ -63,7 +65,7 @@ class Experiment:
     
     def __init__(self, instrument, ipts, run_numbers):
 
-        tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ']
+        tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ', 'SNAP']
 
         instrument = instrument.upper()
 
@@ -73,7 +75,9 @@ class Experiment:
             instrument = 'MANDI'
         if instrument == 'BL12':
             instrument = 'TOPAZ'
-
+        if instrument == 'BL3':
+            instrument = 'SNAP'
+            
         if instrument == 'DEMAND':
             instrument = 'HB3A'
         if instrument == 'WAND2':

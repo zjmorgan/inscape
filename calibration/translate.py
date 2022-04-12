@@ -6,19 +6,26 @@ import sys
 import os 
 
 directory = os.path.dirname(os.path.realpath(__file__))
-sys.path.append('/home/zgf/.git/inscape/integration/')
+sys.path.append('/SNS/users/zgf/.git/inscape/integration/')
+
+instrument = 'SNAP'
 
 # directories ------------------------------------------------------------------
-calibration_name = 'garnet_2022a_refined'
-peaks_workspace = 'garnet_2022a_refined_peaks_workspace.nxs'
+directory = '/SNS/users/zgf/Documents/data/snap/'
+calibration_name = 'garnet_recalibration'
+peaks_workspace = 'garnet_recalibration_peaks_workspace.nxs'
 
-sr_directory = '/SNS/CORELLI/shared/SCDCalibration/'
-sr_file = 'CORELLI_Definition_2017-04-04_superresolution.xml'
+sr_directory = None#'/SNS/CORELLI/shared/SCDCalibration/'
+sr_file = None#'CORELLI_Definition_2017-04-04_superresolution.xml'
 
-LoadEmptyInstrument(FileName=os.path.join(sr_directory,sr_file), 
-                    OutputWorkspace='corelli_superresolution')
-
-LoadParameterFile(Workspace='corelli_superresolution', 
+if sr_file is not None:
+    LoadEmptyInstrument(FileName=os.path.join(sr_directory,sr_file), 
+                        OutputWorkspace=instrument)
+else:
+    LoadEmptyInstrument(InstrumentName=instrument, 
+                        OutputWorkspace=instrument)
+                        
+LoadParameterFile(Workspace=instrument, 
                   Filename=os.path.join(directory,calibration_name+'.xml'))
 
 LoadNexus(OutputWorkspace='peaks', 
@@ -30,25 +37,25 @@ banks =  list(set(mtd['peaks'].column(13)))
 banks.sort()
 
 for bank in banks:
-    MoveInstrumentComponent('corelli_superresolution', 
-                            bank+'/sixteenpack', 
+    MoveInstrumentComponent(instrument, 
+                            bank if instrument != 'CORELLI' else bank+'/sixteenpack', 
                             X=-sample_pos[0], Y=-sample_pos[1], Z=-sample_pos[2], 
                             RelativePosition=True)
   
-MoveInstrumentComponent('corelli_superresolution', 
+MoveInstrumentComponent(instrument, 
                         'sample-position', 
                         X=-sample_pos[0], Y=-sample_pos[1], Z=-sample_pos[2], 
                         RelativePosition=True)
                         
-MoveInstrumentComponent('corelli_superresolution', 
+MoveInstrumentComponent(instrument, 
                         'moderator', 
                         X=0, Y=0, Z=-sample_pos[2], 
                         RelativePosition=True)
                         
-peaks = ApplyInstrumentToPeaks('peaks', 'corelli_superresolution')
+peaks = ApplyInstrumentToPeaks('peaks', instrument)
        
 SCDCalibratePanels(
-    PeakWorkspace="peaks",
+    PeakWorkspace='peaks',
     RecalculateUB=False,
     OutputWorkspace='testCaliTable',
     DetCalFilename=os.path.join(directory,calibration_name+'_centered.DetCal'),

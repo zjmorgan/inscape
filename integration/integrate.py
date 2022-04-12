@@ -5,6 +5,8 @@ import numpy as np
 
 import sys, os, re, imp, copy
 
+import itertools
+
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
@@ -19,10 +21,12 @@ imp.reload(parameters)
 from peak import PeakDictionary
 from PyPDF2 import PdfFileMerger
 
+from mantid.kernel import V3D
+
 filename, n_proc = sys.argv[1], int(sys.argv[2])
 
-if n_proc > 24:
-    n_proc = 24
+if n_proc > os.cpu_count():
+    n_proc = os.cpu_count()
 
 scale_constant = 1e+4
 
@@ -58,7 +62,7 @@ if __name__ == '__main__':
             reflection_condition = 'B-face centred'
         elif reflection_condition == 'C':
             reflection_condition = 'C-face centred'
-        elif reflection_condition == 'R':
+        elif reflection_condition == 'R' or reflection_condition == 'Robv':
             reflection_condition = 'Rhombohedrally centred, obverse'
         elif reflection_condition == 'Rrev':
             reflection_condition = 'Rhombohedrally centred, reverse'
@@ -92,6 +96,9 @@ if __name__ == '__main__':
                 runs += r
             else:
                 runs += [r]
+                
+        if n_proc > len(runs):
+            n_proc = len(runs)
 
         experiment = dictionary['experiment']
 
@@ -157,17 +164,20 @@ if __name__ == '__main__':
             if mtd.doesExist(omd.format(r)):
                 DeleteWorkspace(omd.format(r))
 
-        tmp = opk.format(run_labels)
-        filename = os.path.join(directory, tmp+'.nxs')
-        if os.path.exists(filename) and not mtd.doesExist(tmp):
-            LoadNexus(Filename=filename, OutputWorkspace=tmp)
+        tmp = ows.format(run_labels)
+
+        if os.path.exists(os.path.join(directory, tmp+'_pk.nxs')) and not mtd.doesExist(tmp):
+            
+            LoadNexus(Filename=os.path.join(directory, tmp+'_pk.nxs'), OutputWorkspace=tmp)
+            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
+
             for r in runs:
                 FilterPeaks(InputWorkspace=tmp, 
                             FilterVariable='RunNumber',
                             FilterValue=r,
                             Operator='=',
                             OutputWorkspace=opk.format(r))
-
+                            
         if not mtd.doesExist(tmp):
 
             split_runs = [split.tolist() for split in np.array_split(runs, n_proc)]
@@ -180,20 +190,34 @@ if __name__ == '__main__':
 
             pool.starmap(merge.pre_integration, join_args)
 
-        if not mtd.doesExist(tmp):                
-            CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+        if not mtd.doesExist(tmp):   
+            
+            if mtd.doesExist('sa'):
+                CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+            else:
+                CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+
             for i in range(n_proc):
-                filename = os.path.join(directory, outname+'_p{}'.format(i)+'.nxs')
-                LoadNexus(Filename=filename, OutputWorkspace=outname+'_p{}'.format(i))
-                CombinePeaksWorkspaces(LHSWorkspace=outname+'_p{}'.format(i), RHSWorkspace=tmp, OutputWorkspace=tmp)
-                os.remove(filename)
-            filename = os.path.join(directory, tmp+'.nxs')
-            FilterPeaks(InputWorkspace=tmp,
-                        FilterVariable='QMod',
-                        FilterValue=0,
-                        Operator='>',
-                        OutputWorkspace=tmp)
-            SaveNexus(InputWorkspace=tmp, Filename=filename)
+                partname = outname+'_p{}'.format(i)
+
+                LoadNexus(Filename=os.path.join(directory, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
+                LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(directory, partname+'.mat'))
+                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
+                LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, partname+'.mat'))
+                DeleteWorkspace(partname+'_pk')
+
+                os.remove(os.path.join(directory, partname+'_pk.nxs'))
+                os.remove(os.path.join(directory, partname+'.mat'))
+ 
+            SaveNexus(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'_pk.nxs'))
+            SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
+
+            for r in runs:
+                FilterPeaks(InputWorkspace=tmp, 
+                            FilterVariable='RunNumber',
+                            FilterValue=r,
+                            Operator='=',
+                            OutputWorkspace=opk.format(r))
 
         if mtd.doesExist('sa'):
             DeleteWorkspace('sa')
@@ -216,7 +240,74 @@ if __name__ == '__main__':
         peak_dictionary.set_scale_constant(scale_constant)
 
         for r in runs:
+
+            if max_order > 0:
+
+                ol = mtd[opk.format(r)].sample().getOrientedLattice()
+                ol.setMaxOrder(max_order)
+
+                ol.setModVec1(V3D(*mod_vector_1))
+                ol.setModVec2(V3D(*mod_vector_2))
+                ol.setModVec3(V3D(*mod_vector_3))
+
+                UB = ol.getUB()
+
+                mod_HKL = np.column_stack((mod_vector_1,mod_vector_2,mod_vector_3))
+                mod_UB = np.dot(UB, mod_HKL)
+
+                ol.setModUB(mod_UB)
+
+                mod_1 = np.linalg.norm(mod_vector_1) > 0
+                mod_2 = np.linalg.norm(mod_vector_2) > 0
+                mod_3 = np.linalg.norm(mod_vector_3) > 0
+
+                ind_1 = np.arange(-max_order*mod_1,max_order*mod_1+1).tolist()
+                ind_2 = np.arange(-max_order*mod_2,max_order*mod_2+1).tolist()
+                ind_3 = np.arange(-max_order*mod_3,max_order*mod_3+1).tolist()
+
+                if cross_terms:
+                    iter_mnp = list(itertools.product(ind_1,ind_2,ind_3))
+                else:
+                    iter_mnp = list(set(list(itertools.product(ind_1,[0],[0]))\
+                                      + list(itertools.product([0],ind_2,[0]))\
+                                      + list(itertools.product([0],[0],ind_3))))
+
+                iter_mnp = [iter_mnp[s] for s in np.lexsort(np.array(iter_mnp).T, axis=0)]
+
+                for pn in range(mtd[opk.format(r)].getNumberPeaks()):
+                    pk = mtd[opk.format(r)].getPeak(pn)
+                    hkl = pk.getHKL()
+                    for m, n, p in iter_mnp:
+                        d_hkl = m*np.array(mod_vector_1)\
+                              + n*np.array(mod_vector_2)\
+                              + p*np.array(mod_vector_3)
+                        HKL = np.round(hkl-d_hkl,4)
+                        mnp = [m,n,p]
+                        H, K, L = HKL
+                        h, k, l = int(H), int(K), int(L)
+                        if reflection_condition == 'Primitive':
+                            allowed = True
+                        elif reflection_condition == 'C-face centred':
+                            allowed = (h + k) % 2 == 0
+                        elif reflection_condition == 'A-face centred':
+                            allowed = (k + l) % 2 == 0
+                        elif reflection_condition == 'B-face centred':
+                            allowed = (h + l) % 2 == 0
+                        elif reflection_condition == 'Body centred':
+                            allowed = (h + k + l) % 2 == 0
+                        elif reflection_condition == 'Rhombohedrally centred, obverse':
+                            allowed = (-h + k + l) % 3 == 0
+                        elif reflection_condition == 'Rhombohedrally centred, reverse':
+                            allowed = (h - k + l) % 3 == 0
+                        elif reflection_condition == 'Hexagonally centred, reverse':
+                            allowed = (h - k) % 3 == 0
+                        if np.isclose(np.linalg.norm(np.mod(HKL,1)), 0) and allowed:
+                            HKL = HKL.astype(int).tolist()
+                            pk.setIntMNP(V3D(*mnp))
+                            pk.setIntHKL(V3D(*HKL))
+
             peak_dictionary.add_peaks(opk.format(r))
+
             if mtd.doesExist(opk.format(r)):
                 DeleteWorkspace(opk.format(r))
 
@@ -228,11 +319,13 @@ if __name__ == '__main__':
         keys = list(peaks.keys())
         split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
 
+        filename = os.path.join(directory, tmp)
+
         args = [ref_peak_dictionary, ref_dict, filename,
                 spectrum_file, counts_file, tube_calibration, detector_calibration,
                 directory, facility, instrument, ipts, runs,
-                split_angle, a, b, c, alpha, beta, gamma,
-                mod_vector_1, mod_vector_2, mod_vector_3, max_order,
+                split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
+                mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
                 chemical_formula, z_parameter, sample_mass, experiment]
 
         join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_keys)]

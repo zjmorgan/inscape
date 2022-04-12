@@ -5,11 +5,13 @@ import numpy as np
 
 import os
 
+cycle = '2022A_0309_CCR'
 cycle = '2022A_0311_CCR'
+cycle = '2022A_0312_CCR'
 instrument = 'CORELLI'
 
 banks_to_mask = '1-6,29-30,62-67,91,87-88,25-26'
-tubes_to_mask = '1,16'
+tubes_to_mask = None #'1,16'
 pixels_to_mask = '1-12,245-256'
 
 bank_tube_to_mask = ['45,11', '49,1', '52,16']
@@ -23,9 +25,11 @@ bkg_no = 242972
 bkg_scale = 0.95
 
 ipts = 23019
-run_no = [243794,243853]
+run_no = [242912,242971] # 309 3x3
+run_no = [243794,243853] # 311 4x4
+run_no = [244391,244451] # 312 5x8
 
-append_name = 'int' #'10_50meV'
+append_name = '2p5_8' #'10_50meV'
 energy_band = None #[10, 50] # meV
 
 k_min, k_max = 2.5, 8
@@ -45,7 +49,9 @@ if energy_band is not None:
 chemical_formula = 'V'
 unit_cell_volume = 27.642
 z_parameter = 2
-sample_mass = 0.145# 0.1336669 # 0.872 # g
+sample_mass = 0.145 # g
+sample_mass = 0.306 # g
+sample_mass = 0.872 # g
 
 calibration_directory = '/SNS/{}/shared/calibration/'.format(instrument)
 output_directory = '/SNS/{}/shared/Vanadium/{}'.format(instrument,cycle)
