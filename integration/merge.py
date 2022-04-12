@@ -1241,7 +1241,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                     two_theta_max = 155
                 elif instrument == 'HB2C':
                     two_theta_max = 156
-                
+
                 Qmax = 4*np.pi/lamda*np.sin(np.deg2rad(two_theta_max)/2)
 
                 ConvertHFIRSCDtoMDE(InputWorkspace=ows,
@@ -1296,7 +1296,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
                 gon = run.getGoniometer().getEulerAngles('YZY')
 
-                use_inner = True
+                use_inner = False
 
                 if use_inner:
                     min_angle = -run.getLogData('phi').value.max()
