@@ -7,9 +7,9 @@ def load_input_file(filename):
     dictionary = { }
 
     with open(filename, 'r') as f:
-        
+
         lines = f.readlines()
-        
+
         for line in lines:
             line = line.lstrip(' ')
             line = line.rstrip(' ')
@@ -18,10 +18,12 @@ def load_input_file(filename):
                     line = line.split('#')[0]
                 line = line.replace(' ', '').replace('\n', '')
                 var, val = line.split('=')
-                
+
                 var = var.lower()
                 if val.isnumeric():
-                   val = int(val) if val.isdigit() else float(val)
+                   val = int(val)
+                elif val.replace('.','',1).isdigit():
+                   val = float(val)
                 else:
                     if val.lower() == 'none':
                         val = None
@@ -62,7 +64,7 @@ def output_input_file(filename, directory, outname):
             f.write(line)
 
 class Experiment:
-    
+
     def __init__(self, instrument, ipts, run_numbers):
 
         tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ', 'SNAP']
@@ -77,7 +79,7 @@ class Experiment:
             instrument = 'TOPAZ'
         if instrument == 'BL3':
             instrument = 'SNAP'
-            
+
         if instrument == 'DEMAND':
             instrument = 'HB3A'
         if instrument == 'WAND2':
