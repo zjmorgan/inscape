@@ -15,12 +15,9 @@ sys.path.append('/home/zgf/.git/inscape/integration/')
 # directories ------------------------------------------------------------------
 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'
 
-# binning paramteres -----------------------------------------------------------
-bin_param = '0.5,0.01,11.5'
-
 # calibration files -----------------------------------------------------------
-detector_calibration = None
-tube_calibration = None
+detector_calibration =  '/SNS/CORELLI/calibration/2022A/calibration.xml'
+tube_calibration = '/SNS/CORELLI/calibration/tube/calibration_corelli_20200109.nxs.h5'
 
 if tube_calibration is not None:
     LoadNexus(Filename=tube_calibration,
@@ -28,21 +25,21 @@ if tube_calibration is not None:
 
 # calibration runs -------------------------------------------------------------
 
-instrument = 'MANDI'
-ipts = 8776
+instrument = 'CORELLI'
+ipts = 26829
 
 # garnet
-start = 10646
-stop = 10682
+start = 245159
+stop = 245279
 
 step = 1
 
-ub_file = None# '/SNS/MANDI/IPTS-8776/shared/garnet/2022A/optimizied_UB.mat'
+ub_file = '/SNS/CORELLI/IPTS-26829/sscripts/Mn3Si2Te6_S5_magnet_200K.mat'
 
 # lattice information ----------------------------------------------------------
-cell_type = 'Cubic'
-centering = 'I'
-reflection_condition = 'Body centred'
+cell_type = 'Hexagonal'
+centering = 'P'
+reflection_condition = 'Primitive'
 
 # goniometer axis --------------------------------------------------------------
 gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
@@ -105,7 +102,7 @@ for r in runs:
             PredictPeaks(InputWorkspace=omd, 
                          WavelengthMin=0.4, 
                          WavelengthMax=4,
-                         MinDSpacing=0.7,
+                         MinDSpacing=1.7,
                          MaxDSpacing=20,
                          ReflectionCondition=reflection_condition,
                          OutputType='Peak',

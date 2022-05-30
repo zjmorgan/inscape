@@ -351,8 +351,8 @@ class PeakEnvelope:
         xlim = [Xu.min(), Xu.max()]
         ylim = [Xv.min(), Xv.max()]
 
-        yu_min, yu_max = yu.min(), yu.max()
-        yv_min, yv_max = yv.min(), yv.max()
+        yu_min, yu_max = Yu.min(), Yu.max()
+        yv_min, yv_max = Yv.min(), Yv.max()
 
         sort = np.argsort(weights)
 
@@ -822,7 +822,7 @@ class PeakInformation:
               'MergedSigma': self.__round(self.__merge_intensity_error(),2),
               'MergedVolumeRatio': self.__round(self.__merge_pk_bkg_ratio(),2),
               'MergedVolumeFraction': self.__round(self.__merge_pk_vol_fract(),2),
-              'Ellispoid': self.__round(self.__A[np.triu_indices(3)],2),
+              'Ellispoid': self.__round(self.get_A()[np.triu_indices(3)],2),
               'BinSize': self.__round(self.__bin_size,3),
               'Q': self.__round(self.__Q,3),
               'PeakQFit': self.__round(self.__peak_fit,2),
@@ -968,7 +968,7 @@ class PeakInformation:
 
             return pk_vol/bkg_vol
 
-    def __partial_merge_intensity(self, indices, ext_corr=True):
+    def __partial_merge_intensity(self, indices):
 
         if not self.__is_peak_integrated() or len(indices) == 0:
 
@@ -991,13 +991,6 @@ class PeakInformation:
 
             data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
             bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
-
-            if ext_corr:
-
-                scale = self.__get_extinction_scale(indices)
-
-                data_scale = np.multiply(data_scale.T, scale).T
-                bkg_data_scale = np.multiply(bkg_data_scale.T, scale).T
 
             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)
             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)
@@ -1018,7 +1011,7 @@ class PeakInformation:
 
             return intensity
 
-    def __partial_merge_intensity_error(self, indices, ext_corr=False):
+    def __partial_merge_intensity_error(self, indices):
 
         if not self.__is_peak_integrated() or len(indices) == 0:
 
@@ -1042,16 +1035,9 @@ class PeakInformation:
             data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
             bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
 
-            if ext_corr:
-
-                scale = self.__get_extinction_scale(indices)
-
-                data_scale = np.multiply(data_scale.T, scale).T
-                bkg_data_scale = np.multiply(bkg_data_scale.T, scale).T
-
-            data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2*(1+np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0))
-            bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2*(1+np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0))
-
+            data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
+            bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
+            
             data_norm[np.isinf(data_norm)] = np.nan
             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
 
@@ -1121,19 +1107,19 @@ class PeakInformation:
 
             volume_ratio = self.__pk_bkg_ratio(normalize=normalize)
 
-            constant = self.get_peak_constant()*np.prod(self.get_bin_size())
-
             if normalize:
+
+                constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
                 data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
                 bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
 
-                intens = np.nansum(data_scale, axis=1)/np.nanmean(norm_scale, axis=1)
-                bkg_intens = np.nansum(bkg_data_scale, axis=1)/np.nanmean(bkg_norm_scale, axis=1)
+                intens = np.nansum(data_scale/norm_scale, axis=1)
+                bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale, axis=1)
 
             else:
 
-                constant /= np.prod(self.get_bin_size())
+                constant = self.get_peak_constant()
 
                 intens = np.nansum(data, axis=1)
                 bkg_intens = np.nansum(bkg_data, axis=1)
@@ -1141,27 +1127,6 @@ class PeakInformation:
             intensity = (intens-np.multiply(bkg_intens,volume_ratio))*constant
 
             return intensity
-
-#             if normalize:
-# 
-#                 data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
-#                 bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
-# 
-#                 data_norm = data_scale/norm_scale
-#                 bkg_data_norm = bkg_data_scale/bkg_norm_scale
-# 
-#             else:
-# 
-#                 data_norm = np.array(data).copy()
-#                 bkg_data_norm = np.array(bkg_data).copy()
-# 
-#             data_norm[np.isinf(data_norm)] = np.nan
-#             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
-# 
-#             intens = np.nansum(data_norm, axis=1)
-#             bkg_intens = np.nansum(bkg_data_norm, axis=1)
-# 
-#             intensity = (intens-np.multiply(bkg_intens,volume_ratio))*constant
 
     def __intensity_error(self, normalize=True):
 
@@ -1182,19 +1147,19 @@ class PeakInformation:
 
             volume_ratio = self.__pk_bkg_ratio(normalize=normalize)
 
-            constant = self.get_peak_constant()*np.prod(self.get_bin_size())
-
             if normalize:
+
+                constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
                 data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
                 bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
 
-                intens = np.nansum(data_scale, axis=1)/np.nanmean(norm_scale, axis=1)
-                bkg_intens = np.nansum(bkg_data_scale, axis=1)/np.nanmean(bkg_norm_scale, axis=1)
+                intens = np.nansum(data_scale/norm_scale**2, axis=1)
+                bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale**2, axis=1)
 
             else:
-            
-                constant /= np.prod(self.get_bin_size())
+
+                constant = self.get_peak_constant()
 
                 intens = np.nansum(data, axis=1)
                 bkg_intens = np.nansum(bkg_data, axis=1)
@@ -1203,80 +1168,61 @@ class PeakInformation:
 
             return intensity
 
-#             if normalize:
+#     def __get_extinction_scale(self, indices, laue=True):
 # 
-#                 data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
-#                 bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
+#         L = self.get_lorentz_factors(laue=laue)
+#         Tbar = 1#self.get_weighted_mean_path_length()
 # 
-#                 data_norm = data_scale/norm_scale**2*(1+data_scale/norm_scale)
-#                 bkg_data_norm = bkg_data_scale/bkg_norm_scale**2*(1+bkg_data_scale/bkg_norm_scale)
+#         c = self.get_ext_constant()
+#         constant = self.get_peak_constant()
 # 
-#             else:
+#         clusters = self.get_peak_clusters()
 # 
-#                 data_norm = np.array(data)**2
-#                 bkg_data_norm = np.array(bkg_data)**2
+#         X = L*Tbar
 # 
-#             data_norm[np.isinf(data_norm)] = np.nan
-#             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
+#         intensity = np.zeros(len(X))
+#         factors = np.zeros(len(X))
 # 
-#             intens = np.nansum(data_norm, axis=1)
-#             bkg_intens = np.nansum(bkg_data_norm, axis=1)
+#         for cluster in clusters:
 # 
-#             intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio**2))*constant
+#             intensity[cluster] = self.__partial_merge_intensity(cluster, ext_corr=False)/constant
+#             factors[cluster] = np.mean(X[cluster])
 # 
-#             return intensity
+#         scale = 0.5*(c*factors*intensity+np.sqrt(4+(c*factors*intensity)**2))
+# 
+#         return np.array([scale[ind] for ind in indices])
+# 
+#     def get_peak_clusters(self, laue=True, quantile=0.25):
+# 
+#         L = self.get_lorentz_factors(laue=laue)
+#         Tbar = 1#self.get_weighted_mean_path_length()
+# 
+#         X = L*Tbar
+# 
+#         n_orient = len(X)
+# 
+#         data = np.column_stack((X,np.zeros(n_orient)))
+# 
+#         bandwidth = estimate_bandwidth(data, quantile=quantile)
+# 
+#         if bandwidth > 0:
+# 
+#             clustering = MeanShift(bandwidth=bandwidth, bin_seeding=True).fit(data)
+# 
+#             labels = clustering.labels_
+#             n_cluster = len(set(labels))
+# 
+#             clusters = [np.argwhere(label == labels).flatten().tolist() for label in range(n_cluster)]
+# 
+#         else:
+# 
+#             clusters = [np.arange(n_orient)]
+# 
+#         return clusters
 
-    def __get_extinction_scale(self, indices, laue=True):
+    def is_peak_integrated(self):
 
-        L = self.get_lorentz_factors(laue=laue)
-        Tbar = 1#self.get_weighted_mean_path_length()
-
-        c = self.get_ext_constant()
-        constant = self.get_peak_constant()
-
-        clusters = self.get_peak_clusters()
-
-        X = L*Tbar
-
-        intensity = np.zeros(len(X))
-        factors = np.zeros(len(X))
-
-        for cluster in clusters:
-
-            intensity[cluster] = self.__partial_merge_intensity(cluster, ext_corr=False)/constant
-            factors[cluster] = np.mean(X[cluster])
-
-        scale = 0.5*(c*factors*intensity+np.sqrt(4+(c*factors*intensity)**2))
-
-        return np.array([scale[ind] for ind in indices])
-
-    def get_peak_clusters(self, laue=True, quantile=0.25):
-
-        L = self.get_lorentz_factors(laue=laue)
-        Tbar = 1#self.get_weighted_mean_path_length()
-
-        X = L*Tbar
-
-        n_orient = len(X)
-
-        data = np.column_stack((X,np.zeros(n_orient)))
-
-        bandwidth = estimate_bandwidth(data, quantile=quantile)
-
-        if bandwidth > 0:
-
-            clustering = MeanShift(bandwidth=bandwidth, bin_seeding=True).fit(data)
-
-            labels = clustering.labels_
-            n_cluster = len(set(labels))
-
-            clusters = [np.argwhere(label == labels).flatten().tolist() for label in range(n_cluster)]
-
-        else:
-
-            clusters = [np.arange(n_orient)]
-
-        return clusters
+        return self.__is_peak_integrated()
 
     def __is_peak_integrated(self):
 
@@ -1415,6 +1361,16 @@ class PeakDictionary:
 
         self.set_constants(a, b, c, alpha, beta, gamma)
         self.set_satellite_info([0,0,0], [0,0,0], [0,0,0], 0)
+        
+        chemical_formula = 'V'
+        unit_cell_volume = 27.642
+        z_parameter = 2
+
+        SetSampleMaterial(InputWorkspace=self.nws,
+                          ChemicalFormula=chemical_formula,
+                          ZParameter=z_parameter,
+                          UnitCellVolume=unit_cell_volume,
+                          SampleMass=0)
 
     def __call_peak(self, h, k, l, m=0, n=0, p=0):
 
@@ -1460,6 +1416,14 @@ class PeakDictionary:
         dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
 
         return h+dh, k+dk, l+dl
+        
+    def set_UB(self, UB):
+
+        self.UB = UB
+
+    def get_UB(self):
+
+        return self.UB
 
     def set_scale_constant(self, constant):
 
@@ -1618,6 +1582,7 @@ class PeakDictionary:
                     dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)            
 
                     Q = 2*np.pi*np.dot(UB, np.array([h+dh,k+dk,l+dl]))
+                    #Q = peak.getQSampleFrame()
 
                     wl = peak.getWavelength()
                     R = peak.getGoniometerMatrix()
@@ -1757,8 +1722,8 @@ class PeakDictionary:
 
                 if len(u) > 1:
 
-                    clusters = self.__dbscan_orientation(varphi, u, eps)
-                    #clusters = self.__dbscan_1d(omega, eps)
+                    #clusters = self.__dbscan_orientation(varphi, u, eps)
+                    clusters = self.__dbscan_1d(omega, eps)
 
                     if len(clusters) > 1:
 
@@ -2163,13 +2128,13 @@ class PeakDictionary:
         n = cal.getNumberPeaks()
         for pn in range(n-1,-1,-1):
             pk = cal.getPeak(pn)
-            vol_fract = pk.getBinCount()
-            if vol_fract < min_vol_fract:
+            sig_noise = pk.getIntensityOverSigma()
+            if sig_noise < 10:
                 cal.removePeak(pn)
 
         n = cal.getNumberPeaks()
 
-        if n > 50:
+        if n > 20:
 
             ol = self.iws.sample().getOrientedLattice()
 
@@ -2452,7 +2417,7 @@ class PeakDictionary:
 
         return f
 
-    def apply_spherical_correction(self):
+    def apply_spherical_correction(self, vanadium_mass=0):
 
         f = self.__spherical_aborption()
 
@@ -2493,6 +2458,40 @@ class PeakDictionary:
         print('total atoms: {}'.format(N))
         print('molar mass: {} g/mol'.format(M))
         print('number density: {} 1/A^3'.format(n))
+        
+        van = mtd['nws'].sample().getMaterial()
+        
+        van_sigma_a = van.absorbXSection()
+        van_sigma_s = van.totalScatterXSection()
+        
+        van_M = van.relativeMolecularMass()
+        van_n = van.numberDensityEffective # A^-3
+        van_N = van.totalAtoms 
+
+        van_rho = (van_n/van_N)/0.6022*van_M
+        van_V = vanadium_mass/van_rho
+
+        van_R = (0.75/np.pi*van_V)**(1/3)
+
+        van_mu_s = van_n*van_sigma_s
+        van_mu_a = van_n*van_sigma_a
+
+        print('V')
+        print('absoption cross section: {} barn'.format(van_sigma_a))
+        print('scattering cross section: {} barn'.format(van_sigma_s))
+
+        print('linear scattering coefficient: {} 1/cm'.format(van_n*van_sigma_s))
+        print('linear absorption coefficient: {} 1/cm'.format(van_n*van_sigma_a))
+
+        print('mass: {} g'.format(vanadium_mass))
+        print('density: {} g/cm^3'.format(van_rho))
+
+        print('volume: {} cm^3'.format(van_V))
+        print('radius: {} cm'.format(van_R))
+
+        print('total atoms: {}'.format(van_N))
+        print('molar mass: {} g/mol'.format(van_M))
+        print('number density: {} 1/A^3'.format(van_n))
 
         for key in self.peak_dict.keys():
 
@@ -2503,7 +2502,7 @@ class PeakDictionary:
                 wls = peak.get_wavelengths()
                 two_thetas = peak.get_scattering_angles()
 
-                Astar, T, Tbar = [], [], []
+                Astar, Astar_van, T, Tbar = [], [], [], []
 
                 for wl, two_theta in zip(wls, two_thetas):
 
@@ -2523,7 +2522,19 @@ class PeakDictionary:
                     length = R*f(muR, np.rad2deg(two_theta), dx=1)[0]/f(muR, np.rad2deg(two_theta))[0]
                     Tbar.append(length)
 
+                    # --- 
+                    
+                    van_mu = van_n*(van_sigma_s+(van_sigma_a/1.8)*wl)
+                    van_muR = van_mu*van_R
+
+                    # print('linear absorption coefficient: {} 1/cm'.format(mu))
+
+                    correction = f(van_muR,np.rad2deg(two_theta))[0]
+                    Astar_van.append(correction)
+
                 peak.set_data_scale(Astar)
+                peak.set_norm_scale(Astar_van)
+                
                 peak.set_transmission_coefficient(T)
                 peak.set_weighted_mean_path_length(Tbar)
 
@@ -2533,29 +2544,29 @@ class PeakDictionary:
 
         self.__repopulate_workspaces()
 
-    def apply_extinction_correction(self, constants):
-
-        for key in self.peak_dict.keys():
-
-            peaks = self.peak_dict.get(key)
-
-            h, k, l, m, n, p = key
-
-            for peak in peaks:
-
-                if type(constants) is list:
-                    c = constants[0]*abs(h*h)+constants[1]*abs(k*k)+constants[2]*abs(l*l)+\
-                        constants[3]*abs(h*k)+constants[4]*abs(k*l)+constants[5]*abs(l*h)
-                else:
-                    c = constants
-
-                peak.set_ext_constant(c)
-
-        for pws in [self.iws, self.cws]:
-            for pn in range(pws.getNumberPeaks()-1,-1,-1):
-                pws.removePeak(pn)
-
-        self.__repopulate_workspaces()
+#     def apply_extinction_correction(self, constants):
+# 
+#         for key in self.peak_dict.keys():
+# 
+#             peaks = self.peak_dict.get(key)
+# 
+#             h, k, l, m, n, p = key
+# 
+#             for peak in peaks:
+# 
+#                 if type(constants) is list:
+#                     c = constants[0]*abs(h*h)+constants[1]*abs(k*k)+constants[2]*abs(l*l)+\
+#                         constants[3]*abs(h*k)+constants[4]*abs(k*l)+constants[5]*abs(l*h)
+#                 else:
+#                     c = constants
+# 
+#                 peak.set_ext_constant(c)
+# 
+#         for pws in [self.iws, self.cws]:
+#             for pn in range(pws.getNumberPeaks()-1,-1,-1):
+#                 pws.removePeak(pn)
+# 
+#         self.__repopulate_workspaces()
 
 class GaussianFit3D:
 
