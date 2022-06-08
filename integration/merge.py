@@ -15,6 +15,9 @@ from scipy.ndimage import gaussian_filter
 import peak
 from peak import PeakEnvelope, PeakDictionary
 
+import fitting
+from fitting import Ellipsoid, Profile, Projection
+
 def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=0.01, D=np.diag([1,1,1]), W=np.eye(3), exp=None):
 
     for j, (r, b, i) in enumerate(zip(runs, banks, indices)):
@@ -120,6 +123,10 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
     mtd['dataMD'].clearOriginalWorkspaces()
     mtd['normMD'].clearOriginalWorkspaces()
     mtd['normDataMD'].clearOriginalWorkspaces()
+    
+    # SaveMD(InputWorkspace='dataMD', Filename='/tmp/dataMD_'+str(key)+'.nxs')
+    # SaveMD(InputWorkspace='normMD', Filename='/tmp/normMD_'+str(key)+'.nxs')
+    # SaveMD(InputWorkspace='normDataMD', Filename='/tmp/normDataMD_'+str(key)+'.nxs')
 
     Q0axis = mtd['normDataMD'].getXDimension()
     Q1axis = mtd['normDataMD'].getYDimension()
@@ -135,966 +142,16 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
     Qy = W[1,0]*Q0+W[1,1]*Q1+W[1,2]*Q2
     Qz = W[2,0]*Q0+W[2,1]*Q1+W[2,2]*Q2
 
-    mask = mtd['normMD'].getSignalArray() > 0
+    mask = mtd['normDataMD'].getSignalArray() > 0
 
     Q = np.sqrt(Qx**2+Qy**2+Qz**2)
 
     Q, Qx, Qy, Qz = Q[mask], Qx[mask], Qy[mask], Qz[mask]
 
-    signal = mtd['dataMD'].getSignalArray().copy()[mask]
-    normalization = mtd['normMD'].getSignalArray().copy()[mask]
+    data = mtd['dataMD'].getSignalArray().copy()[mask]
+    norm = mtd['normMD'].getSignalArray().copy()[mask]
 
-    # mask = (Qx-Q0[0])**2+(Qy-Q0[1])**2+(Qz-Q0[2])**2 <= radius**2
-
-    return Q, Qx, Qy, Qz, signal, normalization
-
-def draw_gaussian(bin_centers, mu, var, a=1, b=0):
-
-    x = np.linspace(bin_centers.min(), bin_centers.max(), 200)
-
-    y = a*np.exp(-0.5*(x-mu)**2/var)+b
-
-    return x, y 
-
-def draw_proj_gaussian(center2d, covariance2d, amplitude2d=np.array([1,1]), background2d=np.array([0,0])):
-
-    a0, a1 = amplitude2d
-    b0, b1 = background2d
-
-    mu0, mu1 = center2d
-    var0, var1 = np.diag(covariance2d)
-
-    width0 = 6*np.sqrt(var0)
-    width1 = 6*np.sqrt(var1)
-
-    radius = np.max([width0,width1])
-
-    x0 = mu0+np.linspace(-radius,radius,200)
-    x1 = mu1+np.linspace(-radius,radius,200)
-
-    y0 = a0*np.exp(-0.5*(x0-mu0)**2/var0)+b0
-    y1 = a1*np.exp(-0.5*(x1-mu1)**2/var1)+b1
-
-    return x0, x1, y0, y1
-
-def draw_ellipse(center2d, covariance2d, lscale=5.99):
-
-    eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
-
-    radii = lscale*np.sqrt(eigenvalues)
-
-    t = np.linspace(0,2*np.pi,100)
-    x, y = radii[0]*np.cos(t), radii[1]*np.sin(t)
-
-    xe = eigenvectors[0,0]*x+eigenvectors[0,1]*y+center2d[0]
-    ye = eigenvectors[1,0]*x+eigenvectors[1,1]*y+center2d[1]
-
-    dx0, dy0 = eigenvectors[0,0]*radii[0], eigenvectors[1,0]*radii[0]
-    dx1, dy1 = eigenvectors[0,1]*radii[1], eigenvectors[1,1]*radii[1]
-
-    x0, y0 = [center2d[0],center2d[0]+dx0], [center2d[1],center2d[1]+dy0]
-    x1, y1 = [center2d[0],center2d[0]+dx1], [center2d[1],center2d[1]+dy1]
-
-    return xe, ye, x0, y0, x1, y1
-
-def draw_ellispoid(Q_rot, D_pk, D_bkg_in, D_bkg_out):
-
-    radii_pk_u = 1/np.sqrt(D_pk[0])
-    radii_pk_v = 1/np.sqrt(D_pk[1])
-    radii_pk_Q = 1/np.sqrt(D_pk[2])
-
-    radii_in_u = 1/np.sqrt(D_bkg_in[0])
-    radii_in_v = 1/np.sqrt(D_bkg_in[1])
-    radii_in_Q = 1/np.sqrt(D_bkg_in[2])
-
-    radii_out_u = 1/np.sqrt(D_bkg_out[0])
-    radii_out_v = 1/np.sqrt(D_bkg_out[1])
-    radii_out_Q = 1/np.sqrt(D_bkg_out[2])
-
-    t = np.linspace(0,2*np.pi,100)
-
-    x_pk_Qu, y_pk_Qu = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_u*np.sin(t)+Q_rot[0]
-    x_pk_Qv, y_pk_Qv = radii_pk_Q*np.cos(t)+Q_rot[2], radii_pk_v*np.sin(t)+Q_rot[1]
-    x_pk_uv, y_pk_uv = radii_pk_u*np.cos(t)+Q_rot[0], radii_pk_v*np.sin(t)+Q_rot[1]
-
-    x_in_Qu, y_in_Qu = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_u*np.sin(t)+Q_rot[0]
-    x_in_Qv, y_in_Qv = radii_in_Q*np.cos(t)+Q_rot[2], radii_in_v*np.sin(t)+Q_rot[1]
-    x_in_uv, y_in_uv = radii_in_u*np.cos(t)+Q_rot[0], radii_in_v*np.sin(t)+Q_rot[1]
-
-    x_out_Qu, y_out_Qu = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_u*np.sin(t)+Q_rot[0]
-    x_out_Qv, y_out_Qv = radii_out_Q*np.cos(t)+Q_rot[2], radii_out_v*np.sin(t)+Q_rot[1]
-    x_out_uv, y_out_uv = radii_out_u*np.cos(t)+Q_rot[0], radii_out_v*np.sin(t)+Q_rot[1]
-
-    return x_pk_Qu, y_pk_Qu, x_pk_Qv, y_pk_Qv, x_pk_uv, y_pk_uv, \
-           x_in_Qu, y_in_Qu, x_in_Qv, y_in_Qv, x_in_uv, y_in_uv, \
-           x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv
-
-def profile_statistics(center, variance, amplitude, background, bin_centers, data, total, sigma):
-
-    expected_data = norm(bin_centers, variance, center, amplitude)+background
-
-    peak_fit = np.sum((data-expected_data)**2/sigma**2)/(data.size-4) # reduced chi-square
-
-    peak_bkg_ratio = np.std(data)/np.median(sigma)
-
-    sig_noise_ratio = np.sum(data)/np.sqrt(np.sum(sigma**2))
-
-    peak_total_data_ratio = total.max()/data.max()
-
-    if peak_total_data_ratio > 9999.99: peak_total_data_ratio = 9999.99
-
-    return peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio
-
-def Q_profile(Q, Qx, Qy, Qz, signal, normalization, Q0, n, u, v, radius=0.15, bins=30):
-
-    Qmod = np.linalg.norm(Q0)
-
-    mask = (np.abs(Q-Qmod) < radius)
-
-    Qp = Qx*n[0]+Qy*n[1]+Qz*n[2]
-
-    Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
-    Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
-
-    Qr = np.sqrt(Qu**2+Qv**2)
-
-    weights = signal/normalization
-
-    if np.size(weights) <= 3:
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    factor = np.exp(-2.995*Qr**2/Qr.max()**2)*0+1
-
-    x = Qp[~mask].flatten()
-    y = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x]).T
-    B = y
-
-    if np.size(y) <= 3 or np.any(np.isnan(x)):
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    coeff, r, rank, s = np.linalg.lstsq(A, B)
-
-    bin_total, bin_edges = np.histogram(Qp[mask], bins=bins, weights=signal[mask]*factor[mask])
-    bin_norm, bin_edges = np.histogram(Qp[mask], bins=bins, weights=normalization[mask]*factor[mask])
-
-    total = bin_total/bin_norm
-    error_sq = bin_total/bin_norm**2
-
-    bkg = 0.999*(coeff[0]+coeff[1]*Qp)*normalization
-
-    data = signal-bkg
-    data[data < 0] = 0
-
-    bin_data, bin_edges = np.histogram(Qp[mask], bins=bins, weights=data[mask])
-
-    bin_centers = 0.5*(bin_edges[1:]+bin_edges[:-1])
-
-    data = bin_data/bin_norm
-    norm = bin_norm
-
-    error_sq += (bin_total-bin_data)/bin_norm**2
-
-    mask_data = ~np.isnan(data)
-
-    total = total[mask_data]
-    error_sq = error_sq[mask_data]
-
-    data = data[mask_data]
-    norm = norm[mask_data]
-
-    bin_centers = bin_centers[mask_data]
-
-    pos_data = data > 0
-
-    if (pos_data.sum() > 0):
-        if (data[pos_data].size//3 > 0):
-            indices = np.argsort(data[pos_data])[0:data[pos_data].size//3]
-            data -= np.median(data[pos_data][indices])
-    else:
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    data[data < 0] = 0
-    sigma = np.sqrt(error_sq)
-
-    # total, _ = np.histogram(Qp[mask], bins=bin_edges, weights=weights[mask])
-
-    # arg_center = np.argmax(bin_counts) # this works for no nearby contamination
-    # center = bin_centers[arg_center]
-
-    if ((data > 0).sum() > 2):
-        center = np.average(bin_centers, weights=data**2)
-    else:
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    # if (data > 0).any() and data.sum() > 0:
-    #    center = np.average(bin_centers, weights=data)
-    # else:
-    #    print('\tQ-profile failed: mask all zeros')
-    #    return Qmod, np.nan, np.nan, np.nan, min_bkg_count, np.nan
-    
-    max_width = bin_centers.max()-bin_centers.min()
-
-    factor = np.exp(-2.995*(2*(bin_centers-center))**2/max_width**2)
-    decay_weights = data**2*factor
-
-    if (decay_weights > 0).any() and decay_weights.sum() > 0:
-        variance = np.average((bin_centers-center)**2, weights=decay_weights)
-        variance = np.min([variance,max_width**2/36])
-        mask = (np.abs(bin_centers-center) < 4*np.sqrt(variance))
-
-        if (data[mask] > 0).any() and data[mask].sum() > 0:
-            center = np.average(bin_centers[mask], weights=data[mask])
-            variance = np.average((bin_centers[mask]-center)**2, weights=data[mask])
-        else:
-            print('\tQ-profile failed: mask all zeros')
-            return Qmod, np.nan, 0, 0, (None, None, None, None)
-    else:
-        print('\tQ-profile failed: decay_weights failed')
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    # nonzero = sigma > 0
-    # if (sigma[nonzero].size//3 > 0):
-    #     indices = np.argsort(sigma[nonzero])[0:sigma[nonzero].size//3]
-    #     med = np.median(sigma[nonzero][indices])
-    #     sigma[~nonzero] = med
-    # else:
-    #     print('\tQ-profile failed: cannot find medium sigma')
-    #     return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    background = data.min()
-    amplitude = np.trapz(data-background, bin_centers)/np.sqrt(2*np.pi*variance)
-
-    return center, variance, amplitude, background, (bin_centers, data, total, sigma)
-
-def extracted_Q_profile(Q, Qx, Qy, Qz, signal, normalization, Q0, n, u, v,
-                        center, variance, center2d, covariance2d, bins=30):
-
-    Qmod = np.linalg.norm(Q0)
-
-    Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
-    Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
-
-    Qp = Qx*n[0]+Qy*n[1]+Qz*n[2]
-
-    u_center, v_center = center2d
-
-    eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
-
-    radii = 4*np.sqrt(eigenvalues)
-
-    D = np.diag(1/radii**2)
-    W = eigenvectors.copy()
-
-    A = np.dot(np.dot(W,D),W.T)
-
-    mask = (A[0,0]*(Qu-u_center)+A[0,1]*(Qv-v_center))*(Qu-u_center)+\
-         + (A[1,0]*(Qu-u_center)+A[1,1]*(Qv-v_center))*(Qv-v_center) <= 1 & (np.abs(Qp-center) < 4*np.sqrt(variance))
-
-    Qp = Qx*n[0]+Qy*n[1]+Qz*n[2]
-
-    weights = signal/normalization
-
-    x = Qp[~mask].flatten()
-    y = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x]).T
-    B = y
-
-    if np.size(y) <= 3 or np.any(np.isnan(x)):
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    coeff, r, rank, s = np.linalg.lstsq(A, B)
-
-    bin_total, bin_edges = np.histogram(Qp[mask], bins=bins, weights=signal[mask])
-    bin_norm, bin_edges = np.histogram(Qp[mask], bins=bins, weights=normalization[mask])
-
-    total = bin_total/bin_norm
-    error_sq = bin_total/bin_norm**2
-
-    bkg = 0.999*(coeff[0]+coeff[1]*Qp)*normalization
-
-    data = signal-bkg
-    data[data < 0] = 0
-
-    bin_data, bin_edges = np.histogram(Qp[mask], bins=bins, weights=data[mask])
-
-    bin_centers = 0.5*(bin_edges[1:]+bin_edges[:-1])
-
-    data = bin_data/bin_norm
-    norm = bin_norm
-
-    error_sq += (bin_total-bin_data)/bin_norm**2
-
-    mask_data = ~np.isnan(data)
-
-    total = total[mask_data]
-    error_sq = error_sq[mask_data]
-
-    data = data[mask_data]
-    norm = norm[mask_data]
-
-    bin_centers = bin_centers[mask_data]
-
-    pos_data = data > 0
- 
-    if (pos_data.sum() > 0):
-        if (data[pos_data].size//3 > 0):
-            indices = np.argsort(data[pos_data])[0:data[pos_data].size//3]
-            data -= np.median(data[pos_data][indices])
-    else:
-        print('\tQ-profile failed: not enough nonzero points to histogram')
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    data[data < 0] = 0    
-    sigma = np.sqrt(error_sq)
-
-    max_width = bin_centers.max()-bin_centers.min()
-
-    if (data > 0).any():
-        center = np.average(bin_centers, weights=data)
-        variance = np.average((bin_centers-center)**2, weights=data)
-        #variance = np.min([variance,max_width**2/36])
-    else:
-        print('\tQ-profile failed: cannot find center or variance')
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    nonzero = sigma > 0
-    if (sigma[nonzero].size//3 > 0):
-        indices = np.argsort(sigma[nonzero])[0:sigma[nonzero].size//3]
-        med = np.median(sigma[nonzero][indices])
-        sigma[~nonzero] = med
-    else:
-        print('\tQ-profile failed: cannot find medium sigma')
-        return Qmod, np.nan, 0, 0, (None, None, None, None)
-
-    background = data.min()
-    amplitude = np.trapz(data-background, bin_centers)/np.sqrt(2*np.pi*variance)
-
-    return center, variance, amplitude, background, (bin_centers, data, total, sigma)
-
-def norm(x, var, mu, a=1):
-
-    return a*np.exp(-0.5*(x-mu)**2/var)
-
-def norm2d(x, y, cov, mu, a=1):
-
-    var = [cov[0,0], cov[1,1]]
-    sig = np.sqrt(var).tolist()
-
-    rho = cov[0,1]/(sig[0]*sig[1])
-
-    return a*np.exp(-0.5/(1-rho**2)*((x-mu[0])**2/var[0]+(y-mu[1])**2/var[1]-2*rho*(x-mu[0])*(y-mu[1])/(sig[0]*sig[1])))
-
-def projection_axes(n):
-
-    n_ind = np.argmin(np.abs(n))
-
-    u = np.zeros(3)
-    u[n_ind] = 1
-
-    u = np.cross(n, u)
-    u /= np.linalg.norm(u)
-
-    v = np.cross(n, u)
-    v *= np.sign(np.dot(np.cross(u,n),v))
-
-    return u, v
-
-def projected_statistics(center2d, covariance2d, amplitude2d, background2d,
-                         u_bin_centers, v_bin_centers, u_data, v_data,
-                         u_bin_centers_grid, v_bin_centers_grid, uv_data, uv_total, uv_sigma):
-
-    u_center, v_center = center2d
-    u_variance, v_variance = np.diag(covariance2d)
-
-    mask = uv_sigma > 0
-
-    if mask.sum() == 0:
-        return np.nan, np.nan, np.nan
-
-    background = uv_data[mask].min()
-    amplitude = uv_data[mask].max()-background
-
-    uv_expected_data = norm2d(u_bin_centers_grid, v_bin_centers_grid, covariance2d, center2d, amplitude)+background
-    uv_peak_fit = np.sum((uv_data[mask]-uv_expected_data[mask])**2/uv_sigma[mask]**2)/(uv_data[mask].size-7) # reduced chi-square
-
-    # u_expected_data = norm(u_bin_centers, covariance2d[0,0], center2d[0], amplitude2d[0])+background2d[0]
-    # v_expected_data = norm(v_bin_centers, covariance2d[1,1], center2d[1], amplitude2d[1])+background2d[1]
-    # 
-    # mask = u_data > 0
-    # u_peak_fit = np.sum((u_data[mask]-u_expected_data[mask])**2/u_data[mask])/(u_data[mask].size-4) 
-    # 
-    # mask = v_data > 0
-    # v_peak_fit = np.sum((v_data[mask]-v_expected_data[mask])**2/v_data[mask])/(v_data[mask].size-4) 
-    # 
-    # peak_fit_array = np.array([uv_peak_fit, u_peak_fit, v_peak_fit])
-    # 
-    # if (peak_fit_array < 1).all():
-    #     peak_fit = np.min(peak_fit_array)
-    # elif (peak_fit_array > 1).all():
-    #     peak_fit = np.max(peak_fit_array)
-    # else:
-    #     peak_fit = uv_peak_fit
-
-    peak_fit = uv_peak_fit
-
-    u_pk_width = 2.5*np.sqrt(u_variance)
-    v_pk_width = 2.5*np.sqrt(v_variance)
-
-    u_bkg_width = 6*np.sqrt(u_variance)
-    v_bkg_width = 6*np.sqrt(v_variance)
-
-    mask_veil = (np.abs(u_bin_centers_grid-u_center) < u_pk_width)\
-              & (np.abs(v_bin_centers_grid-v_center) < v_pk_width)
-
-    sigstd = np.std(uv_total[mask_veil])
-
-    mask_veil = (np.abs(u_bin_centers_grid-u_center) > u_pk_width)\
-              & (np.abs(v_bin_centers_grid-v_center) > v_pk_width)\
-              & (np.abs(u_bin_centers_grid-u_center) < u_bkg_width)\
-              & (np.abs(v_bin_centers_grid-v_center) < v_bkg_width)
-
-    bgstd = np.std(uv_total[mask_veil])
-
-    sig_noise_ratio = np.sum(uv_data)/np.sqrt(np.sum(uv_sigma**2))
-
-    if bgstd > 0:
-        peak_score = sigstd/bgstd
-    else:
-        peak_score = sigstd/0.01
-
-    if peak_score > 9999.99: peak_score = 9999.99
-
-    return peak_fit, peak_score, sig_noise_ratio
-
-def projected_profile(Q, Qx, Qy, Qz, signal, normalization,
-                      Q0, n, u, v, center, variance,
-                      radius=0.15, bins=16, bins2d=50):
-
-    # Estimate 1d variance
-
-    Qmod = np.linalg.norm(Q0)
-
-    Qu = u[0]*(Qx-Q0[0])+u[1]*(Qy-Q0[1])+u[2]*(Qz-Q0[2])
-    Qv = v[0]*(Qx-Q0[0])+v[1]*(Qy-Q0[1])+v[2]*(Qz-Q0[2])
-
-    Qp = Qx*n[0]+Qy*n[1]+Qz*n[2]
-
-    weights = signal/normalization
-    
-    bkg_weights = weights*0
-
-    if np.sum(weights > 0) == 0:
-        print('\tSum of projected weights must be greater than number of bins')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    factor = np.exp(-2.995*4*(Qp-Qmod)**2/(Qp.max()-Qp.min())**2)*0+1
-
-    width = np.min([3*np.sqrt(variance), Qp.max()-Qp.min()])
-
-    max_u_width = 0.9*(Qu.max()-Qu.min())
-    max_v_width = 0.9*(Qv.max()-Qv.min())
-
-    mask = (np.abs(Qp-center) < width)\
-         & ((Qx-Q0[0])**2+(Qy-Q0[1])**2+(Qz-Q0[2])**2 < radius**2) 
-
-    # veil = ((Qx-Q0[0])**2+(Qy-Q0[1])**2+(Qz-Q0[2])**2 > (0.5*radius)**2) 
-
-    x = Qu[~mask].flatten()
-    y = Qv[~mask].flatten()
-    z = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x, y]).T
-    B = z
-
-    if np.size(B) < 4 or np.any(np.isnan(A)):        
-        nonzero = weights > 0
-        if (weights[nonzero].size//2 > 0):
-            indices = np.argsort(weights[nonzero])[0:weights[nonzero].size//2]
-            bkg_weights = np.median(weights[nonzero][indices])
-    else:
-        coeff, r, rank, s = np.linalg.lstsq(A, B)
-        bkg_weights = 0.999*(coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
-    
-    bkg = bkg_weights*normalization
-        
-    data = signal-bkg
-    data[data < 0] = 0
-
-    u_bin_norm, u_bin_edges = np.histogram(Qu[mask], bins, weights=normalization[mask]*factor[mask])
-    v_bin_norm, v_bin_edges = np.histogram(Qv[mask], bins, weights=normalization[mask]*factor[mask])
-
-    u_bin_data, u_bin_edges = np.histogram(Qu[mask], bins, weights=data[mask]*factor[mask])
-    v_bin_data, v_bin_edges = np.histogram(Qv[mask], bins, weights=data[mask]*factor[mask])
-
-    u_bin_centers = 0.5*(u_bin_edges[1:]+u_bin_edges[:-1])
-    v_bin_centers = 0.5*(v_bin_edges[1:]+v_bin_edges[:-1])
-
-    u_data = u_bin_data/u_bin_norm
-    v_data = v_bin_data/v_bin_norm
-
-    mask_u_data = ~np.isnan(u_data)
-    mask_v_data = ~np.isnan(v_data)
-
-    # blur_u_data = u_data.copy()
-    # blur_v_data = v_data.copy()
-    # 
-    # blur_u_data[~mask_u_data] = 0
-    # blur_v_data[~mask_v_data] = 0
-    # 
-    # weights_u_data = blur_u_data.copy()
-    # weights_v_data = blur_v_data.copy()
-    # 
-    # weights_u_data[mask_u_data] = 1
-    # weights_v_data[mask_v_data] = 1
-    # 
-    # blur_u_data = gaussian_filter(blur_u_data, sigma=1, mode='wrap')
-    # blur_v_data = gaussian_filter(blur_v_data, sigma=1, mode='wrap')
-    # 
-    # weights_u_data = gaussian_filter(weights_u_data, sigma=1, mode='wrap')
-    # weights_v_data = gaussian_filter(weights_v_data, sigma=1, mode='wrap')
-    # 
-    # u_data = blur_u_data/weights_u_data
-    # v_data = blur_v_data/weights_v_data
-
-    u_bin_centers = u_bin_centers[mask_u_data]
-    v_bin_centers = v_bin_centers[mask_v_data]
-
-    u_data = u_data[mask_u_data]
-    v_data = v_data[mask_v_data]
-
-    pos_u_data = u_data > 0
-    pos_v_data = v_data > 0
-    
-    if (pos_u_data.sum() > 0):
-        if (u_data[pos_u_data].size//3 > 0):
-            indices = np.argsort(u_data[pos_u_data])[0:u_data[pos_u_data].size//3]
-            u_data -= np.median(u_data[pos_u_data][indices])
-    else:
-        print('\tFirst pass failure 1d background first axis')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-    
-    if (pos_v_data.sum() > 0):
-        if (v_data[pos_v_data].size//3 > 0):
-            indices = np.argsort(v_data[pos_v_data])[0:v_data[pos_v_data].size//3]
-            v_data -= np.median(v_data[pos_v_data][indices])
-    else:
-        print('\tFirst pass failure 1d background second axis')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-            
-    u_data[u_data < 0] = 0
-    v_data[v_data < 0] = 0
-
-    u_factor = np.exp(-4*(2*(u_bin_centers-0))**2/(u_bin_centers.max()-u_bin_centers.min())**2)
-    v_factor = np.exp(-4*(2*(v_bin_centers-0))**2/(v_bin_centers.max()-v_bin_centers.min())**2)
-
-    u_decay_weights = u_data**2#*u_factor
-    v_decay_weights = v_data**2#*v_factor
-
-    if (u_data > 0).any() and (v_data > 0).any():
-        u_center = np.average(u_bin_centers, weights=u_decay_weights)
-        v_center = np.average(v_bin_centers, weights=v_decay_weights)
-
-        u_variance = np.average((u_bin_centers-u_center)**2, weights=u_decay_weights)
-        v_variance = np.average((v_bin_centers-v_center)**2, weights=v_decay_weights)
-    else:
-        print('\tFirst pass failure 2d covariance')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    # Correct 1d variance
-
-    u_width = np.min([4*np.sqrt(u_variance)])
-    v_width = np.min([4*np.sqrt(v_variance)])
-
-    mask = (np.abs(Qu-u_center) < u_width)\
-         & (np.abs(Qv-v_center) < v_width)
-
-    x = Qu[~mask].flatten()
-    y = Qv[~mask].flatten()
-    z = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x, y]).T
-    B = z
-
-    if np.size(B) > 4 and not np.any(np.isnan(A)):
-        coeff, r, rank, s = np.linalg.lstsq(A, B)
-        bkg_weights = 0.999*(coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
-        bkg = bkg_weights*normalization
-
-    data = signal-bkg
-    data[data < 0] = 0
-
-    u_bin_norm, u_bin_edges = np.histogram(Qu[mask], bins, weights=normalization[mask]*factor[mask])
-    v_bin_norm, v_bin_edges = np.histogram(Qv[mask], bins, weights=normalization[mask]*factor[mask])
-
-    u_bin_data, u_bin_edges = np.histogram(Qu[mask], bins, weights=data[mask]*factor[mask])
-    v_bin_data, v_bin_edges = np.histogram(Qv[mask], bins, weights=data[mask]*factor[mask])
-
-    u_bin_centers = 0.5*(u_bin_edges[1:]+u_bin_edges[:-1])
-    v_bin_centers = 0.5*(v_bin_edges[1:]+v_bin_edges[:-1])
-
-    u_data = u_bin_data/u_bin_norm
-    v_data = v_bin_data/v_bin_norm
-
-    mask_u_data = ~np.isnan(u_data)
-    mask_v_data = ~np.isnan(v_data)
-
-    blur_u_data = u_data.copy()
-    blur_v_data = v_data.copy()
-
-    blur_u_data[~mask_u_data] = 0
-    blur_v_data[~mask_v_data] = 0
-
-    weights_u_data = blur_u_data.copy()
-    weights_v_data = blur_v_data.copy()
-
-    weights_u_data[mask_u_data] = 1
-    weights_v_data[mask_v_data] = 1
-
-    blur_u_data = gaussian_filter(blur_u_data, sigma=0, mode='wrap')
-    blur_v_data = gaussian_filter(blur_v_data, sigma=0, mode='wrap')
-
-    weights_u_data = gaussian_filter(weights_u_data, sigma=0, mode='wrap')
-    weights_v_data = gaussian_filter(weights_v_data, sigma=0, mode='wrap')
-
-    u_data = blur_u_data/weights_u_data
-    v_data = blur_v_data/weights_v_data
-
-    u_bin_centers = u_bin_centers[mask_u_data]
-    v_bin_centers = v_bin_centers[mask_v_data]
-
-    u_data = u_data[mask_u_data]
-    v_data = v_data[mask_v_data]
-
-    pos_u_data = u_data > 0
-    pos_v_data = v_data > 0
-    
-    if (pos_u_data.sum() > 0):
-        if (u_data[pos_u_data].size//3 > 0):
-            indices = np.argsort(u_data[pos_u_data])[0:u_data[pos_u_data].size//3]
-            u_data -= np.median(u_data[pos_u_data][indices])
-    else:
-        print('\tSecond pass failure 1d background first axis')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    if (pos_v_data.sum() > 0):
-        if (v_data[pos_v_data].size//3 > 0):
-            indices = np.argsort(v_data[pos_v_data])[0:v_data[pos_v_data].size//3]
-            v_data -= np.median(v_data[pos_v_data][indices])
-    else:
-        print('\tSecond pass failure 1d background second axis')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    u_data[u_data < 0] = 0
-    v_data[v_data < 0] = 0
-
-    u_factor = np.exp(-4*(2*(u_bin_centers-u_center))**2/(u_bin_centers.max()-u_bin_centers.min())**2)
-    v_factor = np.exp(-4*(2*(v_bin_centers-v_center))**2/(v_bin_centers.max()-v_bin_centers.min())**2)
-
-    u_decay_weights = u_data**2#*u_factor
-    v_decay_weights = v_data**2#*v_factor
-
-    if (u_data > 0).any() and (v_data > 0).any():
-        u_center = np.average(u_bin_centers, weights=u_decay_weights)
-        v_center = np.average(v_bin_centers, weights=v_decay_weights)
-
-        u_variance = np.average((u_bin_centers-u_center)**2, weights=u_decay_weights)
-        v_variance = np.average((v_bin_centers-v_center)**2, weights=v_decay_weights)
-    else:
-        print('\tSecond pass failure for 2d covariance')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    # calculate 2d covariance
-
-    u_width = np.min([4*np.sqrt(u_variance)])
-    v_width = np.min([4*np.sqrt(v_variance)])
-
-    mask = (np.abs(Qu-u_center) < u_width)\
-         & (np.abs(Qv-v_center) < v_width)
-
-    x = Qu[~mask].flatten()
-    y = Qv[~mask].flatten()
-    z = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x, y]).T
-    B = z
-
-    if np.size(B) > 4 and not np.any(np.isnan(A)):
-        coeff, r, rank, s = np.linalg.lstsq(A, B)
-        bkg_weights = 0.999*(coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
-        bkg = bkg_weights*normalization
-
-    range2d = [[u_center-u_width, u_center+u_width],
-               [v_center-v_width, v_center+v_width]]
-
-    if (np.diff(range2d, axis=1) < 0.0001).any(): # or data_weights[mask].size < 4
-        print('\tFinal pass failure too much data removed')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    data = signal-bkg
-    data[data < 0] = 0
-
-    uv_bin_data, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
-                                                           range=range2d, weights=data[mask]*factor[mask])
-
-    uv_bin_norm, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
-                                                           range=range2d, weights=normalization[mask]*factor[mask])
-
-    uv_data = (uv_bin_data/uv_bin_norm).T
-
-    u_bin_centers_grid, v_bin_centers_grid = np.meshgrid(0.5*(u_bin_edges[1:]+u_bin_edges[:-1]),
-                                                         0.5*(v_bin_edges[1:]+v_bin_edges[:-1]))
-
-    mask_uv_data = ~np.isnan(uv_data)
-
-    # blur_uv_data = uv_data.copy()
-    # blur_uv_data[~mask_uv_data] = 0
-    # 
-    # weights_uv_data = blur_uv_data.copy()
-    # weights_uv_data[mask_uv_data] = 1
-    # 
-    # blur_uv_data = gaussian_filter(blur_uv_data, sigma=1, mode='wrap')
-    # weights_uv_data = gaussian_filter(weights_uv_data, sigma=1, mode='wrap')
-    # 
-    # uv_data = blur_uv_data/weights_uv_data
-
-    u_bin_centers_grid = u_bin_centers_grid[mask_uv_data]
-    v_bin_centers_grid = v_bin_centers_grid[mask_uv_data]
-
-    uv_data = uv_data[mask_uv_data]
-
-    pos_uv_data = uv_data > 0
-    
-    if (pos_uv_data.sum() > 0):
-        if (uv_data[pos_uv_data].size//3 > 0):
-            indices = np.argsort(uv_data[pos_uv_data])[0:uv_data[pos_uv_data].size//3]
-            uv_data -= np.median(uv_data[pos_uv_data][indices])
-    else:
-        print('\tFinal pass failure 2d background subtraction pruning failed')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    uv_data[uv_data < 0] = 0
-
-    uv_factor = np.exp(-4*(2*(u_bin_centers_grid-u_center))**2/(u_bin_centers_grid.max()-u_bin_centers_grid.min())**2)\
-              * np.exp(-4*(2*(v_bin_centers_grid-v_center))**2/(v_bin_centers_grid.max()-v_bin_centers_grid.min())**2)
-
-    uv_decay_weights = uv_data**2#*uv_factor
-
-    if (uv_data > 0).any():
-        u_center = np.average(u_bin_centers_grid, weights=uv_decay_weights)
-        v_center = np.average(v_bin_centers_grid, weights=uv_decay_weights)
-
-        u_variance = np.average((u_bin_centers_grid-u_center)**2, weights=uv_decay_weights)
-        v_variance = np.average((v_bin_centers_grid-v_center)**2, weights=uv_decay_weights)
-
-        uv_covariance = np.average((u_bin_centers_grid-u_center)\
-                                  *(v_bin_centers_grid-v_center), weights=uv_decay_weights)
-    else:
-        print('\tNot enough data for first pass 2d covariance calculation')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    center2d = np.array([u_center,v_center])
-    covariance2d = np.array([[u_variance,uv_covariance],
-                             [uv_covariance,v_variance]])
-
-    # ---
-
-    u_width = np.min([4*np.sqrt(u_variance)])
-    v_width = np.min([4*np.sqrt(v_variance)])
-
-    mask = (np.abs(Qu-u_center) < u_width)\
-         & (np.abs(Qv-v_center) < v_width)
-
-    x = Qu[~mask].flatten()
-    y = Qv[~mask].flatten()
-    z = weights[~mask].flatten()
-
-    A = np.array([x*0+1, x, y]).T
-    B = z
-
-    if np.isinf(covariance2d).any() or np.isnan(covariance2d).any():
-        print('\tInvaild data for 2d covariance calculation')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-#     eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
-# 
-#     radii = 4.5*np.sqrt(eigenvalues)
-# 
-#     D = np.diag(1/radii**2)
-#     W = eigenvectors.copy()
-# 
-#     A = np.dot(np.dot(W,D),W.T)
-# 
-#     mask = (A[0,0]*(Qu-u_center)+A[0,1]*(Qv-v_center))*(Qu-u_center)+\
-#          + (A[1,0]*(Qu-u_center)+A[1,1]*(Qv-v_center))*(Qv-v_center) <= 1 & (np.abs(Qp-center) < width)
-# 
-#     radii = 4*np.sqrt(eigenvalues)
-# 
-#     D = np.diag(1/radii**2)
-#     W = eigenvectors.copy()
-# 
-#     A = np.dot(np.dot(W,D),W.T)
-# 
-#     veil = (A[0,0]*(Qu[mask]-u_center)+A[0,1]*(Qv[mask]-v_center))*(Qu[mask]-u_center)+\
-#          + (A[1,0]*(Qu[mask]-u_center)+A[1,1]*(Qv[mask]-v_center))*(Qv[mask]-v_center) <= 1
-# 
-#     x = Qu[mask][~veil].flatten()
-#     y = Qv[mask][~veil].flatten()
-#     z = weights[mask][~veil].flatten()
-# 
-#     sort = np.argsort(z)
-# 
-#     x = x[sort][0:z.size*99//100]
-#     y = y[sort][0:z.size*99//100]
-#     z = z[sort][0:z.size*99//100]
-# 
-#     A = np.array([x*0+1, x, y]).T
-#     B = z
-
-    if np.size(B) > 4 and not np.any(np.isnan(A)):
-        coeff, r, rank, s = np.linalg.lstsq(A, B)
-        bkg_weights = 0.999*(coeff[0]+coeff[1]*Qu+coeff[2]*Qv)
-        bkg = bkg_weights*normalization
-
-    range2d = [[u_center-u_width, u_center+u_width],
-               [v_center-v_width, v_center+v_width]]
-
-    uv_bin_total, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
-                                                            range=range2d, weights=signal[mask]*factor[mask])
-
-    data = signal-bkg
-    data[data < 0] = 0
-
-    uv_bin_data, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
-                                                           range=range2d, weights=data[mask]*factor[mask])
-
-    uv_bin_norm, u_bin_edges, v_bin_edges = np.histogram2d(Qu[mask], Qv[mask], bins=[bins2d,bins2d+1],
-                                                           range=range2d, weights=normalization[mask]*factor[mask])
-
-    uv_total = (uv_bin_total/uv_bin_norm).T
-    uv_data = (uv_bin_data/uv_bin_norm).T
-    uv_norm = uv_bin_norm.T
-
-    u_bin_centers_grid, v_bin_centers_grid = np.meshgrid(0.5*(u_bin_edges[1:]+u_bin_edges[:-1]),
-                                                         0.5*(v_bin_edges[1:]+v_bin_edges[:-1]))
-
-    uv_error_sq = (uv_bin_total/uv_bin_norm**2).T+((uv_bin_total-uv_bin_data)/uv_bin_norm**2).T
-
-    mask_uv_data = ~np.isnan(uv_data)
-
-    blur_uv_data = uv_data.copy()
-    blur_uv_data[~mask_uv_data] = 0
-
-    weights_uv_data = blur_uv_data.copy()
-    weights_uv_data[mask_uv_data] = 1
-
-    blur_uv_data = gaussian_filter(blur_uv_data, sigma=0, mode='wrap')
-    weights_uv_data = gaussian_filter(weights_uv_data, sigma=0, mode='wrap')
-
-    uv_data = blur_uv_data/weights_uv_data
-
-    u_bin_centers_grid = u_bin_centers_grid[mask_uv_data]
-    v_bin_centers_grid = v_bin_centers_grid[mask_uv_data]
-
-    uv_data = uv_data[mask_uv_data]
-    uv_total = uv_total[mask_uv_data]
-    uv_error_sq = uv_error_sq[mask_uv_data]
-    uv_norm = uv_norm[mask_uv_data]
-
-    pos_uv_data = uv_data > 0
-    
-    if (pos_uv_data.sum() > 0):
-        if (uv_data[pos_uv_data].size//3 > 0):
-            indices = np.argsort(uv_data[pos_uv_data])[0:uv_data[pos_uv_data].size//3]
-            uv_data -= np.median(uv_data[pos_uv_data][indices])
-    else:
-        print('\tNot enough data for second pass 2d background subtraction')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-    uv_data[uv_data < 0] = 0
-    uv_sigma = np.sqrt(uv_error_sq)
-
-    uv_factor = np.exp(-4*(2*(u_bin_centers_grid-u_center))**2/(u_bin_centers_grid.max()-u_bin_centers_grid.min())**2)\
-              * np.exp(-4*(2*(v_bin_centers_grid-v_center))**2/(v_bin_centers_grid.max()-v_bin_centers_grid.min())**2)
-
-    uv_decay_weights = uv_data**2#*uv_factor
-
-    if (uv_data > 0).any():
-        u_center = np.average(u_bin_centers_grid, weights=uv_decay_weights)
-        v_center = np.average(v_bin_centers_grid, weights=uv_decay_weights)
-
-        u_variance = np.average((u_bin_centers_grid-u_center)**2, weights=uv_decay_weights)
-        v_variance = np.average((v_bin_centers_grid-v_center)**2, weights=uv_decay_weights)
-
-        uv_covariance = np.average((u_bin_centers_grid-u_center)\
-                                  *(v_bin_centers_grid-v_center), weights=uv_decay_weights)
-    else:
-        print('\tNot enough data for second pass 2d covariance calculation')
-        return Qu, Qv, bkg_weights, np.zeros(2), np.array([[0.15,0],[0,0.15]]), np.array([0,0]), np.array([0,0]), (None, None, None, None, None, None, None, None, None)
-
-#     rho = uv_covariance/u_variance/v_variance
-# 
-#     u_variance = np.min([u_variance,max_u_width**2/36])
-#     v_variance = np.min([v_variance,max_v_width**2/36])
-# 
-#     uv_covariance = np.min([uv_covariance, rho*u_variance*v_variance])
-
-    center2d = np.array([u_center, v_center])
-    covariance2d = np.array([[u_variance, uv_covariance],
-                             [uv_covariance, v_variance]])
-
-    variance2d = np.diag(covariance2d)
-
-    background2d = np.array([u_data.min(), v_data.min()])
-    amplitude2d = np.array([np.trapz(u_data-background2d[0], u_bin_centers),
-                            np.trapz(v_data-background2d[1], v_bin_centers)])/np.sqrt(2*np.pi*variance2d)
-
-    # ---
-
-    projected_data = (u_bin_centers, v_bin_centers, u_bin_centers_grid, v_bin_centers_grid, 
-                      u_data, v_data, uv_data, uv_total, uv_sigma)
-
-    return Qu, Qv, bkg_weights, center2d, covariance2d, amplitude2d, background2d, projected_data
-
-def ellipsoid(Q0, center, variance, center2d, covariance2d, n, u, v, xsigma=3, lscale=5.99):
-
-    Qp = np.dot(Q0,n)
-
-    Q_offset_1d = (center-Qp)*n
-    Q_offset_2d = u*center2d[0]+v*center2d[1]
-
-    Q = Q0+Q_offset_1d+Q_offset_2d
-
-    radius = xsigma*np.sqrt(variance)
-
-    eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
-
-    radii = lscale*np.sqrt(eigenvalues)
-
-    u_ = u*eigenvectors[0,0]+v*eigenvectors[1,0]
-    v_ = u*eigenvectors[0,1]+v*eigenvectors[1,1]
-
-    w0 = u_ if radii[0] < radii[1] else v_
-    w1 = v_ if radii[0] < radii[1] else u_
-
-    r0 = radii[0] if radii[0] < radii[1] else radii[1]
-    r1 = radii[1] if radii[0] < radii[1] else radii[0]
-
-    W = np.zeros((3,3))
-    W[:,0] = w0
-    W[:,1] = w1
-    W[:,2] = n
-
-    D = np.zeros((3,3))
-    D[0,0] = 1/r0**2
-    D[1,1] = 1/r1**2
-    D[2,2] = 1/radius**2
-
-    A = np.dot(np.dot(W, D), W.T)
-
-    return Q, A, W, D
+    return Q, Qx, Qy, Qz, data, norm
 
 def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
@@ -1120,7 +177,7 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
     return pk, pk_Q0, pk_Q1, pk_Q2, bkg, bkg_Q0, bkg_Q1, bkg_Q2
 
 def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_size=0.013, box_size=1.65,
-                    peak_ellipsoid=1.2, inner_bkg_ellipsoid=1.4, outer_bkg_ellipsoid=1.6, exp=None):
+                    peak_ellipsoid=1, inner_bkg_ellipsoid=1.2, outer_bkg_ellipsoid=1.4, exp=None):
 
     principal_radii = 1/np.sqrt(D.diagonal())
 
@@ -1295,11 +352,11 @@ def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_si
 
     data = (pk_data, pk_norm, bkg_data, bkg_norm, dQp_bin, pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2)
 
-    D_vecs = (np.diag(D_pk), np.diag(D_bkg_in), np.diag(D_bkg_out))
+    envelope_scales = np.array([peak_ellipsoid, inner_bkg_ellipsoid, outer_bkg_ellipsoid])
 
     Q_bin = (Q0_bin, Q1_bin, Q2_bin)
 
-    return signal, Q_rot, Q_bin, D_vecs, data
+    return signal, Q_bin, Q_rot, principal_radii, envelope_scales, data
 
 def load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration):
@@ -1378,6 +435,8 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
         CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
     else:
         CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
+    
+    CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
 
     if facility == 'HFIR':
         LoadEmptyInstrument(InstrumentName='HB3A', OutputWorkspace='rws')
@@ -1553,7 +612,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
                 lamda = float(run.getProperty('wavelength').value)
 
-                lamda_min, lamda_max = 0.95*lamda, 1.05*lamda
+                lamda_min, lamda_max = 0.855*lamda, 1.05*lamda
 
                 gon = run.getGoniometer().getEulerAngles('YZY')
 
@@ -1867,6 +926,11 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                 SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
                 DeleteWorkspace('crop_data')
 
+        ConvertPeaksWorkspace(PeakWorkspace=opk, OutputWorkspace=opk+'_lean')
+
+        CombinePeaksWorkspaces(LHSWorkspace='tmp_lean', RHSWorkspace=opk+'_lean', OutputWorkspace='tmp_lean')
+        SetUB(Workspace='tmp_lean', UB=mtd[opk+'_lean'].sample().getOrientedLattice().getUB())
+
         CombinePeaksWorkspaces(LHSWorkspace='tmp', RHSWorkspace=opk, OutputWorkspace='tmp')
         SetUB(Workspace='tmp', UB=mtd[opk].sample().getOrientedLattice().getUB())
 
@@ -1892,7 +956,10 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
             DeleteWorkspace(opk)
         if mtd.doesExist(omd):
             DeleteWorkspace(omd)
+        if mtd.doesExist(opk+'_lean'):
+            DeleteWorkspace(opk+'_lean')
 
+    SaveNexus(InputWorkspace='tmp_lean', Filename=os.path.join(directory, outname+'_pk_lean.nxs'))
     SaveNexus(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'_pk.nxs'))
     SaveIsawUB(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'.mat'))
 
@@ -2066,6 +1133,21 @@ def set_instrument(instrument):
     facility = 'SNS' if instrument in tof_instruments else 'HFIR'
 
     return facility, instrument
+
+def projection_axes(n):
+
+    n_ind = np.argmin(np.abs(n))
+
+    u = np.zeros(3)
+    u[n_ind] = 1
+
+    u = np.cross(n, u)
+    u /= np.linalg.norm(u)
+
+    v = np.cross(n, u)
+    v *= np.sign(np.dot(np.cross(u, n), v))
+
+    return u, v
 
 def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                      spectrum_file, counts_file, tube_calibration, detector_calibration,
@@ -2283,7 +1365,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
     fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+4*'{:8.2f}'+7*'{:8.2f}'+'\n'
 
-    for i, key in enumerate(keys[6:9]):
+    for i, key in enumerate(keys[:3]):
 
         key = tuple(key)
 
@@ -2343,20 +1425,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
             summary_list.extend([*lamda, *two_theta, *az_phi, n_runs, *gon_omega, *gon_chi, *gon_phi])
 
-            peak_fit_1, peak_fit_2 = 0, 0
-
             peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = 0, 0, 0, 0
             peak_fit2d, peak_score2d, sig_noise_ratio2d = 0, 0, 0
 
             max_width = 0.3 if facility == 'SNS' else 0.3
-            max_offset = 0.1 if facility == 'SNS' else 0.3
+            max_offset = 0.3 if facility == 'SNS' else 0.3
             max_ratio = 5 if facility == 'SNS' else 7.5
-
-            bins = 17 if facility == 'SNS' else 17
-            bins2d = 21 if facility == 'SNS' else 21
-
-            xsigma = 4 if facility == 'SNS' else 3
-            lscale = 5 if facility == 'SNS' else 4
                 
             fit = True
             remove = False
@@ -2383,17 +1457,17 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         int_key = int_list[index]
                         int_peaks = ref_dict[int_key]
 
-                        rp, ruv = [], []
+                        rp, r2 = [], []
                         for int_peak in int_peaks:
 
                             D = int_peak.get_D()
                             radii = 1/np.sqrt(np.diag(D)) 
 
                             rp.append(radii[2])
-                            ruv.append(radii[:2])
+                            r2.append(np.prod(radii[:2]))
 
-                        radius = np.max(rp)
-                        r = np.max(ruv)
+                        radius = 1.5*np.mean(rp)
+                        r = 1.5*np.sqrt(np.mean(r2))
 
                         if facility == 'SNS':
                             n = Q0/np.linalg.norm(Q0)
@@ -2413,6 +1487,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         W[:,2] = n
 
                         D = np.diag([1/r**2,1/r**2,1/radius**2])
+                        
+                        radius = np.cbrt(r**2*radius)
 
                     binsize = 0.002
 
@@ -2427,173 +1503,95 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 Qmin = 2*np.pi*np.min([ol.astar(), ol.bstar(), ol.cstar()])
 
                 radius = 0.2*Qmin
-                binsize = 0.005*Qmin
+                binsize = 0.004*Qmin
 
                 W = np.eye(3)
                 D = np.diag([1/radius**2,1/radius**2,1/radius**2])
 
-            if fixed and not remove:
+#             if fixed and not remove:
+# 
+#                 partial_load(facility, instrument, runs, banks, indices, 
+#                              phi, chi, omega, norm_scale,
+#                              directory, ipts, outname, experiment, tmp)
+# 
+#                 signal, Q_bin, Q_rot, ellipsoid_radii, scales, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
+#                                                                                           Q0, D, W, exp=experiment)
+# 
+#                 u_extents, v_extents, Q_extents = Q_bin
+# 
+#                 peak_dictionary.integrated_result(key, Q0, D, W, peak_fit, peak_bkg_ratio, peak_score2d, bin_norm, j)
+# 
+#                 peak_envelope.plot_integration(signal, u_extents, v_extents, Q_extents, Q_rot, ellipsoid_radii, scales)
+#                 peak_envelope.write_figure()
 
-                partial_load(facility, instrument, runs, banks, indices, 
+            if not remove:
+
+                partial_load(facility, instrument, runs, banks, indices,
                              phi, chi, omega, norm_scale,
                              directory, ipts, outname, experiment, tmp)
 
-                signal, Q_rot, Q_bin, D_vecs, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
-                                                                         Q0, D, W, exp=experiment)
+                Q, Qx, Qy, Qz, data, norm = box_integrator(facility, instrument, runs, banks, indices, Q0, key,
+                                                           binsize=binsize, D=D, W=W, exp=experiment)
 
-                if fixed:
+                weights = data/norm
 
-                    pk_data, pk_norm, bkg_data, bkg_norm, dQp_bin, pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2 = bin_norm
+                ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=0.95*radius)
 
-                    pk_weights = np.sum(pk_data, axis=0)/np.sum(pk_norm, axis=0)
-                    bkg_weights = np.sum(bkg_data, axis=0)/np.sum(bkg_norm, axis=0)
+                prof = Profile()
+                stats, params = prof.fit(ellip, 0.99)
 
-                    pk_weights -= np.nanmedian(bkg_weights[bkg_weights > 0])
-                    pk_weights[pk_weights < 0] = 0
+                peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1 = stats
+                a, mu, sigma = params
 
-                    mask = ~np.isnan(pk_weights) 
+                peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
 
-                    pk_Qx, pk_Qy, pk_Qz = np.dot(W, [pk_Q0,pk_Q1,pk_Q2])
+                if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
 
-                    Qx = np.average(pk_Qx[mask], weights=pk_weights[mask]**2)
-                    Qy = np.average(pk_Qy[mask], weights=pk_weights[mask]**2)
-                    Qz = np.average(pk_Qz[mask], weights=pk_weights[mask]**2)
+                    ellip.mu = mu
+                    ellip.sigma = sigma
 
-                    Q0 = np.array([Qx,Qy,Qz])
-
-#                     var_Q0 = np.average(pk_Q0[mask]**2, weights=pk_weights[mask]**2)
-#                     var_Q1 = np.average(pk_Q1[mask]**2, weights=pk_weights[mask]**2)
-# 
-#                     var_Q01 = np.average(pk_Q0[mask]*pk_Q1[mask], weights=pk_weights[mask]**2)
-# 
-#                     covariance2d = np.array([[var_Q0,var_Q01],
-#                                              [var_Q01,var_Q1]])
-# 
-#                     eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
-# 
-#                     radii = lscale*np.sqrt(eigenvalues)
-# 
-#                     u_ = u*eigenvectors[0,0]+v*eigenvectors[1,0]
-#                     v_ = u*eigenvectors[0,1]+v*eigenvectors[1,1]
-# 
-#                     w0 = u_ if radii[0] < radii[1] else v_
-#                     w1 = v_ if radii[0] < radii[1] else u_
-# 
-#                     r0 = radii[0] if radii[0] < radii[1] else radii[1]
-#                     r1 = radii[1] if radii[0] < radii[1] else radii[0]
-# 
-#                     W = np.zeros((3,3))
-#                     W[:,0] = w0
-#                     W[:,1] = w1
-#                     W[:,2] = n
-# 
-#                     D = np.diag([1/r0**2,1/r1**2,1/radius**2])
-# 
-                    signal, Q_rot, Q_bin, D_vecs, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
-                                                                             Q0, D, W, exp=experiment)
-
-                peak_dictionary.integrated_result(key, Q0, D, W, peak_fit, peak_bkg_ratio, peak_score2d, bin_norm, j)
-
-                peak_envelope.plot_integration(*(signal, *Q_bin, *draw_ellispoid(Q_rot, *D_vecs)))
-                peak_envelope.write_figure()
-
-            elif not remove:
-
-                partial_load(facility, instrument, runs, banks, indices, 
-                             phi, chi, omega, norm_scale,
-                             directory, ipts, outname, experiment, tmp)
-
-                Q, Qx, Qy, Qz, signal, normalization = box_integrator(facility, instrument, runs, banks, indices, Q0, key,
-                                                                      binsize=binsize, D=D, W=W, exp=experiment)
-
-                weights = signal/normalization
-
-                if facility == 'SNS':
-                    n = Q0/np.linalg.norm(Q0)
-                else:
-                    Ql = np.dot(R,Q0)
-                    t, p = np.arccos(Ql[2]/np.linalg.norm(Ql)), np.arctan2(Ql[1],Ql[0])
-                    # n = np.array([np.cos(t)*np.cos(p),np.cos(t)*np.sin(p),-np.sin(t)])
-                    w = np.arccos(R[0,0])
-                    n = np.array([-np.cos(p)*np.sin(t)*np.sin(w)+(1-np.cos(t))*np.cos(w),0,np.cos(p)*np.sin(t)*np.cos(w)+(1-np.cos(t))*np.sin(w)])
-                    n /= np.linalg.norm(n)
-
-                # n = Q0/np.linalg.norm(Q0)
-
-                u, v = projection_axes(n)
-
-                center, variance, amplitude, background, bin_profile = Q_profile(Q, Qx, Qy, Qz, signal, normalization, 
-                                                                                 Q0, n, u, v, radius=radius, bins=bins)
-
-                bin_centers, data, total, sigma = bin_profile
-
-                if data is not None:
-
-                    peak_fit_1, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = profile_statistics(center, variance, amplitude, background,
-                                                                                                            bin_centers, data, total, sigma)
-
-                    interp_bin_centers, interp_data = draw_gaussian(bin_centers, center, variance, amplitude, background)
-
-                    peak_envelope.plot_Q(bin_centers, data, total, sigma, interp_bin_centers, interp_data)
-                    excl_envelope.plot_Q(bin_centers, data, total, sigma, interp_bin_centers, interp_data)
-
-                    print('\tPeak-fit Q: {}'.format(peak_fit))
-                    print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio))
-                    print('\tSignal-noise ratio Q: {}'.format(sig_noise_ratio))
+                    peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit)
+                    excl_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit)
+                    
+                    print('\tPeak-fit Q: {}'.format(peak_fit_1))
+                    print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio_1))
+                    print('\tSignal-noise ratio Q: {}'.format(sig_noise_ratio_1))
                     print('\tPeak-total to subtracted-data ratio Q: {}'.format(peak_total_data_ratio))
 
-                    Qp = np.dot(Q0,n)
+                    print('\tPeak-sigma Q: {}'.format(sigma))
 
-                    # summary_list.extend([center, variance, amplitude, background])
-                    stats_list.extend([peak_fit_1, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio])
+                    stats_list.extend([peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1, peak_total_data_ratio])
 
                 else:
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
 
-                print('\tPeak-variance Q: {}'.format(variance))
+                proj = Projection()
+                stats, params = proj.fit(ellip, 0.99)
 
-                Qu, Qv, bkg_weights, center2d, covariance2d, amplitude2d, background2d, bin_proj_profile = projected_profile(Q, Qx, Qy, Qz, signal, normalization,
-                                                                                                                             Q0, n, u, v, center, variance, 
-                                                                                                                             radius=radius, bins=bins2d, bins2d=bins2d)
+                peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = stats
+                a, mu_x, mu_y, sigma_x, sigma_y, rho = params
 
-                u_bin_centers, v_bin_centers, u_bin_centers_grid, v_bin_centers_grid, u_data, v_data, uv_data, uv_total, uv_sigma = bin_proj_profile
+                peak_total_data_ratio2d = proj.z.max()/proj.z_sub.max()
 
-                if uv_total is not None:
+                if np.any(proj.z_sub > 0) and not np.isnan([a,mu_x,mu_y,sigma_x,sigma_y,rho]).any():
 
-                    eigenvalues, eigenvectors = np.linalg.eig(covariance2d)
+                    ellip.mu_x, ellip.mu_y = mu_x, mu_y
+                    ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
+                    
+                    x_extents = [proj.x.min(), proj.x.max()]
+                    y_extents = [proj.y.min(), proj.y.max()]
+                    
+                    mu = [mu_x, mu_y]
+                    sigma = [sigma_x, sigma_y]
 
-                    radii = lscale*np.sqrt(eigenvalues)
-
-                    if (radii > 2*radius).any():
-
-                        remove = True
-
-                    peak_fit2d, peak_score2d, sig_noise_ratio2d = projected_statistics(center2d, covariance2d, amplitude2d, background2d,
-                                                                                       u_bin_centers, v_bin_centers, u_data, v_data,
-                                                                                       u_bin_centers_grid, v_bin_centers_grid,
-                                                                                       uv_data, uv_total, uv_sigma)
-
-                    u_interp_bin_centers, v_interp_bin_centers, u_interp_data, v_interp_data = draw_proj_gaussian(center2d, covariance2d, amplitude2d, background2d)
-
-                    sub_weights = weights-bkg_weights
-
-                    mask = sub_weights > 0
-
-                    peak_envelope.plot_projection(Qu[mask], Qv[mask], sub_weights[mask],
-                                                  u_bin_centers, u_data, v_bin_centers, v_data,
-                                                  u_interp_bin_centers, u_interp_data, v_interp_bin_centers, v_interp_data, peak_fit2d)
-                    excl_envelope.plot_projection(Qu[mask], Qv[mask], sub_weights[mask],
-                                                  u_bin_centers, u_data, v_bin_centers, v_data,
-                                                  u_interp_bin_centers, u_interp_data, v_interp_bin_centers, v_interp_data, peak_fit2d)
-
-                    peak_envelope.plot_projection_ellipse(*draw_ellipse(center2d, covariance2d, lscale=lscale))
-                    excl_envelope.plot_projection_ellipse(*draw_ellipse(center2d, covariance2d, lscale=lscale))
+                    peak_envelope.plot_projection(proj.z_sub, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
+                    excl_envelope.plot_projection(proj.z_sub, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
 
                     print('\tPeak-score 2d: {}'.format(peak_score2d))
                     print('\tSignal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
 
-                    if (np.isinf(peak_score2d) or np.isnan(peak_score2d) or np.linalg.norm(center2d) > 0.1):
+                    if (np.isinf(peak_score2d) or np.isnan(peak_score2d)):
 
                         remove = True
 
@@ -2606,20 +1604,18 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     stats_list.extend([np.nan, np.nan, np.nan])
 
-                Qc, A, W, D = ellipsoid(Q0, center, variance, center2d, covariance2d,
-                                        n, u, v, xsigma=xsigma, lscale=lscale)
+                prof = Profile()
+                stats, params = prof.fit(ellip, 0.99)
 
-                center, variance, amplitude, background, bin_profile = extracted_Q_profile(Q, Qx, Qy, Qz, signal, normalization, Q0, n, u, v,
-                                                                                           center, variance, center2d, covariance2d, bins=bins)
+                peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2 = stats
+                a, mu, sigma = params
 
-                bin_centers, data, total, sigma = bin_profile
+                peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
 
-                if data is not None:
+                if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
 
-                    peak_fit_2, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = profile_statistics(center, variance, amplitude, background,
-                                                                                                            bin_centers, data, total, sigma)
-
-                    interp_bin_centers, interp_data = draw_gaussian(bin_centers, center, variance, amplitude, background)
+                    ellip.mu = mu
+                    ellip.sigma = sigma
 
                     if peak_fit_1 < 1 and peak_fit_2 < 1:
                         peak_fit = np.max([peak_fit_1,peak_fit_2])
@@ -2627,23 +1623,20 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         peak_fit = np.min([peak_fit_1,peak_fit_2])
                     else:
                         peak_fit = peak_fit_2
+                        
+                    peak_bkg_ratio = np.max([peak_bkg_ratio_1, peak_bkg_ratio_2])
+                    sig_noise_ratio = np.max([sig_noise_ratio_1, sig_noise_ratio_2])
 
-                    peak_envelope.plot_extracted_Q(bin_centers, data, total, sigma, interp_bin_centers, interp_data, peak_fit)
-                    excl_envelope.plot_extracted_Q(bin_centers, data, total, sigma, interp_bin_centers, interp_data, peak_fit)
+                    peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, peak_fit)
+                    excl_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, peak_fit)
 
-                    print('\tPeak-fit Q second pass: {}'.format(peak_fit))
-                    print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio))
-                    print('\tSignal-noise ratio Q second pass: {}'.format(sig_noise_ratio))
+                    print('\tPeak-fit Q second pass: {}'.format(peak_fit_2))
+                    print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio_2))
+                    print('\tSignal-noise ratio Q second pass: {}'.format(sig_noise_ratio_2))
                     print('\tPeak-total to subtracted-data ratio Q: {}'.format(peak_total_data_ratio))
 
-                    Qp = np.dot(Qc,n)
-
-                    if (3*np.sqrt(variance) > max_width or np.abs(Qp-center) > max_offset):
-
-                        remove = True
-
                     # summary_list.extend([center, variance, amplitude, background, peak_fit])
-                    stats_list.extend([peak_fit_2, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio])
+                    stats_list.extend([peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2, peak_total_data_ratio])
 
                 else:
 
@@ -2651,25 +1644,28 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
 
-                Q0, A, W, D = ellipsoid(Q0, center, variance, center2d, covariance2d,
-                                        n, u, v, xsigma=xsigma, lscale=lscale)
+                Q0, W, D = ellip.ellipsoid()
+
+                A = ellip.A(W, D)
 
                 radii = 1/np.sqrt(np.diagonal(D)) 
 
                 print('\tPeak-radii: {}'.format(radii))
 
-                if peak_fit < 0.02 or peak_fit2d < 0.02 or peak_score2d < 2 or np.isinf(peak_score2d) or np.isnan(peak_score2d): # 
+                if peak_fit < 0.02 or peak_fit2d < 0.02 or peak_fit > 1000 or peak_fit2d > 1000 or sig_noise_ratio < 3 or sig_noise_ratio2d < 3:
 
                     remove = True
 
-                if np.isclose(np.abs(np.linalg.det(W)),1) and not np.isclose(radii, 0).any() and (radii > 0).all() and not remove:
+                if np.isclose(np.abs(np.linalg.det(W)),1) and not (radii > 1.5*radius).any() and not np.isclose(radii, 0).any() and (radii > 0).all() and not remove:
 
-                    signal, Q_rot, Q_bin, D_vecs, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
-                                                                             Q0, D, W, exp=experiment)
+                    signal, Q_bin, Q_rot, ellipsoid_radii, scales, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
+                                                                                              Q0, D, W, exp=experiment)
+
+                    u_extents, v_extents, Q_extents = Q_bin
 
                     peak_dictionary.integrated_result(key, Q0, D, W, peak_fit, peak_bkg_ratio, peak_score2d, bin_norm, j)
 
-                    peak_envelope.plot_integration(*(signal, *Q_bin, *draw_ellispoid(Q_rot, *D_vecs)))
+                    peak_envelope.plot_integration(signal, u_extents, v_extents, Q_extents, Q_rot, ellipsoid_radii, scales)
                     peak_envelope.write_figure()
 
                     peak_summary.write(fmt_summary.format(*summary_list))

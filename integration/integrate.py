@@ -110,6 +110,8 @@ if __name__ == '__main__':
 
         if dictionary['ub-file'] is not None:
             ub_file = os.path.join(working_directory, dictionary['ub-file'])
+            if '*' in ub_file:
+                ub_file = [ub_file.replace('*', str(run)) for run in run_nos]
         else:
             ub_file = None
 
@@ -148,7 +150,10 @@ if __name__ == '__main__':
 
         if not all([a,b,c,alpha,beta,gamma]):
             if ub_file is not None:
-                LoadIsawUB(InputWorkspace='sample', Filename=ub_file)
+                if type(ub_file) is list:
+                    LoadIsawUB(InputWorkspace='sample', Filename=ub_file[0])
+                else:
+                    LoadIsawUB(InputWorkspace='sample', Filename=ub_file)
                 a = mtd['sample'].sample().getOrientedLattice().a()
                 b = mtd['sample'].sample().getOrientedLattice().b()
                 c = mtd['sample'].sample().getOrientedLattice().c()
@@ -177,7 +182,9 @@ if __name__ == '__main__':
 
         if os.path.exists(os.path.join(directory, tmp+'_pk.nxs')) and not mtd.doesExist(tmp):
             
+            LoadNexus(Filename=os.path.join(directory, tmp+'_pk_lean.nxs'), OutputWorkspace=tmp+'_lean')
             LoadNexus(Filename=os.path.join(directory, tmp+'_pk.nxs'), OutputWorkspace=tmp)
+            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, tmp+'.mat'))
             LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
 
             for r in runs:
@@ -186,7 +193,12 @@ if __name__ == '__main__':
                             FilterValue=r,
                             Operator='=',
                             OutputWorkspace=opk.format(r))
-                            
+                FilterPeaks(InputWorkspace=tmp+'_lean', 
+                            FilterVariable='RunNumber',
+                            FilterValue=r,
+                            Operator='=',
+                            OutputWorkspace=opk.format(r)+'_lean')
+
         if not mtd.doesExist(tmp):
 
             split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
@@ -206,6 +218,8 @@ if __name__ == '__main__':
             else:
                 CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
 
+            CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
+
             for i in range(m_proc):
                 partname = outname+'_p{}'.format(i)
 
@@ -215,9 +229,17 @@ if __name__ == '__main__':
                 LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, partname+'.mat'))
                 DeleteWorkspace(partname+'_pk')
 
+                LoadNexus(Filename=os.path.join(directory, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
+                LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(directory, partname+'.mat'))
+                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
+                LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, partname+'.mat'))
+                DeleteWorkspace(partname+'_pk_lean')
+
+                os.remove(os.path.join(directory, partname+'_pk_lean.nxs'))
                 os.remove(os.path.join(directory, partname+'_pk.nxs'))
                 os.remove(os.path.join(directory, partname+'.mat'))
  
+            SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, tmp+'_pk_lean.nxs'))
             SaveNexus(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'_pk.nxs'))
             SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
 
@@ -227,7 +249,12 @@ if __name__ == '__main__':
                             FilterValue=r,
                             Operator='=',
                             OutputWorkspace=opk.format(r))
-
+                FilterPeaks(InputWorkspace=tmp+'_lean', 
+                            FilterVariable='RunNumber',
+                            FilterValue=r,
+                            Operator='=',
+                            OutputWorkspace=opk.format(r)+'_lean')
+                            
         if mtd.doesExist('sa'):
             DeleteWorkspace('sa')
 
@@ -456,6 +483,21 @@ if __name__ == '__main__':
         if os.path.exists(os.path.join(directory, outname+'_weak.pdf')):
             for i in range(n_proc):
                 partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'.pdf')
+                if os.path.exists(partfile):
+                    os.remove(partfile)
+
+        merger = PdfFileMerger()
+
+        for i in range(n_proc):
+            partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
+            merger.append(partfile)
+
+        merger.write(os.path.join(directory, outname+'/rejected_weak.pdf'))       
+        merger.close()
+
+        if os.path.exists(os.path.join(directory, outname+'/rejected_weak.pdf')):
+            for i in range(n_proc):
+                partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
                 if os.path.exists(partfile):
                     os.remove(partfile)
 

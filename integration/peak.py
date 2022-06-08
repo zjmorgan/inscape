@@ -11,6 +11,9 @@ from mantid import config
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+from matplotlib.patches import Ellipse
+import matplotlib.transforms as transforms
+
 import numpy as np
 import scipy.interpolate
 import scipy.optimize
@@ -84,8 +87,12 @@ class PeakEnvelope:
         gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.4,0.4])
 
         gs0 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0], hspace=0.25)
-        gs1 = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[1], width_ratios=[0.8,0.2], height_ratios=[0.2,0.8])
+        gs1 = gridspec.GridSpecFromSubplotSpec(1, 1, subplot_spec=gs[1])
         gs2 = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[2], width_ratios=[0.666,0.333], height_ratios=[0.5,0.5], wspace=0.625, hspace=0.375)
+
+        self.ghost_int = self.fig.add_subplot(gs2[:])
+        self.ghost_int.axis('off')
+        self.ghost_int.set_title('')
 
         self.ax_Q = self.fig.add_subplot(gs0[0,0])
         self.ax_Q2 = self.fig.add_subplot(gs0[1,0])
@@ -93,15 +100,9 @@ class PeakEnvelope:
         self.ax_Q.minorticks_on()
         self.ax_Q2.minorticks_on()
 
-        self.ax_p_scat = self.fig.add_subplot(gs1[1,0])
-        self.ax_pu = self.fig.add_subplot(gs1[0,0])
-        self.ax_pv = self.fig.add_subplot(gs1[1,1])
-        self.ax_pe = self.fig.add_subplot(gs1[0,1])
-
-        self.ax_p_scat.minorticks_on()
-        self.ax_pu.minorticks_on()
-        self.ax_pv.minorticks_on()
-
+        self.ax_p_proj = self.fig.add_subplot(gs1[0])
+        self.ax_p_proj.minorticks_on()
+        
         self.ax_Qu = self.fig.add_subplot(gs2[0,0])
         self.ax_Qv = self.fig.add_subplot(gs2[1,0])
         self.ax_uv = self.fig.add_subplot(gs2[:,1])
@@ -110,21 +111,10 @@ class PeakEnvelope:
         self.ax_Qv.minorticks_on()
         self.ax_uv.minorticks_on()
 
-        self.ax_pu.get_xaxis().set_visible(False)
-        self.ax_pv.get_yaxis().set_visible(False)
+        self.ax_p_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_p_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
 
-        self.ax_pe.set_aspect('equal')
-        self.ax_p_scat.set_aspect('equal')
-
-        self.ax_pe.axis('off')
-
-        self.ax_p_scat.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_p_scat.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-
-        self.ax_p_scat.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
-
-        self.ax_pu.set_ylim([-0.05,1.05])
-        self.ax_pv.set_xlim([-0.05,1.05])
+        self.ax_p_proj.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
 
         self.ax_Q.set_rasterization_zorder(100)
         self.ax_Q.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
@@ -133,13 +123,15 @@ class PeakEnvelope:
         self.norm_Q = self.ax_Q.plot([0], [0], '--', rasterized=True, zorder=1)
         self.Q = self.ax_Q.plot([0], [0], ':.', rasterized=True, zorder=0)
 
-        self.scat_p = self.ax_p_scat.scatter([0,1], [0,1], c=[1,2], s=5, marker='o', zorder=1, cmap=plt.cm.viridis, norm=mpl.colors.LogNorm(), rasterized=True)
-        self.elli_p = self.ax_p_scat.plot([0,1], [0,1], color='C3', zorder=10000000, rasterized=True)
+        self.im_proj = self.ax_p_proj.imshow([[0,1],[0,1]], interpolation='nearest',
+                                             origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
 
-        self.norm_p0 = self.ax_pu.plot([0,1], [0,1], '-', color='C3', rasterized=True)
-        self.line_p0 = self.ax_pu.plot([0,1], [0,1], '.', color='C4', rasterized=True)
-        self.norm_p1 = self.ax_pv.plot([0,1], [0,1], '-', color='C3', rasterized=True)
-        self.line_p1 = self.ax_pv.plot([0,1], [0,1], '.', color='C4', rasterized=True)
+        self.cb = self.fig.colorbar(self.im_proj, ax=self.ax_p_proj)
+        self.cb.ax.minorticks_on()
+
+        self.elli_p = Ellipse((0,0), width=1, height=1, edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.trans_elli_p = transforms.Affine2D()
+        self.ax_p_proj.add_patch(self.elli_p)
 
         self.ax_Q2.set_rasterization_zorder(100)
         self.ax_Q2.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
@@ -162,18 +154,42 @@ class PeakEnvelope:
         self.ax_Qv.set_rasterization_zorder(100)
         self.ax_uv.set_rasterization_zorder(100)
 
-        self.peak_pu = self.ax_Qu.plot([0,1], [0,1], '-', color='C3', zorder=10, rasterized=True)
-        self.inner_pu = self.ax_Qu.plot([0,1], [0,1], ':', color='C3', zorder=10, rasterized=True)
-        self.outer_pu = self.ax_Qu.plot([0,1], [0,1], '--', color='C3', zorder=10, rasterized=True)
+        self.peak_pu = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.inner_pu = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.outer_pu = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
 
-        self.peak_pv = self.ax_Qv.plot([0,1], [0,1], '-', color='C3', zorder=10, rasterized=True)
-        self.inner_pv = self.ax_Qv.plot([0,1], [0,1], ':', color='C3', zorder=10, rasterized=True)
-        self.outer_pv = self.ax_Qv.plot([0,1], [0,1], '--', color='C3', zorder=10, rasterized=True)
+        self.peak_pv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.inner_pv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.outer_pv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
 
-        self.peak_uv = self.ax_uv.plot([0,1], [0,1], '-', color='C3', zorder=10, rasterized=True)
-        self.inner_uv = self.ax_uv.plot([0,1], [0,1], ':', color='C3', zorder=10, rasterized=True)
-        self.outer_uv = self.ax_uv.plot([0,1], [0,1], '--', color='C3', zorder=10, rasterized=True)
-        
+        self.peak_uv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.inner_uv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.outer_uv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+
+        self.trans_peak_pu = transforms.Affine2D()
+        self.trans_inner_pu = transforms.Affine2D()
+        self.trans_outer_pu = transforms.Affine2D()
+
+        self.trans_peak_pv = transforms.Affine2D()
+        self.trans_inner_pv = transforms.Affine2D()
+        self.trans_outer_pv = transforms.Affine2D()
+
+        self.trans_peak_uv = transforms.Affine2D()
+        self.trans_inner_uv = transforms.Affine2D()
+        self.trans_outer_uv = transforms.Affine2D()
+
+        self.ax_Qu.add_patch(self.peak_pu)
+        self.ax_Qu.add_patch(self.inner_pu)
+        self.ax_Qu.add_patch(self.outer_pu)
+
+        self.ax_Qv.add_patch(self.peak_pv)
+        self.ax_Qv.add_patch(self.inner_pv)
+        self.ax_Qv.add_patch(self.outer_pv)
+
+        self.ax_uv.add_patch(self.peak_uv)
+        self.ax_uv.add_patch(self.inner_uv)
+        self.ax_uv.add_patch(self.outer_uv)
+
         self.ax_Qv.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_Qu.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_uv.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
@@ -194,7 +210,7 @@ class PeakEnvelope:
             self.ax_Q.set_title('({} {} {})'.format(h,k,l))
 
         self.ax_Q2.set_title('')
-        self.ax_p_scat.set_title('')
+        self.ax_p_proj.set_title('')
 
         barsy, = self.bars_Q
 
@@ -226,28 +242,22 @@ class PeakEnvelope:
 
         # ---
 
-        self.ax_pu.set_title('d = {:.4f} \u212B'.format(d))
+        self.ax_p_proj.set_title('')
+        self.ax_p_proj.set_aspect(1)
 
-        self.scat_p.set_array(np.array([1,2]))
-        self.scat_p.autoscale()
+        self.im_proj.set_array(np.c_[[0,1],[1,0]])
+        self.im_proj.autoscale()
+        self.im_proj.set_extent([0,1,0,1])
 
-        self.scat_p.set_offsets(np.c_[[0,1],[0,1]])
-
-        self.line_p0[0].set_data([0,1],[0,0])
-        self.line_p1[0].set_data([0,0],[0,1])
-
-        self.norm_p0[0].set_data([0,1],[0,0])
-        self.norm_p1[0].set_data([0,0],[0,1])
-
-        self.elli_p[0].set_data([0,1],[0,1])
-
-        self.ax_p_scat.set_xlim([0,1])
-        self.ax_p_scat.set_ylim([0,1])
-
-        self.ax_pu.set_xlim([0,1])
-        self.ax_pv.set_ylim([0,1])
+        self.elli_p.width = 1
+        self.elli_p.height = 1
+        
+        self.trans_elli_p.clear()
+        self.elli_p.set_transform(self.trans_elli_p+self.ax_p_proj.transData)
 
         # ---
+        
+        self.ghost_int.set_title('d = {:.4f} \u212B'.format(d))
 
         if n_runs > 1:
             self.ax_Qu.set_title('\u03BB = {:.3f}-{:.3f} \u212B'.format(*lamda))
@@ -269,38 +279,64 @@ class PeakEnvelope:
         self.im_Qu.set_extent([0,1,0,1])
         self.im_Qv.set_extent([0,1,0,1])
         self.im_uv.set_extent([0,1,0,1])
-
+        
         self.ax_Qu.set_aspect(1)
         self.ax_Qv.set_aspect(1)
         self.ax_uv.set_aspect(1)
 
-        self.peak_pu[0].set_data([0,1],[0,1])
-        self.peak_pv[0].set_data([0,1],[0,1])
-        self.peak_uv[0].set_data([0,1],[0,1])
+        # ---
 
-        self.inner_pu[0].set_data([0,1],[0,1])
-        self.inner_pv[0].set_data([0,1],[0,1])
-        self.inner_uv[0].set_data([0,1],[0,1])
+        self.peak_pu.width = 1
+        self.inner_pu.width = 1
+        self.outer_pu.width = 1
 
-        self.outer_pu[0].set_data([0,1],[0,1])
-        self.outer_pv[0].set_data([0,1],[0,1])
-        self.outer_uv[0].set_data([0,1],[0,1])
+        self.peak_pu.height = 1
+        self.inner_pu.height = 1
+        self.outer_pu.height = 1
 
-        self.im_Qu.set_array(np.c_[[0,1],[1,0]])
-        self.im_Qv.set_array(np.c_[[0,1],[1,0]])
-        self.im_uv.set_array(np.c_[[0,1],[1,0]])
+        self.trans_peak_pu.clear()
+        self.trans_inner_pu.clear()
+        self.trans_outer_pu.clear()
 
-        self.im_Qu.autoscale()
-        self.im_Qv.autoscale()
-        self.im_uv.autoscale()
+        self.peak_pu.set_transform(self.trans_peak_pu+self.ax_Qu.transData)
+        self.inner_pu.set_transform(self.trans_inner_pu+self.ax_Qu.transData)
+        self.outer_pu.set_transform(self.trans_outer_pu+self.ax_Qu.transData)
 
-        self.im_Qu.set_extent([0,1,0,1])
-        self.im_Qv.set_extent([0,1,0,1])
-        self.im_uv.set_extent([0,1,0,1])
+        # ---
 
-        self.ax_Qu.set_aspect(1)
-        self.ax_Qv.set_aspect(1)
-        self.ax_uv.set_aspect(1)
+        self.peak_pv.width = 1
+        self.inner_pv.width = 1
+        self.outer_pv.width = 1
+
+        self.peak_pv.height = 1
+        self.inner_pv.height = 1
+        self.outer_pv.height = 1
+
+        self.trans_peak_pv.clear()
+        self.trans_inner_pv.clear()
+        self.trans_outer_pv.clear()
+
+        self.peak_pv.set_transform(self.trans_peak_pv+self.ax_Qv.transData)
+        self.inner_pv.set_transform(self.trans_inner_pv+self.ax_Qv.transData)
+        self.outer_pv.set_transform(self.trans_outer_pv+self.ax_Qv.transData)
+
+        # ---
+
+        self.peak_uv.width = 1
+        self.inner_uv.width = 1
+        self.outer_uv.width = 1
+
+        self.peak_uv.height = 1
+        self.inner_uv.height = 1
+        self.outer_uv.height = 1
+        
+        self.trans_peak_uv.clear()
+        self.trans_inner_uv.clear()
+        self.trans_outer_uv.clear()
+
+        self.peak_uv.set_transform(self.trans_peak_uv+self.ax_uv.transData)
+        self.inner_uv.set_transform(self.trans_inner_uv+self.ax_uv.transData)
+        self.outer_uv.set_transform(self.trans_outer_uv+self.ax_uv.transData)
 
     def show_plots(self, show):
 
@@ -310,7 +346,7 @@ class PeakEnvelope:
 
         self.pp.close()
 
-    def plot_Q(self, x, y, y0, yerr, X, Y):
+    def plot_Q(self, x, y, y0, yerr, y_fit):
 
         barsy, = self.bars_Q
 
@@ -318,7 +354,7 @@ class PeakEnvelope:
 
         barsy.set_segments([np.array([[x, yt], [x, yb]]) for x, yt, yb in zip(x, y+yerr, y-yerr)])
 
-        self.norm_Q[0].set_data(X,Y)
+        self.norm_Q[0].set_data(x,y_fit)
 
         self.Q[0].set_data(x,y0)
 
@@ -327,7 +363,7 @@ class PeakEnvelope:
 
         if self.__show_plots: self.fig.show()
 
-    def plot_extracted_Q(self, x, y, y0, yerr, X, Y, chi_sq):
+    def plot_extracted_Q(self, x, y, y0, yerr, y_fit, chi_sq):
 
         barsy, = self.bars_Q2
 
@@ -335,7 +371,7 @@ class PeakEnvelope:
 
         barsy.set_segments([np.array([[x, yt], [x, yb]]) for x, yt, yb in zip(x, y+yerr, y-yerr)])
 
-        self.norm_Q2[0].set_data(X,Y)
+        self.norm_Q2[0].set_data(x,y_fit)
 
         self.Q2[0].set_data(x,y0)
 
@@ -346,47 +382,36 @@ class PeakEnvelope:
 
         if self.__show_plots: self.fig.show()
 
-    def plot_projection(self, xs, ys, weights, xu, yu, xv, yv, Xu, Yu, Xv, Yv, chi_sq):
+    def plot_projection(self, signal, u_extents, v_extents, mu, sigma, rho, chi_sq):
 
-        xlim = [Xu.min(), Xu.max()]
-        ylim = [Xv.min(), Xv.max()]
+        if np.sum(signal > 0):
 
-        yu_min, yu_max = Yu.min(), Yu.max()
-        yv_min, yv_max = Yv.min(), Yv.max()
+            self.im_proj.set_array(signal.T)
+            self.im_proj.autoscale()
 
-        sort = np.argsort(weights)
+            extents = [*u_extents, *v_extents]
 
-        self.scat_p.set_array(weights[sort])
-        self.scat_p.autoscale()
+            self.im_proj.set_extent(extents)
 
-        self.scat_p.set_offsets(np.c_[xs[sort],ys[sort]])
+            self.ax_p_proj.set_title('\u03A7\u00B2 = {:.4f}'.format(chi_sq))
 
-        self.line_p0[0].set_data(xu,(yu-yu_min)/(yu_max-yu_min))
-        self.line_p1[0].set_data((yv-yv_min)/(yv_max-yv_min),xv)
+            mu_x, mu_y = mu
+            sigma_x, sigma_y = sigma
 
-        self.norm_p0[0].set_data(Xu,(Yu-yu_min)/(yu_max-yu_min))
-        self.norm_p1[0].set_data((Yv-yv_min)/(yv_max-yv_min),Xv)
+            rx = np.sqrt(1+rho)
+            ry = np.sqrt(1-rho)
 
-        self.ax_p_scat.set_xlim(xlim)
-        self.ax_p_scat.set_ylim(ylim)
+            scale_x = 3*sigma_x
+            scale_y = 3*sigma_y
 
-        self.ax_pu.set_xlim(xlim)
-        self.ax_pv.set_ylim(ylim)
-
-        self.ax_p_scat.set_title('\u03A7\u00B2 = {:.4f}'.format(chi_sq))
+            self.elli_p.width = 2*rx
+            self.elli_p.height = 2*ry
+            self.trans_elli_p.rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
+            self.elli_p.set_transform(self.trans_elli_p+self.ax_p_proj.transData)
 
         if self.__show_plots: self.fig.show()
 
-    def plot_projection_ellipse(self, xe, ye, x0, y0, x1, y1):
-
-        self.elli_p[0].set_data(xe,ye)
-
-        if self.__show_plots: self.fig.show()
-
-    def plot_integration(self, signal, u_extents, v_extents, Q_extents,
-                         x_pk_Qu, y_pk_Qu, x_pk_Qv, y_pk_Qv, x_pk_uv, y_pk_uv,
-                         x_in_Qu, y_in_Qu, x_in_Qv, y_in_Qv, x_in_uv, y_in_uv,
-                         x_out_Qu, y_out_Qu, x_out_Qv, y_out_Qv, x_out_uv, y_out_uv):
+    def plot_integration(self, signal, u_extents, v_extents, Q_extents, centers, radii, scales):
 
         Qu = np.nansum(signal, axis=1)
         Qv = np.nansum(signal, axis=0)
@@ -416,17 +441,67 @@ class PeakEnvelope:
         self.ax_Qv.set_aspect(Qv_aspect)
         self.ax_uv.set_aspect(uv_aspect)
 
-        self.peak_pu[0].set_data(x_pk_Qu, y_pk_Qu)
-        self.peak_pv[0].set_data(x_pk_Qv, y_pk_Qv)
-        self.peak_uv[0].set_data(x_pk_uv, y_pk_uv)
+        u_center, v_center, Q_center = centers
 
-        self.inner_pu[0].set_data(x_in_Qu, y_in_Qu)
-        self.inner_pv[0].set_data(x_in_Qv, y_in_Qv)
-        self.inner_uv[0].set_data(x_in_uv, y_in_uv)
+        u_size = 2*radii[0]
+        v_size = 2*radii[1]
+        Q_size = 2*radii[2]
 
-        self.outer_pu[0].set_data(x_out_Qu, y_out_Qu)
-        self.outer_pv[0].set_data(x_out_Qv, y_out_Qv)
-        self.outer_uv[0].set_data(x_out_uv, y_out_uv)
+        pk_scale, in_scale, out_scale = scales
+
+        # --
+
+        self.peak_pu.width = Q_size*pk_scale
+        self.inner_pu.width = Q_size*in_scale
+        self.outer_pu.width = Q_size*out_scale
+
+        self.peak_pu.height = u_size*pk_scale
+        self.inner_pu.height = u_size*in_scale
+        self.outer_pu.height = u_size*out_scale
+
+        self.trans_peak_pu.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+        self.trans_inner_pu.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+        self.trans_outer_pu.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+
+        self.peak_pu.set_transform(self.trans_peak_pu+self.ax_Qu.transData)
+        self.inner_pu.set_transform(self.trans_inner_pu+self.ax_Qu.transData)
+        self.outer_pu.set_transform(self.trans_outer_pu+self.ax_Qu.transData)
+
+        # ---
+
+        self.peak_pv.width = Q_size*pk_scale
+        self.inner_pv.width = Q_size*in_scale
+        self.outer_pv.width = Q_size*out_scale
+
+        self.peak_pv.height = v_size*pk_scale
+        self.inner_pv.height = v_size*in_scale
+        self.outer_pv.height = v_size*out_scale
+
+        self.trans_peak_pv.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+        self.trans_inner_pv.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+        self.trans_outer_pv.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+
+        self.peak_pv.set_transform(self.trans_peak_pv+self.ax_Qv.transData)
+        self.inner_pv.set_transform(self.trans_inner_pv+self.ax_Qv.transData)
+        self.outer_pv.set_transform(self.trans_outer_pv+self.ax_Qv.transData)
+
+        # ---
+
+        self.peak_uv.width = u_size*pk_scale
+        self.inner_uv.width = u_size*in_scale
+        self.outer_uv.width = u_size*out_scale
+
+        self.peak_uv.height = v_size*pk_scale
+        self.inner_uv.height = v_size*in_scale
+        self.outer_uv.height = v_size*out_scale
+
+        self.trans_peak_uv.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+        self.trans_inner_uv.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+        self.trans_outer_uv.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+
+        self.peak_uv.set_transform(self.trans_peak_uv+self.ax_uv.transData)
+        self.inner_uv.set_transform(self.trans_inner_uv+self.ax_uv.transData)
+        self.outer_uv.set_transform(self.trans_outer_uv+self.ax_uv.transData)
 
         if self.__show_plots: self.fig.show()
 
