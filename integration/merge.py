@@ -142,7 +142,7 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
     Qy = W[1,0]*Q0+W[1,1]*Q1+W[1,2]*Q2
     Qz = W[2,0]*Q0+W[2,1]*Q1+W[2,2]*Q2
 
-    mask = mtd['normDataMD'].getSignalArray() > 0
+    mask = mtd['normMD'].getSignalArray() > 0
 
     Q = np.sqrt(Qx**2+Qy**2+Qz**2)
 
@@ -177,7 +177,7 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
     return pk, pk_Q0, pk_Q1, pk_Q2, bkg, bkg_Q0, bkg_Q1, bkg_Q2
 
 def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_size=0.013, box_size=1.65,
-                    peak_ellipsoid=1, inner_bkg_ellipsoid=1.2, outer_bkg_ellipsoid=1.4, exp=None):
+                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None):
 
     principal_radii = 1/np.sqrt(D.diagonal())
 
@@ -612,7 +612,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
                 lamda = float(run.getProperty('wavelength').value)
 
-                lamda_min, lamda_max = 0.855*lamda, 1.05*lamda
+                lamda_min, lamda_max = 0.95*lamda, 1.05*lamda
 
                 gon = run.getGoniometer().getEulerAngles('YZY')
 
@@ -817,7 +817,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
             rotation_diff = np.diff(rotation).mean()
 
-            i_diff = abs(int(round(5/rotation_diff)))
+            i_diff = abs(int(round(10/rotation_diff)))
 
             two_theta = np.mean(run.getProperty('2theta').value)
             det_trans = np.mean(run.getProperty('det_trans').value)
@@ -1105,8 +1105,9 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
             #                     OutputWorkspace='flux')
 
         else:
-
-            DeleteWorkspace(ows)
+            
+            if mtd.doesExist(ows):
+                DeleteWorkspace(ows)
 
     return runs_banks, bank_keys
 
@@ -1365,7 +1366,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
     fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+4*'{:8.2f}'+7*'{:8.2f}'+'\n'
 
-    for i, key in enumerate(keys[:3]):
+    for i, key in enumerate(keys[:]):
 
         key = tuple(key)
 
@@ -1467,17 +1468,19 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                             r2.append(np.prod(radii[:2]))
 
                         radius = 1.5*np.mean(rp)
-                        r = 1.5*np.sqrt(np.mean(r2))
+                        r = 2*np.sqrt(np.mean(r2))
 
-                        if facility == 'SNS':
-                            n = Q0/np.linalg.norm(Q0)
-                        else:
-                            Ql = np.dot(R,Q0)
-                            t, p = np.arccos(Ql[2]/np.linalg.norm(Ql)), np.arctan2(Ql[1],Ql[0])
+                        n = Q0/np.linalg.norm(Q0)
 
-                            w = np.arccos(R[0,0])
-                            n = np.array([-np.cos(p)*np.sin(t)*np.sin(w)+(1-np.cos(t))*np.cos(w),0,np.cos(p)*np.sin(t)*np.cos(w)+(1-np.cos(t))*np.sin(w)])
-                            n /= np.linalg.norm(n)
+#                         if facility == 'SNS':
+#                             n = Q0/np.linalg.norm(Q0)
+#                         else:
+#                             Ql = np.dot(R,Q0)
+#                             t, p = np.arccos(Ql[2]/np.linalg.norm(Ql)), np.arctan2(Ql[1],Ql[0])
+# 
+#                             w = np.arccos(R[0,0])
+#                             n = np.array([-np.cos(p)*np.sin(t)*np.sin(w)+(1-np.cos(t))*np.cos(w),0,np.cos(p)*np.sin(t)*np.cos(w)+(1-np.cos(t))*np.sin(w)])
+#                             n /= np.linalg.norm(n)
 
                         u, v = projection_axes(n)
 
@@ -1488,9 +1491,13 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         D = np.diag([1/r**2,1/r**2,1/radius**2])
                         
-                        radius = np.cbrt(r**2*radius)
+                        radius = 2*np.cbrt(r**2*radius)
 
-                    binsize = 0.002
+                    ol = mtd['cws'].sample().getOrientedLattice()
+
+                    Qave = 2*np.pi*np.mean([ol.astar(), ol.bstar(), ol.cstar()])
+
+                    binsize = 0.0025*Qave
 
                 else:
 
@@ -1500,10 +1507,10 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 ol = mtd['cws'].sample().getOrientedLattice()
 
-                Qmin = 2*np.pi*np.min([ol.astar(), ol.bstar(), ol.cstar()])
+                Qave = 2*np.pi*np.mean([ol.astar(), ol.bstar(), ol.cstar()])
 
-                radius = 0.2*Qmin
-                binsize = 0.004*Qmin
+                radius = 0.25*Qave
+                binsize = 0.0025*Qave
 
                 W = np.eye(3)
                 D = np.diag([1/radius**2,1/radius**2,1/radius**2])
@@ -1535,7 +1542,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 weights = data/norm
 
-                ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=0.95*radius)
+                rot = True if facility == 'HFIR' else False
+
+                ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=0.8*radius, rotation=rot)
 
                 prof = Profile()
                 stats, params = prof.fit(ellip, 0.99)
@@ -1550,8 +1559,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     ellip.mu = mu
                     ellip.sigma = sigma
 
-                    peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit)
-                    excl_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit)
+                    peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
+                    excl_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
                     
                     print('\tPeak-fit Q: {}'.format(peak_fit_1))
                     print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio_1))
@@ -1578,15 +1587,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     ellip.mu_x, ellip.mu_y = mu_x, mu_y
                     ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
-                    
+
                     x_extents = [proj.x.min(), proj.x.max()]
                     y_extents = [proj.y.min(), proj.y.max()]
-                    
+
                     mu = [mu_x, mu_y]
                     sigma = [sigma_x, sigma_y]
 
-                    peak_envelope.plot_projection(proj.z_sub, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
-                    excl_envelope.plot_projection(proj.z_sub, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
+                    peak_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
+                    excl_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
 
                     print('\tPeak-score 2d: {}'.format(peak_score2d))
                     print('\tSignal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
@@ -1627,8 +1636,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     peak_bkg_ratio = np.max([peak_bkg_ratio_1, peak_bkg_ratio_2])
                     sig_noise_ratio = np.max([sig_noise_ratio_1, sig_noise_ratio_2])
 
-                    peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, peak_fit)
-                    excl_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, peak_fit)
+                    peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
+                    excl_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
 
                     print('\tPeak-fit Q second pass: {}'.format(peak_fit_2))
                     print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio_2))
@@ -1652,7 +1661,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 print('\tPeak-radii: {}'.format(radii))
 
-                if peak_fit < 0.02 or peak_fit2d < 0.02 or peak_fit > 1000 or peak_fit2d > 1000 or sig_noise_ratio < 3 or sig_noise_ratio2d < 3:
+                if peak_fit < 0.01 or peak_fit2d < 0.01 or peak_fit > 1000 or peak_fit2d > 1000 or sig_noise_ratio < 3 or sig_noise_ratio2d < 3:
 
                     remove = True
 

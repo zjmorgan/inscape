@@ -350,7 +350,7 @@ if __name__ == '__main__':
         peak_dictionary.split_peaks(split_angle)
         peak_dict = peak_dictionary.to_be_integrated()
 
-        ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True)
+        # ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True)
 
         keys = list(peak_dict.keys())
         split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
@@ -358,9 +358,9 @@ if __name__ == '__main__':
         filename = os.path.join(directory, tmp)
 
         outdir = os.path.join(directory, outname)
-        if os.path.exists(outdir):
-            shutil.rmtree(outdir)
-        os.mkdir(outdir)
+        if not os.path.exists(outdir):
+            #shutil.rmtree(outdir)
+            os.mkdir(outdir)
 
         int_list, peak_tree = None, None
 
