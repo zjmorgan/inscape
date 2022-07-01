@@ -9,11 +9,17 @@ from mantid.kernel import V3D
 from mantid import config
 
 import matplotlib as mpl
+from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
+import matplotlib.gridspec as gridspec
+
 from mpl_toolkits.axes_grid1 import make_axes_locatable, axes_size
+
+plt.rcParams['text.usetex'] = False
+plt.rcParams['font.size'] = 8
 
 import numpy as np
 import scipy.interpolate
@@ -50,12 +56,6 @@ def _pprint_dict(self, object, stream, indent, allowance, context, level):
     write('}')
 pprint.PrettyPrinter._dispatch[dict.__repr__] = _pprint_dict
 
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.gridspec as gridspec
-
-plt.rcParams['text.usetex'] = False
-plt.rcParams['font.size'] = 8
-
 class PeakEnvelope:
 
     def __init__(self, pdf_file):
@@ -64,12 +64,12 @@ class PeakEnvelope:
 
         plt.close('peak-envelope')
 
-        self.fig = plt.figure(num='peak-envelope', figsize=(18,6))
-        gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.4,0.4])
+        self.fig = plt.figure(num='peak-envelope', figsize=(18,6), dpi=144)
+        gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.2,0.6])
 
         gs0 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0], hspace=0.25)
-        gs1 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs[1], wspace=0.5)
-        gs2 = gridspec.GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[2], width_ratios=[0.666,0.333], height_ratios=[0.5,0.5], wspace=0.625, hspace=0.375)
+        gs1 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[1], hspace=0.25)
+        gs2 = gridspec.GridSpecFromSubplotSpec(2, 3, subplot_spec=gs[2], hspace=0.25, wspace=0.5)
 
         self.ax_Q = self.fig.add_subplot(gs0[0,0])
         self.ax_Q2 = self.fig.add_subplot(gs0[1,0])
@@ -78,24 +78,32 @@ class PeakEnvelope:
         self.ax_Q2.minorticks_on()
 
         self.ax_p_proj = self.fig.add_subplot(gs1[0,0])
-        self.ax_s_proj = self.fig.add_subplot(gs1[0,1])
-        
+        self.ax_s_proj = self.fig.add_subplot(gs1[1,0])
+
         self.ax_p_proj.minorticks_on()
         self.ax_s_proj.minorticks_on()
-        
+
         self.ax_Qu = self.fig.add_subplot(gs2[0,0])
-        self.ax_Qv = self.fig.add_subplot(gs2[1,0])
-        self.ax_uv = self.fig.add_subplot(gs2[:,1])
+        self.ax_Qv = self.fig.add_subplot(gs2[0,1])
+        self.ax_uv = self.fig.add_subplot(gs2[0,2])
 
         self.ax_Qu.minorticks_on()
         self.ax_Qv.minorticks_on()
         self.ax_uv.minorticks_on()
 
-        self.ax_p_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qu_fit = self.fig.add_subplot(gs2[1,0])
+        self.ax_Qv_fit = self.fig.add_subplot(gs2[1,1])
+        self.ax_uv_fit = self.fig.add_subplot(gs2[1,2])
+
+        self.ax_Qu_fit.minorticks_on()
+        self.ax_Qv_fit.minorticks_on()
+        self.ax_uv_fit.minorticks_on()
+
+        #self.ax_p_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_s_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        
+
         self.ax_p_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        # self.ax_s_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_s_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
 
         # self.ax_p_proj.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
         # self.ax_s_proj.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
@@ -103,10 +111,10 @@ class PeakEnvelope:
         self.ax_Q.set_rasterization_zorder(100)
         self.ax_Q.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
 
-        self.line_Q_p, self.caps_Q_p, self.bars_Q_p = self.ax_Q.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=True, zorder=2)
-        self.norm_Q_p = self.ax_Q.plot([0], [0], '--', rasterized=True, zorder=1)
-        self.line_Q_s, self.caps_Q_s, self.bars_Q_s = self.ax_Q.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=True, zorder=2)
-        self.norm_Q_s = self.ax_Q.plot([0], [0], '--', rasterized=True, zorder=1)
+        self.line_Q_p, self.caps_Q_p, self.bars_Q_p = self.ax_Q.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=False, zorder=2)
+        self.norm_Q_p = self.ax_Q.plot([0], [0], '--', rasterized=False, zorder=1)
+        self.line_Q_s, self.caps_Q_s, self.bars_Q_s = self.ax_Q.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=False, zorder=2)
+        self.norm_Q_s = self.ax_Q.plot([0], [0], '--', rasterized=False, zorder=1)
 
         self.im_p_proj = self.ax_p_proj.imshow([[0,1],[0,1]], interpolation='nearest',
                                                origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
@@ -132,8 +140,8 @@ class PeakEnvelope:
         self.cb_p.ax.minorticks_on()
         self.cb_s.ax.minorticks_on()
 
-        self.elli_p = Ellipse((0,0), width=1, height=1, edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.elli_s = Ellipse((0,0), width=1, height=1, edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.elli_p = Ellipse((0,0), width=1, height=1, edgecolor='C3', facecolor='none', rasterized=False, zorder=1000)
+        self.elli_s = Ellipse((0,0), width=1, height=1, edgecolor='C3', facecolor='none', rasterized=False, zorder=1000)
 
         self.trans_elli_p = transforms.Affine2D()
         self.trans_elli_s = transforms.Affine2D()
@@ -145,10 +153,10 @@ class PeakEnvelope:
         self.ax_Q2.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_Q2.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
 
-        self.line_Q2_p, self.caps_Q2_p, self.bars_Q2_p = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=True, zorder=2)
-        self.norm_Q2_p = self.ax_Q2.plot([0], [0], '--', rasterized=True, zorder=1)
-        self.line_Q2_s, self.caps_Q2_s, self.bars_Q2_s = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=True, zorder=2)
-        self.norm_Q2_s = self.ax_Q2.plot([0], [0], '--', rasterized=True, zorder=1)
+        self.line_Q2_p, self.caps_Q2_p, self.bars_Q2_p = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=False, zorder=2)
+        self.norm_Q2_p = self.ax_Q2.plot([0], [0], '--', rasterized=False, zorder=1)
+        self.line_Q2_s, self.caps_Q2_s, self.bars_Q2_s = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=False, zorder=2)
+        self.norm_Q2_s = self.ax_Q2.plot([0], [0], '--', rasterized=False, zorder=1)
 
         self.im_Qu = self.ax_Qu.imshow([[0,1],[0,1]], interpolation='nearest',
                                        origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
@@ -163,17 +171,42 @@ class PeakEnvelope:
         self.ax_Qv.set_rasterization_zorder(100)
         self.ax_uv.set_rasterization_zorder(100)
 
-        self.peak_pu = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.inner_pu = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.outer_pu = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.im_Qu_fit = self.ax_Qu_fit.imshow([[0,1],[0,1]], interpolation='nearest',
+                                               origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
 
-        self.peak_pv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.inner_pv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.outer_pv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.im_Qv_fit = self.ax_Qv_fit.imshow([[0,1],[0,1]], interpolation='nearest',
+                                               origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
 
-        self.peak_uv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.inner_uv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
-        self.outer_uv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='C3', facecolor='none', rasterized=True, zorder=1000)
+        self.im_uv_fit = self.ax_uv_fit.imshow([[0,1],[0,1]], interpolation='nearest',
+                                               origin='lower', extent=[0,1,0,1], norm=mpl.colors.LogNorm())
+
+        self.ax_Qu_fit.set_rasterization_zorder(100)
+        self.ax_Qv_fit.set_rasterization_zorder(100)
+        self.ax_uv_fit.set_rasterization_zorder(100)
+
+        self.peak_pu = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_pu = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_pu = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+
+        self.peak_pv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_pv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_pv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+
+        self.peak_uv = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_uv = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_uv = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+
+        self.peak_pu_fit = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_pu_fit = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_pu_fit = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+
+        self.peak_pv_fit = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_pv_fit = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_pv_fit = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+
+        self.peak_uv_fit = Ellipse((0,0), width=1, height=1, linestyle='-', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.inner_uv_fit = Ellipse((0,0), width=1, height=1, linestyle=':', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
+        self.outer_uv_fit = Ellipse((0,0), width=1, height=1, linestyle='--', edgecolor='w', facecolor='none', rasterized=False, zorder=1000)
 
         self.trans_peak_pu = transforms.Affine2D()
         self.trans_inner_pu = transforms.Affine2D()
@@ -187,6 +220,18 @@ class PeakEnvelope:
         self.trans_inner_uv = transforms.Affine2D()
         self.trans_outer_uv = transforms.Affine2D()
 
+        self.trans_peak_pu_fit = transforms.Affine2D()
+        self.trans_inner_pu_fit = transforms.Affine2D()
+        self.trans_outer_pu_fit = transforms.Affine2D()
+
+        self.trans_peak_pv_fit = transforms.Affine2D()
+        self.trans_inner_pv_fit = transforms.Affine2D()
+        self.trans_outer_pv_fit = transforms.Affine2D()
+
+        self.trans_peak_uv_fit = transforms.Affine2D()
+        self.trans_inner_uv_fit = transforms.Affine2D()
+        self.trans_outer_uv_fit = transforms.Affine2D()
+
         self.ax_Qu.add_patch(self.peak_pu)
         self.ax_Qu.add_patch(self.inner_pu)
         self.ax_Qu.add_patch(self.outer_pu)
@@ -199,15 +244,35 @@ class PeakEnvelope:
         self.ax_uv.add_patch(self.inner_uv)
         self.ax_uv.add_patch(self.outer_uv)
 
-        self.ax_Qv.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_Qu.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_uv.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qu_fit.add_patch(self.peak_pu_fit)
+        self.ax_Qu_fit.add_patch(self.inner_pu_fit)
+        self.ax_Qu_fit.add_patch(self.outer_pu_fit)
+
+        self.ax_Qv_fit.add_patch(self.peak_pv_fit)
+        self.ax_Qv_fit.add_patch(self.inner_pv_fit)
+        self.ax_Qv_fit.add_patch(self.outer_pv_fit)
+
+        self.ax_uv_fit.add_patch(self.peak_uv_fit)
+        self.ax_uv_fit.add_patch(self.inner_uv_fit)
+        self.ax_uv_fit.add_patch(self.outer_uv_fit)
+
+        # self.ax_Qv.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        # self.ax_Qu.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        # self.ax_uv.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
 
         self.ax_Qu.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_Qv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
         self.ax_uv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
 
-        self.__show_plots = True
+        self.ax_Qv_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qu_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_uv_fit.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+
+        self.ax_Qu_fit.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_uv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+
+        self.__show_plots = False
 
     def clear_plots(self, key, d, lamda, two_theta, n_runs):
 
@@ -263,22 +328,22 @@ class PeakEnvelope:
 
         self.im_p_proj.set_array(np.c_[[0,1],[1,0]])
         self.im_s_proj.set_array(np.c_[[0,1],[1,0]])
-        
+
         self.im_p_proj.autoscale()
         self.im_s_proj.autoscale()
-        
+
         self.im_p_proj.set_extent([0,1,0,1])
         self.im_s_proj.set_extent([0,1,0,1])
 
         self.elli_p.width = 1
         self.elli_s.width = 1
-        
+
         self.elli_p.height = 1
         self.elli_s.height = 1
-        
+
         self.trans_elli_p.clear()
         self.trans_elli_s.clear()
-        
+
         self.elli_p.set_transform(self.trans_elli_p+self.ax_p_proj.transData)
         self.elli_s.set_transform(self.trans_elli_s+self.ax_s_proj.transData)
 
@@ -286,12 +351,19 @@ class PeakEnvelope:
 
         if n_runs > 1:
             self.ax_Qu.set_title('\u03BB = {:.3f}-{:.3f} \u212B'.format(*lamda))
-            self.ax_Qv.set_title('2\u03B8 = {:.1f}-{:.1f}\u00B0'.format(*two_theta))
-            self.ax_uv.set_title('{} orientations'.format(n_runs))
+            self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}-{:.1f}\u00B0'.format(*two_theta))
+
+            self.ax_Qv.set_title('{} orientations'.format(n_runs))
         else:
             self.ax_Qu.set_title('\u03BB = {:.3f} \u212B'.format(lamda[0]))
-            self.ax_Qv.set_title('2\u03B8 = {:.1f}\u00B0'.format(two_theta[0]))
-            self.ax_uv.set_title('1 orientation')            
+            self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}\u00B0'.format(two_theta[0]))
+
+            self.ax_Qv.set_title('1 orientation')
+
+        self.ax_Qv_fit.set_title('')
+            
+        self.ax_uv.set_title('')
+        self.ax_uv_fit.set_title('')
 
         self.im_Qu.set_array(np.c_[[0,1],[1,0]])
         self.im_Qv.set_array(np.c_[[0,1],[1,0]])
@@ -304,10 +376,26 @@ class PeakEnvelope:
         self.im_Qu.set_extent([0,1,0,1])
         self.im_Qv.set_extent([0,1,0,1])
         self.im_uv.set_extent([0,1,0,1])
-        
+
         self.ax_Qu.set_aspect(1)
         self.ax_Qv.set_aspect(1)
         self.ax_uv.set_aspect(1)
+
+        self.im_Qu_fit.set_array(np.c_[[0,1],[1,0]])
+        self.im_Qv_fit.set_array(np.c_[[0,1],[1,0]])
+        self.im_uv_fit.set_array(np.c_[[0,1],[1,0]])
+
+        self.im_Qu_fit.autoscale()
+        self.im_Qv_fit.autoscale()
+        self.im_uv_fit.autoscale()
+
+        self.im_Qu_fit.set_extent([0,1,0,1])
+        self.im_Qv_fit.set_extent([0,1,0,1])
+        self.im_uv_fit.set_extent([0,1,0,1])
+
+        self.ax_Qu_fit.set_aspect(1)
+        self.ax_Qv_fit.set_aspect(1)
+        self.ax_uv_fit.set_aspect(1)
 
         # ---
 
@@ -354,7 +442,7 @@ class PeakEnvelope:
         self.peak_uv.height = 1
         self.inner_uv.height = 1
         self.outer_uv.height = 1
-        
+
         self.trans_peak_uv.clear()
         self.trans_inner_uv.clear()
         self.trans_outer_uv.clear()
@@ -362,6 +450,60 @@ class PeakEnvelope:
         self.peak_uv.set_transform(self.trans_peak_uv+self.ax_uv.transData)
         self.inner_uv.set_transform(self.trans_inner_uv+self.ax_uv.transData)
         self.outer_uv.set_transform(self.trans_outer_uv+self.ax_uv.transData)
+
+        # ---
+
+        self.peak_pu_fit.width = 1
+        self.inner_pu_fit.width = 1
+        self.outer_pu_fit.width = 1
+
+        self.peak_pu_fit.height = 1
+        self.inner_pu_fit.height = 1
+        self.outer_pu_fit.height = 1
+
+        self.trans_peak_pu_fit.clear()
+        self.trans_inner_pu_fit.clear()
+        self.trans_outer_pu_fit.clear()
+
+        self.peak_pu_fit.set_transform(self.trans_peak_pu_fit+self.ax_Qu_fit.transData)
+        self.inner_pu_fit.set_transform(self.trans_inner_pu_fit+self.ax_Qu_fit.transData)
+        self.outer_pu_fit.set_transform(self.trans_outer_pu_fit+self.ax_Qu_fit.transData)
+
+        # ---
+
+        self.peak_pv_fit.width = 1
+        self.inner_pv_fit.width = 1
+        self.outer_pv_fit.width = 1
+
+        self.peak_pv_fit.height = 1
+        self.inner_pv_fit.height = 1
+        self.outer_pv_fit.height = 1
+
+        self.trans_peak_pv_fit.clear()
+        self.trans_inner_pv_fit.clear()
+        self.trans_outer_pv_fit.clear()
+
+        self.peak_pv_fit.set_transform(self.trans_peak_pv_fit+self.ax_Qv_fit.transData)
+        self.inner_pv_fit.set_transform(self.trans_inner_pv_fit+self.ax_Qv_fit.transData)
+        self.outer_pv_fit.set_transform(self.trans_outer_pv_fit+self.ax_Qv_fit.transData)
+
+        # ---
+
+        self.peak_uv_fit.width = 1
+        self.inner_uv_fit.width = 1
+        self.outer_uv_fit.width = 1
+
+        self.peak_uv_fit.height = 1
+        self.inner_uv_fit.height = 1
+        self.outer_uv_fit.height = 1
+
+        self.trans_peak_uv_fit.clear()
+        self.trans_inner_uv_fit.clear()
+        self.trans_outer_uv_fit.clear()
+
+        self.peak_uv_fit.set_transform(self.trans_peak_uv_fit+self.ax_uv_fit.transData)
+        self.inner_uv_fit.set_transform(self.trans_inner_uv_fit+self.ax_uv_fit.transData)
+        self.outer_uv_fit.set_transform(self.trans_outer_uv_fit+self.ax_uv_fit.transData)
 
     def show_plots(self, show):
 
@@ -390,7 +532,7 @@ class PeakEnvelope:
             self.ax_Q.relim()
             self.ax_Q.autoscale()
 
-        if self.__show_plots: self.fig.show()
+            if self.__show_plots: self.fig.show()
 
     def plot_extracted_Q(self, x, y, y0, yerr, y_fit, y_bkg, chi_sq):
 
@@ -413,11 +555,11 @@ class PeakEnvelope:
 
             self.ax_Q2.set_title('\u03A7\u00B2 = {:.4f}'.format(chi_sq))
 
-        if self.__show_plots: self.fig.show()
+            if self.__show_plots: self.fig.show()
 
     def plot_projection(self, z, z0, x_extents, y_extents, mu, sigma, rho, chi_sq):
 
-        if np.any(z > 0) and np.diff(x_extents) > 0 and np.diff(y_extents) > 0 and np.all(sigma):
+        if np.any(z > 0) and np.any(z0 > 0) and np.diff(x_extents) > 0 and np.diff(y_extents) > 0 and np.all(sigma):
 
             self.im_p_proj.set_array(z0.T)
             self.im_s_proj.set_array(z.T)
@@ -443,17 +585,17 @@ class PeakEnvelope:
 
             self.elli_p.width = 2*rx
             self.elli_s.width = 2*rx
-            
+
             self.elli_p.height = 2*ry
             self.elli_s.height = 2*ry
-            
+
             self.trans_elli_p.rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
             self.trans_elli_s.rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
-            
+
             self.elli_p.set_transform(self.trans_elli_p+self.ax_p_proj.transData)
             self.elli_s.set_transform(self.trans_elli_s+self.ax_s_proj.transData)
 
-        if self.__show_plots: self.fig.show()
+            if self.__show_plots: self.fig.show()
 
     def plot_integration(self, signal, u_extents, v_extents, Q_extents, centers, radii, scales):
 
@@ -471,6 +613,14 @@ class PeakEnvelope:
             self.im_Qv.autoscale()
             self.im_uv.autoscale()
 
+            clim_Qu = self.im_Qu.get_clim()
+            clim_Qv = self.im_Qv.get_clim()
+            clim_uv = self.im_uv.get_clim()
+
+            self.im_Qu_fit.set_clim(*clim_Qu)
+            self.im_Qv_fit.set_clim(*clim_Qv)
+            self.im_uv_fit.set_clim(*clim_uv)
+
             Qu_extents = [Q_extents[0],Q_extents[2],u_extents[0],u_extents[2]]
             Qv_extents = [Q_extents[0],Q_extents[2],v_extents[0],v_extents[2]]
             uv_extents = [u_extents[0],u_extents[2],v_extents[0],v_extents[2]]
@@ -479,6 +629,10 @@ class PeakEnvelope:
             self.im_Qv.set_extent(Qv_extents)
             self.im_uv.set_extent(uv_extents)
 
+            self.im_Qu_fit.set_extent(Qu_extents)
+            self.im_Qv_fit.set_extent(Qv_extents)
+            self.im_uv_fit.set_extent(uv_extents)
+
             Qu_aspect = Q_extents[1]/u_extents[1]
             Qv_aspect = Q_extents[1]/v_extents[1]
             uv_aspect = u_extents[1]/v_extents[1]
@@ -486,6 +640,10 @@ class PeakEnvelope:
             self.ax_Qu.set_aspect(Qu_aspect)
             self.ax_Qv.set_aspect(Qv_aspect)
             self.ax_uv.set_aspect(uv_aspect)
+
+            self.ax_Qu_fit.set_aspect(Qu_aspect)
+            self.ax_Qv_fit.set_aspect(Qv_aspect)
+            self.ax_uv_fit.set_aspect(uv_aspect)
 
             u_center, v_center, Q_center = centers
 
@@ -549,11 +707,87 @@ class PeakEnvelope:
             self.inner_uv.set_transform(self.trans_inner_uv+self.ax_uv.transData)
             self.outer_uv.set_transform(self.trans_outer_uv+self.ax_uv.transData)
 
-        if self.__show_plots: self.fig.show()
+            # --
+
+            self.peak_pu_fit.width = Q_size*pk_scale
+            self.inner_pu_fit.width = Q_size*in_scale
+            self.outer_pu_fit.width = Q_size*out_scale
+
+            self.peak_pu_fit.height = u_size*pk_scale
+            self.inner_pu_fit.height = u_size*in_scale
+            self.outer_pu_fit.height = u_size*out_scale
+
+            self.trans_peak_pu_fit.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+            self.trans_inner_pu_fit.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+            self.trans_outer_pu_fit.rotate_deg(0).scale(1,1).translate(Q_center,u_center)
+
+            self.peak_pu_fit.set_transform(self.trans_peak_pu_fit+self.ax_Qu_fit.transData)
+            self.inner_pu_fit.set_transform(self.trans_inner_pu_fit+self.ax_Qu_fit.transData)
+            self.outer_pu_fit.set_transform(self.trans_outer_pu_fit+self.ax_Qu_fit.transData)
+
+            # ---
+
+            self.peak_pv_fit.width = Q_size*pk_scale
+            self.inner_pv_fit.width = Q_size*in_scale
+            self.outer_pv_fit.width = Q_size*out_scale
+
+            self.peak_pv_fit.height = v_size*pk_scale
+            self.inner_pv_fit.height = v_size*in_scale
+            self.outer_pv_fit.height = v_size*out_scale
+
+            self.trans_peak_pv_fit.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+            self.trans_inner_pv_fit.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+            self.trans_outer_pv_fit.rotate_deg(0).scale(1,1).translate(Q_center,v_center)
+
+            self.peak_pv_fit.set_transform(self.trans_peak_pv_fit+self.ax_Qv_fit.transData)
+            self.inner_pv_fit.set_transform(self.trans_inner_pv_fit+self.ax_Qv_fit.transData)
+            self.outer_pv_fit.set_transform(self.trans_outer_pv_fit+self.ax_Qv_fit.transData)
+
+            # ---
+
+            self.peak_uv_fit.width = u_size*pk_scale
+            self.inner_uv_fit.width = u_size*in_scale
+            self.outer_uv_fit.width = u_size*out_scale
+
+            self.peak_uv_fit.height = v_size*pk_scale
+            self.inner_uv_fit.height = v_size*in_scale
+            self.outer_uv_fit.height = v_size*out_scale
+
+            self.trans_peak_uv_fit.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+            self.trans_inner_uv_fit.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+            self.trans_outer_uv_fit.rotate_deg(0).scale(1,1).translate(u_center,v_center)
+
+            self.peak_uv_fit.set_transform(self.trans_peak_uv_fit+self.ax_uv_fit.transData)
+            self.inner_uv_fit.set_transform(self.trans_inner_uv_fit+self.ax_uv_fit.transData)
+            self.outer_uv_fit.set_transform(self.trans_outer_uv_fit+self.ax_uv_fit.transData)
+
+            if self.__show_plots: self.fig.show()
+
+    def plot_fitting(self, signal, I, sig, chi_sq):
+
+        if np.any(signal > 0):
+
+            Qu = np.nansum(signal, axis=1)
+            Qv = np.nansum(signal, axis=0)
+            uv = np.nansum(signal, axis=2).T
+
+            self.im_Qu_fit.set_array(Qu)
+            self.im_Qv_fit.set_array(Qv)
+            self.im_uv_fit.set_array(uv)
+
+            self.ax_uv.set_title('I = {:.2e} \u00B1 {:.2e} [arb. unit]'.format(I[0], sig[0]))
+            self.ax_uv_fit.set_title('I = {:.2e} \u00B1 {:.2e} [arb. unit]'.format(I[1], sig[1]))
+
+            # op = ' < ' if Dmax < Dn_crit else ' >= '
+            # self.ax_Qv_fit.set_title('D\u2099 = {:.3}'.format(Dmax)+op+'{:.3}'.format(Dn_crit))
+            
+            self.ax_Qv_fit.set_title('\u03A7\u00B2 = {:.4f}'.format(chi_sq))
+
+            if self.__show_plots: self.fig.show()
 
     def write_figure(self):
 
-        self.pp.savefig(self.fig, dpi=144)
+        self.pp.savefig(self.fig)
 
 class PeakInformation:
 
@@ -572,23 +806,26 @@ class PeakInformation:
         self.__bin_size = np.zeros(3)
         self.__Q = np.zeros(3)
 
-        self.__peak_fit = 0.0
-        self.__peak_bkg_ratio = 0.0
-        self.__peak_score = 0.0
-
         self.__pk_data = None
         self.__pk_norm = None
 
         self.__bkg_data = None
         self.__bkg_norm = None
 
-        self.__pk_Q0 = None
-        self.__pk_Q1 = None
-        self.__pk_Q2 = None
+        self.__Q0 = None
+        self.__Q1 = None
+        self.__Q2 = None
 
-        self.__bkg_Q0 = None
-        self.__bkg_Q1 = None
-        self.__bkg_Q2 = None
+        self.data = None
+        self.norm = None
+
+        self.__peak_fit = 0.0
+        self.__peak_bkg_ratio = 0.0
+        self.__peak_score = 0.0
+
+        self.__peak_fit2d = 0.0
+        self.__peak_bkg_ratio2d = 0.0
+        self.__peak_score2d = 0.0
 
         self.__data_scale = np.array([])
         self.__norm_scale = np.array([])
@@ -608,6 +845,20 @@ class PeakInformation:
         self.__est_int_err = []
 
         self.__scale_constant = scale_constant
+
+        self.__intens_fit = 0
+        self.__bkg_fit = 0
+
+        self.__sig_fit = 0
+
+        self.__mu_1d = None
+        self.__sigma_1d = None
+
+        self.__mu_x_2d = None
+        self.__mu_y_2d = None
+        self.__sigma_x_2d = None
+        self.__sigma_y_2d = None
+        self.__rho_2d = None
 
     def get_Q(self):
 
@@ -985,20 +1236,27 @@ class PeakInformation:
         self.__est_int.append(intens)
         self.__est_int_err.append(sig)
 
-    def add_integration(self, Q, D, W, peak_fit, peak_bkg_ratio, peak_score, data):
+    def add_integration(self, Q, D, W, statistics, data_norm, pk_bkg):
+
+        peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = statistics
 
         self.__Q = Q
 
         self.__D = D
         self.__W = W
 
-        pk_data, pk_norm, bkg_data, bkg_norm, bin_size, pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2 = data
+        pk_data, pk_norm, bkg_data, bkg_norm, bin_size = pk_bkg
+        Q0, Q1, Q2, data, norm = data_norm
 
         self.__bin_size = bin_size
 
         self.__peak_fit = peak_fit
         self.__peak_bkg_ratio = peak_bkg_ratio
-        self.__peak_score = peak_score
+        self.__peak_score = sig_noise_ratio
+
+        self.__peak_fit2d = peak_fit2d
+        self.__peak_bkg_ratio2d = peak_bkg_ratio2d
+        self.__peak_score2d = sig_noise_ratio2d
 
         self.__pk_data = pk_data
         self.__pk_norm = pk_norm
@@ -1006,13 +1264,12 @@ class PeakInformation:
         self.__bkg_data = bkg_data
         self.__bkg_norm = bkg_norm
 
-        self.__pk_Q0 = pk_Q0
-        self.__pk_Q1 = pk_Q1
-        self.__pk_Q2 = pk_Q2
+        self.__data = data
+        self.__norm = norm
 
-        self.__bkg_Q0 = bkg_Q0
-        self.__bkg_Q1 = bkg_Q1
-        self.__bkg_Q2 = bkg_Q2
+        self.__Q0 = Q0
+        self.__Q1 = Q1
+        self.__Q2 = Q2
 
         self.__norm_scale = np.ones(len(pk_data))
         self.__data_scale = np.ones(len(pk_data))
@@ -1031,6 +1288,28 @@ class PeakInformation:
         self.__peak_fit = peak_fit
         self.__peak_bkg_ratio = peak_bkg_ratio
         self.__peak_score = peak_score
+
+    def add_fit(self, fit_1d, fit_2d, fit_prod):
+
+        intens_fit, bkg_fit, sig_sq = fit_prod
+
+        self.__intens_fit = intens_fit
+        self.__bkg_fit = bkg_fit
+
+        self.__sig_fit = sig_sq
+
+        mu_1d, sigma_1d = fit_1d # a_1d, b_1d, c_1d
+
+        self.__mu_1d = mu_1d
+        self.__sigma_1d = sigma_1d
+
+        mu_x_2d, mu_y_2d, sigma_x_2d, sigma_y_2d, rho_2d = fit_2d # a_2d, b_2d, cx_2d, cy_2d, cxy_2d
+
+        self.__mu_x_2d = mu_x_2d
+        self.__mu_y_2d = mu_y_2d
+        self.__sigma_x_2d = sigma_x_2d
+        self.__sigma_y_2d = sigma_y_2d
+        self.__rho_2d = rho_2d
 
     # ---
 
@@ -1140,6 +1419,8 @@ class PeakInformation:
 
         else:
 
+            sig_fit = self.__sig_fit
+
             data = self.__get_partial_merged_peak_data_arrays(indices)
             norm = self.__get_partial_merged_peak_norm_arrays(indices)
 
@@ -1158,14 +1439,14 @@ class PeakInformation:
 
             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
-            
+
             data_norm[np.isinf(data_norm)] = np.nan
             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
 
             intens = np.nansum(data_norm)
             bkg_intens = np.nansum(bkg_data_norm)
 
-            intensity = np.sqrt(intens+bkg_intens*volume_ratio**2)*constant
+            intensity = np.sqrt(intens+bkg_intens*volume_ratio**2+sig_fit**2)*constant
 
             return intensity
 
@@ -1343,7 +1624,7 @@ class PeakInformation:
 
     def is_peak_integrated(self):
 
-        return self.__is_peak_integrated()
+        return self.__is_peak_integrated() and self.__has_good_fit()
 
     def __is_peak_integrated(self):
 
@@ -1356,6 +1637,42 @@ class PeakInformation:
         indices = np.arange(len(pk_vol_fract)).tolist()
 
         return [ind for ind in indices if pk_vol_fract[ind] > min_vol_fract]
+
+    def __has_good_fit(self):
+
+        statistics = np.array([self.peak_fit, self.peak_bkg_ratio, self.peak_score, self.peak_fit2d, self.peak_bkg_ratio2d, self.peak_score2d])
+
+        if statistics.all() is not None:
+
+            good = True
+
+            if self.peak_fit < 0.02 or self.peak_fit2d < 0.02 or self.peak_fit > 200 or self.peak_fit2d > 200:
+
+                good = False
+
+            if self.peak_bkg_ratio < 0.5:
+
+                good = False
+
+            if self.peak_score < 3 or self.peak_score2d < 3:
+
+                good = False
+
+            # powder line in profile
+            if self.peak_bkg_ratio > 1 and self.peak_bkg_ratio2d < 1 and self.peak_bkg_ratio/self.peak_bkg_ratio2d > 10:
+
+                good = False
+
+            # powder line in projection
+            if self.peak_bkg_ratio2d > 1 and self.peak_bkg_ratio < 1 and self.peak_bkg_ratio2d/self.peak_bkg_ratio > 10:
+
+                good = False
+
+        else:
+
+            good = False
+
+        return good
 
     # ---
 
@@ -1501,15 +1818,11 @@ class PeakDictionary:
 
         peak_key = (h,k,l,m,n,p) if m**2+n**2+p**2 > 0 else (h,k,l)
 
-        print('{} {:2.4f} (\u212B)'.format(peak_key, d_spacing))
+        #print('{} {:2.4f} (\u212B)'.format(peak_key, d_spacing))
 
         peaks = self.peak_dict.get(key)
 
-        if peaks is None:
-
-            print('Peak does not exist')
-
-        else:
+        if peaks is not None:
 
             for peak in peaks:
                 pprint.pprint(peak.dictionary())
@@ -1660,8 +1973,8 @@ class PeakDictionary:
 
     def add_peaks(self, ws):
 
-        if not mtd.doesExist('pws'):
-            print('pws does not exist')
+        # if not mtd.doesExist('pws'):
+        #     print('pws does not exist')
 
         if mtd.doesExist(ws):
 
@@ -1740,8 +2053,8 @@ class PeakDictionary:
                     self.peak_dict[key][0].add_information(run, bank, ind, row, col, wl, two_theta, az_phi,
                                                            phi, chi, omega, intens, sig_intens)
 
-        else:
-            print('{} does not exist'.format(ws))
+        # else:
+        #     print('{} does not exist'.format(ws))
 
     def __dbscan_1d(self, array, eps):
 
@@ -1914,12 +2227,12 @@ class PeakDictionary:
 
         return peak_dict
 
-    def integrated_result(self, key, Q, D, W, peak_fit, peak_bkg_ratio, peak_score, data, index=0):
+    def integrated_result(self, key, Q, D, W, statistics, data_norm, pkg_bk, index=0):
 
         peaks = self.peak_dict[key]
 
         peak = peaks[index]
-        peak.add_integration(Q, D, W, peak_fit, peak_bkg_ratio, peak_score, data)
+        peak.add_integration(Q, D, W, statistics, data_norm, pkg_bk)
 
         h, k, l, m, n, p = key
         Qx, Qy, Qz = Q
@@ -1973,6 +2286,13 @@ class PeakDictionary:
 
         peak = peaks[index]
         peak.add_partial_integration(Q, A, peak_fit, peak_bkg_ratio, peak_score)
+
+    def fitted_result(self, key, fit_1d, fit_2d, fit_prod, index=0):
+
+        peaks = self.peak_dict[key]
+
+        peak = peaks[index]
+        peak.add_fit(fit_1d, fit_2d, fit_prod)
 
     def calibrated_result(self, key, run_num, Q, index=0):
 
@@ -2563,22 +2883,22 @@ class PeakDictionary:
 
             R = (0.75/np.pi*V)**(1/3)
 
-        print(chemical_formula)
-        print('absoption cross section: {} barn'.format(sigma_a))
-        print('scattering cross section: {} barn'.format(sigma_s))
+        # print(chemical_formula)
+        # print('absoption cross section: {} barn'.format(sigma_a))
+        # print('scattering cross section: {} barn'.format(sigma_s))
 
-        print('linear scattering coefficient: {} 1/cm'.format(n*sigma_s))
-        print('linear absorption coefficient: {} 1/cm'.format(n*sigma_a))
+        # print('linear scattering coefficient: {} 1/cm'.format(n*sigma_s))
+        # print('linear absorption coefficient: {} 1/cm'.format(n*sigma_a))
 
-        print('mass: {} g'.format(m))
-        print('density: {} g/cm^3'.format(rho))
+        # print('mass: {} g'.format(m))
+        # print('density: {} g/cm^3'.format(rho))
 
-        print('volume: {} cm^3'.format(V))
-        print('radius: {} cm'.format(R))
+        # print('volume: {} cm^3'.format(V))
+        # print('radius: {} cm'.format(R))
 
-        print('total atoms: {}'.format(N))
-        print('molar mass: {} g/mol'.format(M))
-        print('number density: {} 1/A^3'.format(n))
+        # print('total atoms: {}'.format(N))
+        # print('molar mass: {} g/mol'.format(M))
+        # print('number density: {} 1/A^3'.format(n))
         
         van = mtd['nws'].sample().getMaterial()
         
@@ -2597,22 +2917,22 @@ class PeakDictionary:
         van_mu_s = van_n*van_sigma_s
         van_mu_a = van_n*van_sigma_a
 
-        print('V')
-        print('absoption cross section: {} barn'.format(van_sigma_a))
-        print('scattering cross section: {} barn'.format(van_sigma_s))
+        # print('V')
+        # print('absoption cross section: {} barn'.format(van_sigma_a))
+        # print('scattering cross section: {} barn'.format(van_sigma_s))
 
-        print('linear scattering coefficient: {} 1/cm'.format(van_n*van_sigma_s))
-        print('linear absorption coefficient: {} 1/cm'.format(van_n*van_sigma_a))
+        # print('linear scattering coefficient: {} 1/cm'.format(van_n*van_sigma_s))
+        # print('linear absorption coefficient: {} 1/cm'.format(van_n*van_sigma_a))
 
-        print('mass: {} g'.format(vanadium_mass))
-        print('density: {} g/cm^3'.format(van_rho))
+        # print('mass: {} g'.format(vanadium_mass))
+        # print('density: {} g/cm^3'.format(van_rho))
 
-        print('volume: {} cm^3'.format(van_V))
-        print('radius: {} cm'.format(van_R))
+        # print('volume: {} cm^3'.format(van_V))
+        # print('radius: {} cm'.format(van_R))
 
-        print('total atoms: {}'.format(van_N))
-        print('molar mass: {} g/mol'.format(van_M))
-        print('number density: {} 1/A^3'.format(van_n))
+        # print('total atoms: {}'.format(van_N))
+        # print('molar mass: {} g/mol'.format(van_M))
+        # print('number density: {} 1/A^3'.format(van_n))
 
         for key in self.peak_dict.keys():
 
@@ -2691,28 +3011,11 @@ class PeakDictionary:
 
 class GaussianFit3D:
 
-    def __init__(self, x, y, e):
+    def __init__(self, x, y, e, mu, var):
 
         self.params = Parameters()
 
-        mu = [np.average(x[0], weights=y), 
-              np.average(x[1], weights=y),
-              np.average(x[2], weights=y)]
-
-        var = [np.average((x[0]-mu[0])**2, weights=y**2),
-               np.average((x[1]-mu[1])**2, weights=y**2),
-               np.average((x[2]-mu[2])**2, weights=y**2)]
-
-        # cov = [np.average((x[1]-mu[1])*(x[2]-mu[2]), weights=y),
-        #        np.average((x[0]-mu[0])*(x[2]-mu[2]), weights=y),
-        #        np.average((x[0]-mu[0])*(x[1]-mu[1]), weights=y)]
-
-        # sig0, sig1, sig2 = np.sqrt(var)
-        # rho12, rho02, rho01 = cov[0]/(sig1*sig2), cov[1]/(sig0*sig2), cov[2]/(sig0*sig1)
-
-        # S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
-
-        self.params.add('A', value=y.max()-np.min(y), min=0, max=y.max())
+        self.params.add('A', value=y.max()-np.min(y), min=y.min()/1000, max=y.max())
         self.params.add('B', value=np.min(y), min=0, max=y.mean())
 
         self.params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
@@ -2791,6 +3094,9 @@ class GaussianFit3D:
         args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, var0, var1, var2, phi, theta, omega
 
         yfit = self.gaussian_3d(*args)
+
+        yfit[np.isnan(yfit)] = 1e+15
+        yfit[np.isinf(yfit)] = 1e+15
 
         return (y-yfit)/e
 

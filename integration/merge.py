@@ -9,11 +9,10 @@ import psutil
 import itertools
 
 import numpy as np
-
-from scipy.ndimage import gaussian_filter
+from scipy.stats import kstwobign
 
 import peak
-from peak import PeakEnvelope, PeakDictionary
+from peak import PeakEnvelope, PeakDictionary, GaussianFit3D
 
 import fitting
 from fitting import Ellipsoid, Profile, Projection
@@ -22,8 +21,10 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
 
     for j, (r, b, i) in enumerate(zip(runs, banks, indices)):
 
-        if exp is None:
+        if facility == 'SNS':
             ows = '{}_{}_{}'.format(instrument,r,b)
+        elif instrument == 'HB2C':
+            ows = '{}_{}_{}'.format(instrument,r,i)
         else:
             ows = '{}_{}_{}_{}'.format(instrument,exp,r,i)
 
@@ -52,7 +53,7 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
             Q0_bin = [extents[0][0],steps[0],extents[0][1]]
             Q1_bin = [extents[1][0],steps[1],extents[1][1]]
             Q2_bin = [extents[2][0],steps[2],extents[2][1]]
-        
+
         ws = omd if facility == 'SNS' else ows
 
         SetUB(Workspace=ws, UB=np.eye(3)/(2*np.pi)) # hack to transform axes
@@ -73,17 +74,17 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
                    Dimension1Binning='{},{},{}'.format(*Q1_bin),
                    Dimension2Binning='{},{},{}'.format(*Q2_bin),
                    OutputWorkspace='__normDataMD',
-                   OutputDataWorkspace='__tmpDataMD',
-                   OutputNormalizationWorkspace='__tmpNormMD')
+                   OutputDataWorkspace='__tmpDataMD_{}'.format(j),
+                   OutputNormalizationWorkspace='__tmpNormMD_{}'.format(j))
 
             DeleteWorkspace('__normDataMD')
 
         else:
 
-            lamda = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
+            lamda = 1.486 if instrument == 'HB2C' else float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
 
             ConvertWANDSCDtoQ(InputWorkspace=ows,
-                              NormalisationWorkspace='van_{}'.format(b),
+                              NormalisationWorkspace='van_'+ows,
                               UBWorkspace=ows,
                               OutputWorkspace='__tmp',
                               Wavelength=lamda,
@@ -96,23 +97,23 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
                               BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],bins[0]),
                               BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],bins[1]),
                               BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
-                              
+
             DeleteWorkspace('__tmp')
 
-            RenameWorkspace(InputWorkspace='__tmp_data', OutputWorkspace='__tmpDataMD')
-            RenameWorkspace(InputWorkspace='__tmp_normalization', OutputWorkspace='__tmpNormMD')
+            scale = float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('monitor_count').value) if instrument == 'HB2C' else float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('monitor').value)
 
-            scale = float(mtd['van_{}'.format(b)].getExperimentInfo(0).run().getProperty('monitor').value)
+            mtd['__tmp_data'] /= scale 
+            mtd['__tmp_normalization'] /= scale
 
-            mtd['__tmpDataMD'] /= scale 
-            mtd['__tmpNormMD'] /= scale 
+            RenameWorkspace(InputWorkspace='__tmp_data', OutputWorkspace='__tmpDataMD_{}'.format(j))
+            RenameWorkspace(InputWorkspace='__tmp_normalization', OutputWorkspace='__tmpNormMD_{}'.format(j))
 
         if j == 0:
-            CloneMDWorkspace(InputWorkspace='__tmpDataMD', OutputWorkspace='dataMD')
-            CloneMDWorkspace(InputWorkspace='__tmpNormMD', OutputWorkspace='normMD')
+            CloneMDWorkspace(InputWorkspace='__tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
+            CloneMDWorkspace(InputWorkspace='__tmpNormMD_{}'.format(j), OutputWorkspace='normMD')
         else:
-            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='__tmpDataMD', OutputWorkspace='dataMD')
-            PlusMD(LHSWorkspace='normMD', RHSWorkspace='__tmpNormMD', OutputWorkspace='normMD')
+            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='__tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
+            PlusMD(LHSWorkspace='normMD', RHSWorkspace='__tmpNormMD_{}'.format(j), OutputWorkspace='normMD')
 
     DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normDataMD')
 
@@ -123,35 +124,39 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
     mtd['dataMD'].clearOriginalWorkspaces()
     mtd['normMD'].clearOriginalWorkspaces()
     mtd['normDataMD'].clearOriginalWorkspaces()
-    
+
     # SaveMD(InputWorkspace='dataMD', Filename='/tmp/dataMD_'+str(key)+'.nxs')
     # SaveMD(InputWorkspace='normMD', Filename='/tmp/normMD_'+str(key)+'.nxs')
     # SaveMD(InputWorkspace='normDataMD', Filename='/tmp/normDataMD_'+str(key)+'.nxs')
 
-    Q0axis = mtd['normDataMD'].getXDimension()
-    Q1axis = mtd['normDataMD'].getYDimension()
-    Q2axis = mtd['normDataMD'].getZDimension()
+    QXaxis = mtd['normDataMD'].getXDimension()
+    QYaxis = mtd['normDataMD'].getYDimension()
+    QZaxis = mtd['normDataMD'].getZDimension()
 
-    Q0 = np.linspace(Q0axis.getMinimum(), Q0axis.getMaximum(), Q0axis.getNBins())
-    Q1 = np.linspace(Q1axis.getMinimum(), Q1axis.getMaximum(), Q1axis.getNBins())
-    Q2 = np.linspace(Q2axis.getMinimum(), Q2axis.getMaximum(), Q2axis.getNBins())
+    Qx = np.linspace(QXaxis.getMinimum(), QXaxis.getMaximum(), QXaxis.getNBoundaries())
+    Qy = np.linspace(QYaxis.getMinimum(), QYaxis.getMaximum(), QYaxis.getNBoundaries())
+    Qz = np.linspace(QZaxis.getMinimum(), QZaxis.getMaximum(), QZaxis.getNBoundaries())
 
-    Q0, Q1, Q2 = np.meshgrid(Q0, Q1, Q2, indexing='ij', copy=False)
+    Qx = 0.5*(Qx[1:]+Qx[:-1])
+    Qy = 0.5*(Qy[1:]+Qy[:-1])
+    Qz = 0.5*(Qz[1:]+Qz[:-1])
 
-    Qx = W[0,0]*Q0+W[0,1]*Q1+W[0,2]*Q2
-    Qy = W[1,0]*Q0+W[1,1]*Q1+W[1,2]*Q2
-    Qz = W[2,0]*Q0+W[2,1]*Q1+W[2,2]*Q2
+    Qx, Qy, Qz = np.meshgrid(Qx, Qy, Qz, indexing='ij', copy=False)
+
+    Q0 = W[0,0]*Qx+W[1,0]*Qy+W[2,0]*Qz
+    Q1 = W[0,1]*Qx+W[1,1]*Qy+W[2,1]*Qz
+    Q2 = W[0,2]*Qx+W[1,2]*Qy+W[2,2]*Qz
 
     mask = mtd['normMD'].getSignalArray() > 0
 
-    Q = np.sqrt(Qx**2+Qy**2+Qz**2)
+    Q = np.sqrt(Q0**2+Q1**2+Q2**2)
 
-    Q, Qx, Qy, Qz = Q[mask], Qx[mask], Qy[mask], Qz[mask]
+    Q, Q0, Q1, Q2 = Q[mask], Q0[mask], Q1[mask], Q2[mask]
 
     data = mtd['dataMD'].getSignalArray().copy()[mask]
     norm = mtd['normMD'].getSignalArray().copy()[mask]
 
-    return Q, Qx, Qy, Qz, data, norm
+    return Q, Q0, Q1, Q2, data, norm
 
 def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
@@ -161,7 +166,7 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
     pk = signal[mask].astype(float)
 
-    pk_Q0, pk_Q1, pk_Q2 = Q0[mask], Q1[mask], Q2[mask]
+    #pk_Q0, pk_Q1, pk_Q2 = Q0[mask], Q1[mask], Q2[mask]
 
     mask = (D_bkg_in[0,0]*(Q0-Q_rot[0])**2\
            +D_bkg_in[1,1]*(Q1-Q_rot[1])**2\
@@ -172,16 +177,16 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
     bkg = signal[mask].astype(float)
 
-    bkg_Q0, bkg_Q1, bkg_Q2 = Q0[mask], Q1[mask], Q2[mask]
+    #bkg_Q0, bkg_Q1, bkg_Q2 = Q0[mask], Q1[mask], Q2[mask]
 
-    return pk, pk_Q0, pk_Q1, pk_Q2, bkg, bkg_Q0, bkg_Q1, bkg_Q2
+    return pk, bkg
 
-def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_size=0.013, box_size=1.65,
-                    peak_ellipsoid=1.1, inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, exp=None):
+def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoid=1.1,
+                    inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5):
 
-    principal_radii = 1/np.sqrt(D.diagonal())
+    Q_radii = 1/np.sqrt(D.diagonal())
 
-    dQ = box_size*principal_radii
+    dQ = box_size*Q_radii
 
     dQp = np.array([bin_size,bin_size,bin_size])
 
@@ -191,9 +196,11 @@ def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_si
 
     Q_rot = np.dot(W.T,Q0)
 
-    _, Q0_bin_size = np.linspace(Q_rot[0]-dQ[0],Q_rot[0]+dQ[0], 11, retstep=True)
-    _, Q1_bin_size = np.linspace(Q_rot[1]-dQ[1],Q_rot[1]+dQ[1], 11, retstep=True)
-    _, Q2_bin_size = np.linspace(Q_rot[2]-dQ[2],Q_rot[2]+dQ[2], 27, retstep=True)
+    Q_min, Q_max = Q_rot-dQ, Q_rot+dQ
+
+    _, Q0_bin_size = np.linspace(Q_min[0], Q_max[0], 11, retstep=True)
+    _, Q1_bin_size = np.linspace(Q_min[1], Q_max[1], 11, retstep=True)
+    _, Q2_bin_size = np.linspace(Q_min[2], Q_max[2], 27, retstep=True)
 
     if not np.isclose(Q0_bin_size, 0):
         dQp[0] = np.min([Q0_bin_size,bin_size])
@@ -201,162 +208,96 @@ def norm_integrator(facility, instrument, runs, banks, indices, Q0, D, W, bin_si
         dQp[1] = np.min([Q1_bin_size,bin_size])
     dQp[2] = Q2_bin_size
 
-    # dQp = [0.02,0.02,0.02]
+    Qbins = np.round(2*dQ/dQp).astype(int)+1
+
+    QXaxis = mtd['normDataMD'].getXDimension()
+    QYaxis = mtd['normDataMD'].getYDimension()
+    QZaxis = mtd['normDataMD'].getZDimension()
+
+    Qx = np.linspace(QXaxis.getMinimum(), QXaxis.getMaximum(), QXaxis.getNBoundaries())
+    Qy = np.linspace(QYaxis.getMinimum(), QYaxis.getMaximum(), QYaxis.getNBoundaries())
+    Qz = np.linspace(QZaxis.getMinimum(), QZaxis.getMaximum(), QZaxis.getNBoundaries())
+
+    Qx = 0.5*(Qx[1:]+Qx[:-1])
+    Qy = 0.5*(Qy[1:]+Qy[:-1])
+    Qz = 0.5*(Qz[1:]+Qz[:-1])
+
+    Qx, Qy, Qz = np.meshgrid(Qx, Qy, Qz, indexing='ij', copy=False)
+
+    Qx, Qy, Qz = Qx.flatten(), Qy.flatten(), Qz.flatten()
+
+    Q0 = W[0,0]*Qx+W[1,0]*Qy+W[2,0]*Qz
+    Q1 = W[0,1]*Qx+W[1,1]*Qy+W[2,1]*Qz
+    Q2 = W[0,2]*Qx+W[1,2]*Qy+W[2,2]*Qz
+
+    Q0_bin_edges = np.histogram_bin_edges(Q0, bins=Qbins[0], range=(Q_min[0],Q_max[0]))
+    Q1_bin_edges = np.histogram_bin_edges(Q1, bins=Qbins[1], range=(Q_min[1],Q_max[1]))
+    Q2_bin_edges = np.histogram_bin_edges(Q2, bins=Qbins[2], range=(Q_min[2],Q_max[2]))
+
+    Q0_bin_centers = 0.5*(Q0_bin_edges[1:]+Q0_bin_edges[:-1])
+    Q1_bin_centers = 0.5*(Q1_bin_edges[1:]+Q1_bin_edges[:-1])
+    Q2_bin_centers = 0.5*(Q2_bin_edges[1:]+Q2_bin_edges[:-1])
+
+    Q0_bin_grid, Q1_bin_grid, Q2_bin_grid = np.meshgrid(Q0_bin_centers, Q1_bin_centers, Q2_bin_centers, indexing='ij', copy=False)
+
+    sample = np.array([Q0,Q1,Q2]).T
+
+    Q0_bin = [Q_min[0],dQp[0],Q_max[0]]
+    Q1_bin = [Q_min[1],dQp[1],Q_max[1]]
+    Q2_bin = [Q_min[2],dQp[2],Q_max[2]]
+
+    #print('\tdQp = ', dQp)
+    #print('\tPeak radius = ', 1/np.sqrt(D_pk.diagonal()))
+    #print('\tInner radius = ', 1/np.sqrt(D_bkg_in.diagonal()))
+    #print('\tOuter radius = ', 1/np.sqrt(D_bkg_out.diagonal()))
+
+    #print('\tQ0_bin', Q0_bin)
+    #print('\tQ1_bin', Q1_bin)
+    #print('\tQ2_bin', Q2_bin)
+
+    box_data, box_norm = [], []
 
     pk_data, pk_norm = [], []
     bkg_data, bkg_norm = [], []
 
-    if mtd.doesExist('dataMD'): DeleteWorkspace('dataMD')
-    if mtd.doesExist('normMD'): DeleteWorkspace('normMD')
+    for j, r in enumerate(runs):
 
-    for j, (r, b, i) in enumerate(zip(runs, banks, indices)):
+        data = mtd['__tmpDataMD_{}'.format(j)].getSignalArray().copy().flatten()
+        norm = mtd['__tmpNormMD_{}'.format(j)].getSignalArray().copy().flatten()
 
-        if facility == 'SNS':
-            ows = '{}_{}_{}'.format(instrument,r,b)
-        else:
-            ows = '{}_{}_{}_{}'.format(instrument,exp,r,i)
+        bin_data, _ = np.histogramdd(sample, bins=[Q0_bin_edges,Q1_bin_edges,Q2_bin_edges], weights=data)
+        bin_norm, _ = np.histogramdd(sample, bins=[Q0_bin_edges,Q1_bin_edges,Q2_bin_edges], weights=norm)
 
-        omd = ows+'_md'
+        box_data.append(bin_data)
+        box_norm.append(bin_norm)
 
-        if mtd.doesExist('tmpDataMD'): DeleteWorkspace('tmpDataMD')
-        if mtd.doesExist('tmpNormMD'): DeleteWorkspace('tmpNormMD')
-
-        ws = omd if facility == 'SNS' else ows
-
-        SetUB(Workspace=ws, UB=np.eye(3)/(2*np.pi)) # hack to transform axes
-
-        if j == 0:
-
-            extents = [[Q_rot[0]-dQ[0],Q_rot[0]+dQ[0]],
-                       [Q_rot[1]-dQ[1],Q_rot[1]+dQ[1]],
-                       [Q_rot[2]-dQ[2],Q_rot[2]+dQ[2]]]
-
-            bins = [int(round(2*dQ[0]/dQp[0]))+1,
-                    int(round(2*dQ[1]/dQp[1]))+1,
-                    int(round(2*dQ[2]/dQp[2]))+1]
-
-            steps = [(extents[0][1]-extents[0][0])/bins[0],
-                     (extents[1][1]-extents[1][0])/bins[1],
-                     (extents[2][1]-extents[2][0])/bins[2]]
-
-            Q0_bin = [extents[0][0],steps[0],extents[0][1]]
-            Q1_bin = [extents[1][0],steps[1],extents[1][1]]
-            Q2_bin = [extents[2][0],steps[2],extents[2][1]]
-
-            print('\tdQp = ', dQp)
-            print('\tPeak radius = ', 1/np.sqrt(D_pk.diagonal()))
-            print('\tInner radius = ', 1/np.sqrt(D_bkg_in.diagonal()))
-            print('\tOuter radius = ', 1/np.sqrt(D_bkg_out.diagonal()))
-
-            print('\tQ0_bin', Q0_bin)
-            print('\tQ1_bin', Q1_bin)
-            print('\tQ2_bin', Q2_bin)
-
-        if facility == 'SNS':
-
-            MDNorm(InputWorkspace=omd,
-                   SolidAngleWorkspace='sa',
-                   FluxWorkspace='flux',
-                   RLU=True, # not actually HKL
-                   QDimension0='{},{},{}'.format(*W[:,0]),
-                   QDimension1='{},{},{}'.format(*W[:,1]),
-                   QDimension2='{},{},{}'.format(*W[:,2]),
-                   Dimension0Name='QDimension0',
-                   Dimension1Name='QDimension1',
-                   Dimension2Name='QDimension2',
-                   Dimension0Binning='{},{},{}'.format(*Q0_bin),
-                   Dimension1Binning='{},{},{}'.format(*Q1_bin),
-                   Dimension2Binning='{},{},{}'.format(*Q2_bin),
-                   OutputWorkspace='__normDataMD',
-                   OutputDataWorkspace='__tmpDataMD',
-                   OutputNormalizationWorkspace='__tmpNormMD')
-
-        else:
-
-            lamda = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
-
-            #monitor = float(mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value)
-
-            #CloneMDWorkspace(InputWorkspace=ows, OutputWorkspace='tmp')
-            #CloneMDWorkspace(InputWorkspace=ows, OutputWorkspace='tmp')
-
-            ConvertWANDSCDtoQ(InputWorkspace=ows,
-                              NormalisationWorkspace='van_{}'.format(b),
-                              UBWorkspace=ows,
-                              OutputWorkspace='__normDataMD',
-                              Wavelength=lamda,
-                              NormaliseBy='Monitor',
-                              Frame='HKL', # not actually HKL,
-                              KeepTemporaryWorkspaces=True,
-                              Uproj='{},{},{}'.format(*W[:,0]),
-                              Vproj='{},{},{}'.format(*W[:,1]),
-                              Wproj='{},{},{}'.format(*W[:,2]),
-                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],bins[0]),
-                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],bins[1]),
-                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
-
-            RenameWorkspace(InputWorkspace='__normDataMD_data', OutputWorkspace='tmpDataMD')
-            RenameWorkspace(InputWorkspace='__normDataMD_normalization', OutputWorkspace='tmpNormMD')
-
-            scale = float(mtd['van_{}'.format(b)].getExperimentInfo(0).run().getProperty('monitor').value)
-
-            mtd['tmpDataMD'] /= scale 
-            mtd['tmpNormMD'] /= scale 
-
-        if j == 0:
-
-            Q0axis = mtd['__normDataMD'].getXDimension()
-            Q1axis = mtd['__normDataMD'].getYDimension()
-            Q2axis = mtd['__normDataMD'].getZDimension()
-
-            Q0, Q0h = np.linspace(Q0axis.getMinimum(), Q0axis.getMaximum(), Q0axis.getNBins()+1, retstep=True)
-            Q1, Q1h = np.linspace(Q1axis.getMinimum(), Q1axis.getMaximum(), Q1axis.getNBins()+1, retstep=True)
-            Q2, Q2h = np.linspace(Q2axis.getMinimum(), Q2axis.getMaximum(), Q2axis.getNBins()+1, retstep=True)
-
-            Q0, Q1, Q2 = 0.5*(Q0[:-1]+Q0[1:]), 0.5*(Q1[:-1]+Q1[1:]), 0.5*(Q2[:-1]+Q2[1:])
-
-            dQp_bin= np.array([Q0h,Q1h,Q2h])
-
-            Q0, Q1, Q2 = np.meshgrid(Q0, Q1, Q2, indexing='ij', copy=False)
-
-        if facility == 'SNS':
-
-            RenameWorkspace(InputWorkspace='__tmpDataMD', OutputWorkspace='tmpDataMD')
-            RenameWorkspace(InputWorkspace='__tmpNormMD', OutputWorkspace='tmpNormMD')
-            RenameWorkspace(InputWorkspace='__normDataMD', OutputWorkspace='normDataMD')
-
-        signal = mtd['tmpDataMD'].getSignalArray().copy()
-
-        pk, pk_Q0, pk_Q1, pk_Q2, bkg, bkg_Q0, bkg_Q1, bkg_Q2 = partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out)
+        pk, bkg = partial_integration(bin_data, Q0_bin_grid, Q1_bin_grid, Q2_bin_grid, Q_rot, D_pk, D_bkg_in, D_bkg_out)
 
         pk_data.append(pk)
         bkg_data.append(bkg)
 
-        signal = mtd['tmpNormMD'].getSignalArray().copy()
-
-        pk, pk_Q0, pk_Q1, pk_Q2, bkg, bkg_Q0, bkg_Q1, bkg_Q2 = partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out)
+        pk, bkg = partial_integration(bin_norm, Q0_bin_grid, Q1_bin_grid, Q2_bin_grid, Q_rot, D_pk, D_bkg_in, D_bkg_out)
 
         pk_norm.append(pk)
         bkg_norm.append(bkg)
 
-        if j == 0:
-            CloneMDWorkspace(InputWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            CloneMDWorkspace(InputWorkspace='tmpNormMD', OutputWorkspace='normMD')
-        else:
-            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD', OutputWorkspace='normMD')
+    data = mtd['dataMD'].getSignalArray().copy().flatten()
+    norm = mtd['normMD'].getSignalArray().copy().flatten()
 
-    DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normDataMD')
+    bin_data, _ = np.histogramdd(sample, bins=[Q0_bin_edges,Q1_bin_edges,Q2_bin_edges], weights=data)
+    bin_norm, _ = np.histogramdd(sample, bins=[Q0_bin_edges,Q1_bin_edges,Q2_bin_edges], weights=norm)
 
-    signal = mtd['normDataMD'].getSignalArray().copy()
+    signal = bin_data/bin_norm
+    error = np.sqrt(bin_data)/bin_norm
 
-    data = (pk_data, pk_norm, bkg_data, bkg_norm, dQp_bin, pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2)
+    pk_bkg_data_norm = (pk_data, pk_norm, bkg_data, bkg_norm, dQp)
+    data_norm = (Q0_bin_grid, Q1_bin_grid, Q2_bin_grid, box_data, box_norm)
 
-    envelope_scales = np.array([peak_ellipsoid, inner_bkg_ellipsoid, outer_bkg_ellipsoid])
+    Q_scales = np.array([peak_ellipsoid, inner_bkg_ellipsoid, outer_bkg_ellipsoid])
 
     Q_bin = (Q0_bin, Q1_bin, Q2_bin)
 
-    return signal, Q_bin, Q_rot, principal_radii, envelope_scales, data
+    return Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg_data_norm
 
 def load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration):
@@ -379,7 +320,13 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
             if not mtd['sa'].run().hasProperty('NormalizationFactor'):
                 NormaliseByCurrent('sa', OutputWorkspace='sa')
         elif not mtd.doesExist('van'):
-            LoadMD(Filename=counts_file, OutputWorkspace='van')
+            if instrument == 'HB3A':
+                LoadMD(Filename=counts_file, OutputWorkspace='van')
+            else:
+                LoadWANDSCD(Filename=counts_file, 
+                            NormalizedBy='None',
+                            Grouping='None',
+                            OutputWorkspace='van')
 
     elif not mtd.doesExist('sa') and facility == 'SNS':
         CreateSimulationWorkspace(Instrument=instrument, BinParams='{},0.01,{}'.format(k_min,k_max), OutputWorkspace='tmp', UnitX='Momentum')
@@ -417,7 +364,7 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
             else:
                 LoadIsawDetCal(InputWorkspace='flux', Filename=detector_calibration)
 
-def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_file, reflection_condition, min_d,
+def pre_integration(runs, outname, directory, facility, instrument, ipts, all_runs, ub_file, reflection_condition, min_d,
                     spectrum_file, counts_file, tube_calibration, detector_calibration,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, exp=None, tmp=None):
@@ -435,15 +382,17 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
         CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
     else:
         CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
-    
+
     CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
 
-    if facility == 'HFIR':
+    if instrument == 'HB3A':
         LoadEmptyInstrument(InstrumentName='HB3A', OutputWorkspace='rws')
+    elif instrument == 'HB2C':
+        LoadEmptyInstrument(InstrumentName='WAND', OutputWorkspace='rws')
 
     for i, r in enumerate(runs):
-        print('\tProcessing run : {}'.format(r))
-        if facility == 'SNS':
+        #print('\tProcessing run : {}'.format(r))
+        if facility == 'SNS' or instrument == 'HB2C':
             ows = '{}_{}'.format(instrument,r)
         else:
             ows = '{}_{}_{}'.format(instrument,exp,r)
@@ -451,15 +400,18 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
         omd = ows+'_md'
         opk = ows+'_pk'
 
-        if not mtd.doesExist(opk):
+        if mtd.doesExist('md'):
+            RenameWorkspace(InputWorkspace='md', OutputWorkspace=omd)
+
+        if not mtd.doesExist(opk) and not mtd.doesExist('pks'):
 
             if facility == 'SNS':
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
                 LoadEventNexus(Filename=filename, OutputWorkspace=ows)
-                
+
                 if mtd.doesExist('sa'):
                     MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
-                    
+
                     if instrument == 'SNAP':
                         if not mtd['sa'].run().hasProperty('det_arc1') or \
                            not mtd['sa'].run().hasProperty('det_arc2') or \
@@ -467,10 +419,10 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                            not mtd['sa'].run().hasProperty('det_lin2'):
                             LoadNexusLogs(Workspace='sa', Filename=filename, OverwriteLogs=False)
                             LoadInstrument(Workspace='sa', InstrumentName='SNAP', RewriteSpectraMap=False)
-                            
+
                             load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                                            tube_calibration, detector_calibration)
-                                   
+
                     CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
 
                 if instrument == 'CORELLI':
@@ -519,10 +471,11 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                             Wproj='0,0,1')
 
             else:
-                filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
-                LoadMD(Filename=filename, OutputWorkspace=ows)
-                
+
                 if instrument == 'HB3A':
+                    filename = '/HFIR/{}/IPTS-{}/shared/autoreduce/{}_exp{:04}_scan{:04}.nxs'.format(instrument,ipts,instrument,exp,r)
+                    LoadMD(Filename=filename, OutputWorkspace=ows)
+
                     component = mtd[ows].getExperimentInfo(0).componentInfo()
                     for bank in [1,2,3]:
                         height_offset = 0.0     # unit meter
@@ -543,18 +496,25 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                         panel_offset += panel_pos
                         component.setPosition(panel_index, panel_offset)
 
-                if instrument == 'HB3A':
                     SetGoniometer(Workspace=ows,
                                   Axis0='omega,0,1,0,-1',
                                   Axis1='chi,0,0,1,-1',
                                   Axis2='phi,0,1,0,-1',
                                   Average=False)
+
                 elif instrument == 'HB2C':
+
+                    LoadWANDSCD(IPTS=ipts,
+                                RunNumbers=','.join([str(val) for val in all_runs]),
+                                NormalizedBy='None',
+                                Grouping='4x4', 
+                                OutputWorkspace=ows)
+
                     SetGoniometer(Workspace=ows,
-                                  Axis0='s1,0,1,0,',
+                                  Axis0='s1,0,1,0,1',
                                   Average=False)
-                                  
-                lamda = float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
+
+                lamda = 1.486 if instrument == 'HB2C' else float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
 
                 if instrument == 'HB3A':
                     two_theta_max = 155
@@ -582,7 +542,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                 UB = mtd[ows].getExperimentInfo(0).sample().getOrientedLattice().getUB()
                 SetUB(Workspace=omd, UB=UB)
 
-        if not mtd.doesExist(opk):
+        if not mtd.doesExist(opk) and not mtd.doesExist('pks'):
 
             if facility == 'SNS':
 
@@ -610,36 +570,45 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
                 run = mtd[omd].getExperimentInfo(0).run()
 
-                lamda = float(run.getProperty('wavelength').value)
+                lamda = 1.486 if instrument == 'HB2C' else float(run.getProperty('wavelength').value)
 
                 lamda_min, lamda_max = 0.95*lamda, 1.05*lamda
 
                 gon = run.getGoniometer().getEulerAngles('YZY')
 
-                use_inner = True if np.mean(np.diff(run.getLogData('phi').value)) > np.mean(np.diff(run.getLogData('omega').value)) else False
+                if instrument == 'HB3A':
 
-                if use_inner:
-                    min_angle = -run.getLogData('phi').value.max()
-                    max_angle = -run.getLogData('phi').value.min()
+                    use_inner = True if np.mean(np.diff(run.getLogData('phi').value)) > np.mean(np.diff(run.getLogData('omega').value)) else False
 
-                    phi_log = -run.getLogData('phi').value[0]
-                    if np.isclose(phi_log+180, gon[2]):
-                        min_angle += 180
-                        max_angle += 180
-                    elif np.isclose(phi_log-180, gon[2]):
-                        min_angle -= 180
-                        max_angle -= 180
+                    if use_inner:
+                        min_angle = -run.getLogData('phi').value.max()
+                        max_angle = -run.getLogData('phi').value.min()
+
+                        phi_log = -run.getLogData('phi').value[0]
+                        if np.isclose(phi_log+180, gon[2]):
+                            min_angle += 180
+                            max_angle += 180
+                        elif np.isclose(phi_log-180, gon[2]):
+                            min_angle -= 180
+                            max_angle -= 180
+                    else:
+                        min_angle = -run.getLogData('omega').value.max()
+                        max_angle = -run.getLogData('omega').value.min()
+
+                        omega_log = -run.getLogData('omega').value[0]
+                        if np.isclose(omega_log+180, gon[0]):
+                            min_angle += 180
+                            max_angle += 180
+                        elif np.isclose(omega_log-180, gon[0]):
+                            min_angle -= 180
+                            max_angle -= 180
+
                 else:
-                    min_angle = -run.getLogData('omega').value.max()
-                    max_angle = -run.getLogData('omega').value.min()
 
-                    omega_log = -run.getLogData('omega').value[0]
-                    if np.isclose(omega_log+180, gon[0]):
-                        min_angle += 180
-                        max_angle += 180
-                    elif np.isclose(omega_log-180, gon[0]):
-                        min_angle -= 180
-                        max_angle -= 180
+                    use_inner = False
+
+                    min_angle = run.getLogData('s1').value.min()
+                    max_angle = run.getLogData('s1').value.max()
 
                 PredictPeaks(InputWorkspace=omd,
                              WavelengthMin=lamda_min,
@@ -785,12 +754,24 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                         FilterValue=0,
                         Operator='>',
                         OutputWorkspace=opk)
-            
+
             det_IDs = mtd[opk].column(1)
 
             for pn in range(mtd[opk].getNumberPeaks()-1,-1,-1):
                 if det_IDs[pn] == -1:
                     mtd[opk].removePeak(pn)
+
+            if instrument == 'HB2C':
+                g = Goniometer()
+                run_numbers = np.array(mtd[ows].getExperimentInfo(0).run().getProperty('run_number').value).astype(int).tolist()
+                s1 = np.array(mtd[ows].getExperimentInfo(0).run().getProperty('s1').value)
+                for pn in range(mtd[opk].getNumberPeaks()):
+                    pk = mtd[opk].getPeak(pn)
+                    R = pk.getGoniometerMatrix()
+                    g.setR(R)
+                    rot, _, _ = g.getEulerAngles('YZY')
+                    run = run_numbers[np.argmin(np.abs(s1-rot))]
+                    pk.setRunNumber(run)
 
             SortPeaksWorkspace(InputWorkspace=opk, 
                                ColumnNameToSortBy='DSpacing',
@@ -803,12 +784,29 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                                [pk_2.getRunNumber(), *list(pk_2.getHKL())]): 
                     mtd[opk].removePeak(pn)
 
-        if facility == 'HFIR':
+            if instrument == 'HB2C':
+                CloneWorkspace(InputWorkspace=opk, OutputWorkspace='pks')
+                DeleteWorkspace(opk)
+                for run_no in list(set(mtd['pks'].column(0))):
+                    if run_no in runs:
+                        FilterPeaks(InputWorkspace='pks',
+                                    FilterVariable='RunNumber',
+                                    FilterValue=run_no,
+                                    Operator='=',
+                                    OutputWorkspace='{}_{}_pk'.format(instrument,run_no))
+
+        if facility == 'HFIR' and mtd.doesExist(opk):
 
             det_IDs = mtd[opk].column(1)
 
-            run = mtd[omd].getExperimentInfo(0).run()
+            if instrument == 'HB3A':
+                columns = 512*3
+                rows = 512
+            else:
+                columns = 512
+                rows = 8*480
 
+            run = mtd[omd].getExperimentInfo(0).run()
             scans = run.getNumGoniometers()
 
             rotation, _, _ = np.array([run.getGoniometer(i).getEulerAngles('YZY') for i in range(scans)]).T
@@ -817,53 +815,91 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
 
             rotation_diff = np.diff(rotation).mean()
 
+            r_diff = 128
+            c_diff = 128
+
             i_diff = abs(int(round(10/rotation_diff)))
 
-            two_theta = np.mean(run.getProperty('2theta').value)
-            det_trans = np.mean(run.getProperty('det_trans').value)
+            if instrument == 'HB3A':
 
-            AddSampleLog(Workspace='rws',
-                         LogName='2theta', 
-                         LogText=str(two_theta),
-                         LogType='Number Series',
-                         LogUnit='degree',
-                         NumberType='Double')
+                two_theta = np.mean(run.getProperty('2theta').value)
+                det_trans = np.mean(run.getProperty('det_trans').value)
 
-            AddSampleLog(Workspace='rws',
-                         LogName='det_trans', 
-                         LogText=str(det_trans),
-                         LogType='Number Series',
-                         LogUnit='millimeter',
-                         NumberType='Double')
+                AddSampleLog(Workspace='rws',
+                             LogName='2theta', 
+                             LogText=str(two_theta),
+                             LogType='Number Series',
+                             LogUnit='degree',
+                             NumberType='Double')
 
-            LoadInstrument(Workspace='rws', InstrumentName='HB3A', RewriteSpectraMap=False)
+                AddSampleLog(Workspace='rws',
+                             LogName='det_trans', 
+                             LogText=str(det_trans),
+                             LogType='Number Series',
+                             LogUnit='millimeter',
+                             NumberType='Double')
 
-            component = mtd['rws'].componentInfo()
-            for bank in [1,2,3]:
-                height_offset = 0    # unit meter
-                distance_offset = 0  # unit meter
+                LoadInstrument(Workspace='rws', InstrumentName='HB3A', RewriteSpectraMap=False)
 
-                index = component.indexOfAny('bank{}'.format(bank))
+            else:
 
-                offset = V3D(0, height_offset, 0)
-                pos = component.position(index)
-                offset += pos
-                component.setPosition(index, offset)
+                detz = np.mean(run.getProperty('HB2C:Mot:detz.RBV').value)
+                s2 = np.mean(run.getProperty('HB2C:Mot:s2.RBV').value)
 
-                panel_index = int(component.children(index)[0])
-                panel_pos = component.position(panel_index)
-                panel_rel_pos = component.relativePosition(panel_index)
+                AddSampleLog(Workspace='rws',
+                             LogName='HB2C:Mot:detz.RBV', 
+                             LogText=str(detz),
+                             LogType='Number Series',
+                             LogUnit='degree',
+                             NumberType='Double')
 
-                panel_offset = panel_rel_pos*(distance_offset/panel_rel_pos.norm())
-                panel_offset += panel_pos
-                component.setPosition(panel_index, panel_offset)
+                AddSampleLog(Workspace='rws',
+                             LogName='HB2C:Mot:s2.RBV', 
+                             LogText=str(s2),
+                             LogType='Number Series',
+                             LogUnit='millimeter',
+                             NumberType='Double')
+
+                LoadInstrument(Workspace='rws', InstrumentName='WAND', RewriteSpectraMap=False)
+
+            if instrument == 'HB3A':
+
+                component = mtd['rws'].componentInfo()
+                for bank in [1,2,3]:
+                    height_offset = 0    # unit meter
+                    distance_offset = 0  # unit meter
+
+                    index = component.indexOfAny('bank{}'.format(bank))
+
+                    offset = V3D(0, height_offset, 0)
+                    pos = component.position(index)
+                    offset += pos
+                    component.setPosition(index, offset)
+
+                    panel_index = int(component.children(index)[0])
+                    panel_pos = component.position(panel_index)
+                    panel_rel_pos = component.relativePosition(panel_index)
+
+                    panel_offset = panel_rel_pos*(distance_offset/panel_rel_pos.norm())
+                    panel_offset += panel_pos
+                    component.setPosition(panel_index, panel_offset)
 
             PreprocessDetectorsToMD(InputWorkspace='rws', OutputWorkspace='preproc')
 
-            twotheta = np.array(mtd['preproc'].column(2)).reshape(3,512,512)
-            azimuthal = np.array(mtd['preproc'].column(3)).reshape(3,512,512)
+            twotheta = np.array(mtd['preproc'].column(2))
+            azimuthal = np.array(mtd['preproc'].column(3))
 
-            logs = ['omega', 'chi', 'phi', 'time', 'monitor', 'monitor2']
+            if instrument == 'HB3A':
+                twotheta = twotheta.reshape(columns,rows)
+                azimuthal = azimuthal.reshape(columns,rows)
+            else:
+                twotheta = twotheta.reshape(rows,columns)
+                azimuthal = azimuthal.reshape(rows,columns)
+
+            if instrument == 'HB3A':
+                logs = ['omega', 'chi', 'phi', 'time', 'monitor', 'monitor2']
+            else:
+                logs = ['s1', 'duration', 'monitor_count']
 
             log_dict = {}
 
@@ -878,6 +914,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                         run.addProperty(log, 0, True)
 
             for pn in range(mtd[opk].getNumberPeaks()):
+
                 pk = mtd[opk].getPeak(pn)
 
                 det_ID = det_IDs[pn]
@@ -886,7 +923,7 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                 comp_path = mtd['rws'].getInstrument().getDetector(det_ID).getFullName()
                 bank = int(re.search('bank[0-9]+', comp_path).group().lstrip('bank'))
 
-                start, stop = 512*(bank-1), 512*bank
+                #start, stop = 512*(bank-1), 512*bank
 
                 pk.setBinCount(bank)
 
@@ -902,10 +939,37 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                 i_start = i_ind-i_diff if i_ind-i_diff > 0 else 0
                 i_stop = i_ind+i_diff if i_ind+i_diff < scans else scans
 
+                if instrument == 'HB2C':
+                    run_nos = run_numbers[i_start:i_stop]
+                    ows = '{}_{}'.format(instrument,r)
+                    opk = ows+'_pk'
+                    LoadWANDSCD(IPTS=ipts,
+                                RunNumbers=','.join([str(val) for val in run_nos]),
+                                NormalizedBy='None',
+                                Grouping='None', 
+                                OutputWorkspace=ows)
+                    i_start, i_stop = 0, len(run_nos)
+
+                if instrument == 'HB3A':
+                    c_ind, r_ind = np.unravel_index(det_ID, (columns, rows))
+                else:
+                    r_ind, c_ind = np.unravel_index(det_ID, (rows, columns))
+
+                r_start = r_ind-r_diff if r_ind-r_diff > 0 else 0
+                r_stop = r_ind+r_diff if r_ind+r_diff < rows else rows
+
+                c_start = c_ind-c_diff if c_ind-c_diff > 0 else 0
+                c_stop = c_ind+c_diff if c_ind+c_diff < columns else columns
+
                 SliceMDHisto(InputWorkspace=ows,
-                             Start='{},0,{}'.format(start,i_start),
-                             End='{},512,{}'.format(stop,i_stop),
+                             Start='{},{},{}'.format(c_start,r_start,i_start),
+                             End='{},{},{}'.format(c_stop,r_stop,i_stop),
                              OutputWorkspace='crop_data')
+
+                SliceMDHisto(InputWorkspace='van',
+                             Start='{},{},{}'.format(c_start,r_start,0),
+                             End='{},{},{}'.format(c_stop,r_stop,1),
+                             OutputWorkspace='crop_norm')
 
                 crop_run = mtd['crop_data'].getExperimentInfo(0).run()
 
@@ -917,38 +981,54 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
                         new_log.addValue(t, v)
                     crop_run[log] = new_log
 
-                crop_run.addProperty('twotheta', twotheta[bank-1].T.flatten().tolist(), True)
-                crop_run.addProperty('azimuthal', azimuthal[bank-1].T.flatten().tolist(), True)
+                if instrument == 'HB3A':
+                    crop_run.addProperty('twotheta', twotheta[c_start:c_stop,r_start:r_stop].T.flatten().tolist(), True)
+                    crop_run.addProperty('azimuthal', azimuthal[c_start:c_stop,r_start:r_stop].T.flatten().tolist(), True)
+                else:
+                    crop_run.addProperty('twotheta', twotheta[r_start:r_stop,c_start:c_stop].flatten().tolist(), True)
+                    crop_run.addProperty('azimuthal', azimuthal[r_start:r_stop,c_start:c_stop].flatten().tolist(), True)
 
                 tmp_directory = '{}/{}/'.format(directory, tmp)
-                tmp_outname = '{}_{}_{}_{}.nxs'.format(instrument,exp,r,no)
+
+                if instrument == 'HB3A':
+                    tmp_outname = '{}_{}_{}_{}.nxs'.format(instrument,exp,r,no)
+                else:
+                    tmp_outname = '{}_{}_{}.nxs'.format(instrument,r,no)
 
                 SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
+                SaveMD(InputWorkspace='crop_norm', Filename=os.path.join(tmp_directory, 'van_'+tmp_outname))
+
                 DeleteWorkspace('crop_data')
+                DeleteWorkspace('crop_norm')
 
-        ConvertPeaksWorkspace(PeakWorkspace=opk, OutputWorkspace=opk+'_lean')
+        if mtd.doesExist(opk):
 
-        CombinePeaksWorkspaces(LHSWorkspace='tmp_lean', RHSWorkspace=opk+'_lean', OutputWorkspace='tmp_lean')
-        SetUB(Workspace='tmp_lean', UB=mtd[opk+'_lean'].sample().getOrientedLattice().getUB())
+            ConvertPeaksWorkspace(PeakWorkspace=opk, OutputWorkspace=opk+'_lean')
 
-        CombinePeaksWorkspaces(LHSWorkspace='tmp', RHSWorkspace=opk, OutputWorkspace='tmp')
-        SetUB(Workspace='tmp', UB=mtd[opk].sample().getOrientedLattice().getUB())
+            CombinePeaksWorkspaces(LHSWorkspace='tmp_lean', RHSWorkspace=opk+'_lean', OutputWorkspace='tmp_lean')
+            SetUB(Workspace='tmp_lean', UB=mtd[opk+'_lean'].sample().getOrientedLattice().getUB())
 
-        if max_order > 0:
+            CombinePeaksWorkspaces(LHSWorkspace='tmp', RHSWorkspace=opk, OutputWorkspace='tmp')
+            SetUB(Workspace='tmp', UB=mtd[opk].sample().getOrientedLattice().getUB())
 
-            ol = mtd['tmp'].sample().getOrientedLattice()
-            ol.setMaxOrder(max_order)
+            if max_order > 0:
 
-            ol.setModVec1(V3D(*mod_vector_1))
-            ol.setModVec2(V3D(*mod_vector_2))
-            ol.setModVec3(V3D(*mod_vector_3))
+                ol = mtd['tmp'].sample().getOrientedLattice()
+                ol.setMaxOrder(max_order)
 
-            UB = ol.getUB()
+                ol.setModVec1(V3D(*mod_vector_1))
+                ol.setModVec2(V3D(*mod_vector_2))
+                ol.setModVec3(V3D(*mod_vector_3))
 
-            mod_HKL = np.column_stack((mod_vector_1,mod_vector_2,mod_vector_3))
-            mod_UB = np.dot(UB, mod_HKL)
+                UB = ol.getUB()
 
-            ol.setModUB(mod_UB)
+                mod_HKL = np.column_stack((mod_vector_1,mod_vector_2,mod_vector_3))
+                mod_UB = np.dot(UB, mod_HKL)
+
+                ol.setModUB(mod_UB)
+
+        if instrument == 'HB2C':
+            RenameWorkspace(InputWorkspace=omd, OutputWorkspace='md')
 
         if mtd.doesExist(ows):
             DeleteWorkspace(ows)
@@ -958,6 +1038,9 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, ub_fil
             DeleteWorkspace(omd)
         if mtd.doesExist(opk+'_lean'):
             DeleteWorkspace(opk+'_lean')
+
+    if mtd.doesExist('md'):
+        DeleteWorkspace('md')
 
     SaveNexus(InputWorkspace='tmp_lean', Filename=os.path.join(directory, outname+'_pk_lean.nxs'))
     SaveNexus(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'_pk.nxs'))
@@ -970,6 +1053,8 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
 
         if facility == 'SNS':
             ows = '{}_{}_{}'.format(instrument,r,b)
+        elif instrument == 'HB2C':
+            ows = '{}_{}_{}'.format(instrument,r,i)
         else:
             ows = '{}_{}_{}_{}'.format(instrument,exp,r,i)
 
@@ -1062,14 +1147,21 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
 
                 filename = '{}/{}/{}.nxs'.format(directory, tmp, ows)
                 LoadMD(Filename=filename, OutputWorkspace=ows)
+                filename = '{}/{}/{}.nxs'.format(directory, tmp, 'van_'+ows)
+                LoadMD(Filename=filename, OutputWorkspace='van_'+ows)
 
-                SetGoniometer(Workspace=ows,
-                              Axis0='omega,0,1,0,-1',
-                              Axis1='chi,0,0,1,-1',
-                              Axis2='phi,0,1,0,-1',
-                              Average=False)
+                if instrument == 'HB3A':
+                    SetGoniometer(Workspace=ows,
+                                  Axis0='omega,0,1,0,-1',
+                                  Axis1='chi,0,0,1,-1',
+                                  Axis2='phi,0,1,0,-1',
+                                  Average=False)
+                else:
+                    SetGoniometer(Workspace=ows,
+                                  Axis0='s1,0,1,0,1',
+                                  Average=False)
 
-                norm_scale[(r,i)] = np.sum(mtd[ows].getExperimentInfo(0).run().getProperty('monitor').value)
+                norm_scale[(r,i)] = 1
 
 def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank_keys, bank_group, key, exp=None):
 
@@ -1077,6 +1169,8 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
 
         if facility == 'SNS':
             ows = '{}_{}_{}'.format(instrument,r,b)
+        elif instrument == 'HB2C':
+            ows = '{}_{}_{}'.format(instrument,r,i)
         else:
             ows = '{}_{}_{}_{}'.format(instrument,exp,r,i)
 
@@ -1105,9 +1199,11 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
             #                     OutputWorkspace='flux')
 
         else:
-            
+
             if mtd.doesExist(ows):
                 DeleteWorkspace(ows)
+            if mtd.doesExist('van_'+ows):
+                DeleteWorkspace('van_'+ows)
 
     return runs_banks, bank_keys
 
@@ -1150,6 +1246,22 @@ def projection_axes(n):
 
     return u, v
 
+def cdf(signal, fit):
+    
+    signal, fit = np.sort(signal), np.sort(fit)
+
+    n = fit.size
+
+    cumdistfun = []
+
+    for val in signal:
+
+      fraction = fit[fit <= val].size/n
+
+      cumdistfun.append(fraction)
+
+    return np.array(cumdistfun)
+
 def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                      spectrum_file, counts_file, tube_calibration, detector_calibration,
                      directory, facility, instrument, ipts, runs,
@@ -1162,7 +1274,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration)
 
-    if facility == 'HFIR':
+    if instrument == 'HB3A':
         ows = '{}_{}'.format(instrument,experiment)+'_{}'
     else:
         ows = '{}'.format(instrument)+'_{}'
@@ -1314,16 +1426,16 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
     banks = list(bank_set)
 
-    if mtd.doesExist('van'):
-        for b in banks:
-            start, stop = 512*(b-1), 512*b
-            SliceMDHisto(InputWorkspace='van',
-                         Start='{},0,0'.format(start),
-                         End='{},512,1'.format(stop),
-                         OutputWorkspace='van_{}'.format(b))
-        van_ws = ['van_{}'.format(b) for b in banks]
-        if len(van_ws) > 0:
-            GroupWorkspaces(InputWorkspaces=','.join(van_ws), OutputWorkspace='van')
+    # if mtd.doesExist('van'):
+    #     for b in banks:
+    #         start, stop = 512*(b-1), 512*b
+    #         SliceMDHisto(InputWorkspace='van',
+    #                      Start='{},0,0'.format(start),
+    #                      End='{},512,1'.format(stop),
+    #                      OutputWorkspace='van_{}'.format(b))
+    #     van_ws = ['van_{}'.format(b) for b in banks]
+    #     if len(van_ws) > 0:
+    #         GroupWorkspaces(InputWorkspaces=','.join(van_ws), OutputWorkspace='van')
 
     bank_group = {}
 
@@ -1364,13 +1476,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     excl_stats = open(os.path.join(directory, 'rej_{}_stats.txt'.format(outname)), 'w')
 
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
-    fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+4*'{:8.2f}'+7*'{:8.2f}'+'\n'
+    fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+9*'{:10.2f}'+'\n'
+
+    #keys = [key for key in keys if (1.14 < peak_dictionary.get_d(*key) < 1.26)]
 
     for i, key in enumerate(keys[:]):
 
         key = tuple(key)
 
-        print('\tIntegrating peak : {}'.format(key))
+        #print('\tIntegrating peak : {}'.format(key))
 
         peaks = peak_dict[key]
 
@@ -1426,8 +1540,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
             summary_list.extend([*lamda, *two_theta, *az_phi, n_runs, *gon_omega, *gon_chi, *gon_phi])
 
-            peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_total_data_ratio = 0, 0, 0, 0
-            peak_fit2d, peak_score2d, sig_noise_ratio2d = 0, 0, 0
+            peak_fit, peak_bkg_ratio, sig_noise_ratio = 0, 0, 0
 
             max_width = 0.3 if facility == 'SNS' else 0.3
             max_offset = 0.3 if facility == 'SNS' else 0.3
@@ -1467,8 +1580,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                             rp.append(radii[2])
                             r2.append(np.prod(radii[:2]))
 
-                        radius = 1.5*np.mean(rp)
-                        r = 2*np.sqrt(np.mean(r2))
+                        radius = 4*np.mean(rp)
+                        r = 4*np.sqrt(np.mean(r2))
 
                         n = Q0/np.linalg.norm(Q0)
 
@@ -1490,7 +1603,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         W[:,2] = n
 
                         D = np.diag([1/r**2,1/r**2,1/radius**2])
-                        
+
                         radius = 2*np.cbrt(r**2*radius)
 
                     ol = mtd['cws'].sample().getOrientedLattice()
@@ -1510,7 +1623,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 Qave = 2*np.pi*np.mean([ol.astar(), ol.bstar(), ol.cstar()])
 
                 radius = 0.25*Qave
-                binsize = 0.0025*Qave
+                binsize = 0.005*Qave
 
                 W = np.eye(3)
                 D = np.diag([1/radius**2,1/radius**2,1/radius**2])
@@ -1521,8 +1634,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 #                              phi, chi, omega, norm_scale,
 #                              directory, ipts, outname, experiment, tmp)
 # 
-#                 signal, Q_bin, Q_rot, ellipsoid_radii, scales, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
-#                                                                                           Q0, D, W, exp=experiment)
+#                 signal, Q_bin, Q_rot, ellipsoid_radii, scales, bin_norm = norm_integrator(runs, Q0, D, W)
 # 
 #                 u_extents, v_extents, Q_extents = Q_bin
 # 
@@ -1544,15 +1656,18 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 rot = True if facility == 'HFIR' else False
 
-                ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=0.8*radius, rotation=rot)
+                ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=radius, rotation=rot)
+
+                int_mask, bkg_mask = ellip.profile_mask()
+                Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
 
                 prof = Profile()
-                stats, params = prof.fit(ellip, 0.99)
+                stats, params = prof.fit(Qp, data, norm, int_mask, bkg_mask, 0.99)
 
                 peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1 = stats
                 a, mu, sigma = params
 
-                peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
+                # peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
 
                 if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
 
@@ -1561,27 +1676,44 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
                     excl_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
-                    
-                    print('\tPeak-fit Q: {}'.format(peak_fit_1))
-                    print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio_1))
-                    print('\tSignal-noise ratio Q: {}'.format(sig_noise_ratio_1))
-                    print('\tPeak-total to subtracted-data ratio Q: {}'.format(peak_total_data_ratio))
 
-                    print('\tPeak-sigma Q: {}'.format(sigma))
+                    #print('\tPeak-fit Q: {}'.format(peak_fit_1))
+                    #print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio_1))
+                    #print('\tSignal-noise ratio Q: {}'.format(sig_noise_ratio_1))
 
-                    stats_list.extend([peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1, peak_total_data_ratio])
+                    #print('\tPeak-sigma Q: {}'.format(sigma))
+
+                    stats_list.extend([peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1])
 
                 else:
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
 
+                int_mask, bkg_mask = ellip.projection_mask()
+                dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
+
+#                 prof_x = Profile()
+#                 stats, params = prof_x.fit(dQ1, data, norm, int_mask, bkg_mask, 0.99)
+# 
+#                 chi_sq2dx, peak_bkg_ratio2dx, sig_noise_ratio2dx = stats
+#                 a, mu_x, sigma_x = params
+# 
+#                 prof_y = Profile()
+#                 stats, params = prof_y.fit(dQ2, data, norm, int_mask, bkg_mask, 0.99)
+# 
+#                 chi_sq2dy, peak_bkg_ratio2dy, sig_noise_ratio2dy = stats
+#                 a, mu_y, sigma_y = params
+# 
+#                 ellip.mu_x, ellip.mu_y = mu_x, mu_y
+#                 ellip.sigma_x, ellip.sigma_y = sigma_x, sigma_y
+# 
+#                 int_mask, bkg_mask = ellip.projection_mask()
+ 
                 proj = Projection()
-                stats, params = proj.fit(ellip, 0.99)
+                stats, params = proj.fit(dQ1, dQ2, data, norm, int_mask, bkg_mask, 0.99)
 
                 peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = stats
                 a, mu_x, mu_y, sigma_x, sigma_y, rho = params
-
-                peak_total_data_ratio2d = proj.z.max()/proj.z_sub.max()
 
                 if np.any(proj.z_sub > 0) and not np.isnan([a,mu_x,mu_y,sigma_x,sigma_y,rho]).any():
 
@@ -1597,15 +1729,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     peak_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
                     excl_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
 
-                    print('\tPeak-score 2d: {}'.format(peak_score2d))
-                    print('\tSignal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
+                    #print('\tPeak-score 2d: {}'.format(peak_fit2d))
+                    #print('\tPeak background ratio 2d: {}'.format(peak_bkg_ratio2d))
+                    #print('\tSignal-noise ratio 2d: {}'.format(sig_noise_ratio2d))
 
-                    if (np.isinf(peak_score2d) or np.isnan(peak_score2d)):
+                    if (np.isinf(peak_bkg_ratio2d) or np.isnan(peak_bkg_ratio2d)):
 
                         remove = True
 
-                    # summary_list.extend([*center2d, *np.diag(covariance2d), covariance2d[0,1], *amplitude2d, *background2d])
-                    stats_list.extend([peak_fit2d, peak_score2d, sig_noise_ratio2d])
+                    stats_list.extend([peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d])
 
                 else:
 
@@ -1613,13 +1745,14 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     stats_list.extend([np.nan, np.nan, np.nan])
 
+                int_mask, bkg_mask = ellip.profile_mask()
+                Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
+
                 prof = Profile()
-                stats, params = prof.fit(ellip, 0.99)
+                stats, params = prof.fit(Qp, data, norm, int_mask, bkg_mask, 0.99)
 
                 peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2 = stats
                 a, mu, sigma = params
-
-                peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
 
                 if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
 
@@ -1632,20 +1765,19 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         peak_fit = np.min([peak_fit_1,peak_fit_2])
                     else:
                         peak_fit = peak_fit_2
-                        
-                    peak_bkg_ratio = np.max([peak_bkg_ratio_1, peak_bkg_ratio_2])
-                    sig_noise_ratio = np.max([sig_noise_ratio_1, sig_noise_ratio_2])
+
+                    peak_bkg_ratio = np.nanmax([peak_bkg_ratio_1, peak_bkg_ratio_2])
+                    sig_noise_ratio = np.nanmax([sig_noise_ratio_1, sig_noise_ratio_2])
 
                     peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
                     excl_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
 
-                    print('\tPeak-fit Q second pass: {}'.format(peak_fit_2))
-                    print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio_2))
-                    print('\tSignal-noise ratio Q second pass: {}'.format(sig_noise_ratio_2))
-                    print('\tPeak-total to subtracted-data ratio Q: {}'.format(peak_total_data_ratio))
+                    #print('\tPeak-fit Q second pass: {}'.format(peak_fit_2))
+                    #print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio_2))
+                    #print('\tSignal-noise ratio Q second pass: {}'.format(sig_noise_ratio_2))
 
                     # summary_list.extend([center, variance, amplitude, background, peak_fit])
-                    stats_list.extend([peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2, peak_total_data_ratio])
+                    stats_list.extend([peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2])
 
                 else:
 
@@ -1659,26 +1791,108 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 radii = 1/np.sqrt(np.diagonal(D)) 
 
-                print('\tPeak-radii: {}'.format(radii))
+                fit_1d = [ellip.mu, ellip.sigma]
+                fit_2d = [ellip.mu_x, ellip.mu_y, ellip.sigma_x, ellip.sigma_y, ellip.rho]
 
-                if peak_fit < 0.01 or peak_fit2d < 0.01 or peak_fit > 1000 or peak_fit2d > 1000 or sig_noise_ratio < 3 or sig_noise_ratio2d < 3:
+                #print('\tPeak-radii: {}'.format(radii))
 
-                    remove = True
+                if np.isclose(np.abs(np.linalg.det(W)),1) and not np.isclose(radii, 0).any() and (radii > 0).all() and (radii < np.inf).all() and not remove:
 
-                if np.isclose(np.abs(np.linalg.det(W)),1) and not (radii > 1.5*radius).any() and not np.isclose(radii, 0).any() and (radii > 0).all() and not remove:
+                    Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pkg_bk = norm_integrator(runs, Q0, D, W)
 
-                    signal, Q_bin, Q_rot, ellipsoid_radii, scales, bin_norm = norm_integrator(facility, instrument, runs, banks, indices,
-                                                                                              Q0, D, W, exp=experiment)
+                    dQ1_extents, dQ2_extents, Qp_extents = Q_bin
 
-                    u_extents, v_extents, Q_extents = Q_bin
+                    fit_stats = [peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d]
 
-                    peak_dictionary.integrated_result(key, Q0, D, W, peak_fit, peak_bkg_ratio, peak_score2d, bin_norm, j)
+                    peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
+                    excl_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
 
-                    peak_envelope.plot_integration(signal, u_extents, v_extents, Q_extents, Q_rot, ellipsoid_radii, scales)
-                    peak_envelope.write_figure()
+                    var = ellip.var()
+                    dQ1, dQ2, Qp, _, _ = data_norm
 
-                    peak_summary.write(fmt_summary.format(*summary_list))
-                    peak_stats.write(fmt_stats.format(*stats_list))
+                    inv_var = 1/var
+
+                    mask = (signal > 0) & (error > 0)
+                    N = signal[mask].size
+
+                    x = 1/np.sqrt(np.prod(2*np.pi*var))*np.exp(-0.5*((dQ1-Q_rot[0])**2*inv_var[0]+\
+                                                                     (dQ2-Q_rot[1])**2*inv_var[1]+\
+                                                                      (Qp-Q_rot[2])**2*inv_var[2]))
+
+                    A = (np.array([x[mask], np.ones_like(x[mask])])/error[mask]).T
+                    B = signal[mask]/error[mask]
+
+                    if N > 3:
+                        coeff, r, rank, s = np.linalg.lstsq(A, B)
+                    else:
+                        coeff = [0,0]
+
+                    intens, bkg = coeff
+
+                    fit = intens*x+bkg
+
+                    if N > 3:
+                        cov = np.dot(A.T, A)
+                        sig = np.sqrt(np.linalg.inv(cov)[0,0])
+                    else:
+                        sig = 0
+
+#                     peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, var)
+# 
+#                     A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01 = peak_fit_3d.fit()
+# 
+#                     fit = peak_fit_3d.model((dQ1, dQ2, Qp), A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+# 
+#                     intens = peak_fit_3d.integrated(A, sig0, sig1, sig2, rho12, rho02, rho01)
+#                     bkg = B
+# 
+#                     sig = 0
+
+                    fit_prod = [intens, bkg, sig]
+
+                    if N > 27:
+
+                        peak_dictionary.integrated_result(key, Q0, D, W, fit_stats, data_norm, pkg_bk, j)
+                        peak_dictionary.fitted_result(key, fit_1d, fit_2d, fit_prod, j)
+
+                    scale = peak_dictionary.peak_dict.get(key)[j].get_peak_constant()
+
+                    I = [peak_dictionary.peak_dict.get(key)[j].get_merged_intensity(), intens*scale]
+                    err = [peak_dictionary.peak_dict.get(key)[j].get_merged_intensity_error(), sig*scale]
+
+                    # cdf_data_high = np.arange(1,N+1)/N
+                    # cdf_data_low  = np.arange(N)/N
+                    # 
+                    # CDF = cdf(signal[mask], fit[mask])
+                    # 
+                    # D = cdf_data_high-CDF
+                    # 
+                    # Dip = D.argmax()
+                    # Dplus = D[Dip]
+                    # 
+                    # D = CDF-cdf_data_low
+                    # 
+                    # Dim = D.argmax()
+                    # Dmin = D[Dim]
+                    # 
+                    # # if Dplus >= Dmin:
+                    # #    Di = Dip
+                    # # else:
+                    # #    Di = Dim
+                    # 
+                    # Dmax = np.max([Dplus, Dmin])
+                    # 
+                    # dist = kstwobign()
+                    # Dn_crit = dist.ppf(0.95)/np.sqrt(N)
+
+                    chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-2)
+
+                    peak_envelope.plot_fitting(fit, I, err, chi_sq)
+                    excl_envelope.plot_fitting(fit, I, err, chi_sq)
+
+                    if intens <= sig:
+
+                        remove = True
 
                 else:
 
@@ -1690,6 +1904,13 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     excl_summary.write(fmt_summary.format(*summary_list))
                     excl_stats.write(fmt_stats.format(*stats_list))
+
+                else:
+
+                    peak_envelope.write_figure()
+
+                    peak_summary.write(fmt_summary.format(*summary_list))
+                    peak_stats.write(fmt_stats.format(*stats_list))
 
             runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank_keys, bank_group, key, exp=experiment)
 
