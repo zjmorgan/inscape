@@ -58,13 +58,13 @@ pprint.PrettyPrinter._dispatch[dict.__repr__] = _pprint_dict
 
 class PeakEnvelope:
 
-    def __init__(self, pdf_file):
+    def __init__(self, pdf_file, name='peak-envelope'):
 
         self.pp = PdfPages(pdf_file)
 
-        #plt.close('peak-envelope')
+        plt.close(name)
 
-        self.fig = plt.figure(num='peak-envelope', figsize=(18,6), dpi=144)
+        self.fig = plt.figure(num=name, figsize=(18,6), dpi=144)
         gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.2,0.6])
 
         gs0 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0], hspace=0.25)
@@ -129,7 +129,7 @@ class PeakEnvelope:
         width_s = axes_size.AxesY(self.ax_s_proj, aspect=0.05)
 
         pad_p = axes_size.Fraction(0.5, width_p)
-        pad_s = axes_size.Fraction(0.5, width_p)
+        pad_s = axes_size.Fraction(0.5, width_s)
 
         cax_p = divider_p.append_axes('right', size=width_p, pad=pad_p)
         cax_s = divider_s.append_axes('right', size=width_s, pad=pad_s)

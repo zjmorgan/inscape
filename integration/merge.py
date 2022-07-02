@@ -1372,10 +1372,10 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     peak_dictionary.split_peaks(split_angle)
     peak_dict = peak_dictionary.to_be_integrated()
 
-    peak_envelope = PeakEnvelope(os.path.join(directory, '{}.pdf'.format(outname)))
+    peak_envelope = PeakEnvelope(os.path.join(directory, '{}.pdf'.format(outname)), 'pk_env')
     peak_envelope.show_plots(False)
 
-    excl_envelope = PeakEnvelope(os.path.join(directory, 'rej_{}.pdf'.format(outname)))
+    excl_envelope = PeakEnvelope(os.path.join(directory, 'rej_{}.pdf'.format(outname)), 'ex_env')
     excl_envelope.show_plots(False)
 
     DeleteWorkspace('tmp')
