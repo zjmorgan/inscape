@@ -1065,7 +1065,7 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
             if not mtd.doesExist(omd):
 
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
-                
+
                 if instrument == 'CORELLI':
                     if b == 1 or b == 91:
                         banks = 'bank{}'.format(b)
@@ -1073,7 +1073,7 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                         banks = ','.join(['bank{}'.format(bank) for bank in [b-1,b,b+1]])
                 else:
                     banks = 'bank{}'.format(b)
-                    
+
                 LoadEventNexus(Filename=filename, 
                                BankName=banks, 
                                SingleBankPixelsOnly=True,
@@ -1545,7 +1545,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
             max_width = 0.3 if facility == 'SNS' else 0.3
             max_offset = 0.3 if facility == 'SNS' else 0.3
             max_ratio = 5 if facility == 'SNS' else 7.5
-                
+
             fit = True
             remove = False
 

@@ -62,7 +62,7 @@ class PeakEnvelope:
 
         self.pp = PdfPages(pdf_file)
 
-        plt.close('peak-envelope')
+        #plt.close('peak-envelope')
 
         self.fig = plt.figure(num='peak-envelope', figsize=(18,6), dpi=144)
         gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.2,0.6])
