@@ -103,7 +103,7 @@ if __name__ == '__main__':
             runs += r
         else:
             runs += [r]
-            
+
     m_proc = len(runs) if n_proc > len(runs) else n_proc
 
     experiment = dictionary['experiment']

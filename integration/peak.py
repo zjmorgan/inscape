@@ -20,6 +20,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable, axes_size
 
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.size'] = 8
+plt.ioff()
 
 import numpy as np
 import scipy.interpolate
