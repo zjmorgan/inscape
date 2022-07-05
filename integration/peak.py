@@ -9,7 +9,6 @@ from mantid.kernel import V3D
 from mantid import config
 
 import matplotlib as mpl
-from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
 from matplotlib.patches import Ellipse
@@ -20,7 +19,6 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable, axes_size
 
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.size'] = 8
-plt.ioff()
 
 import numpy as np
 import scipy.interpolate
@@ -59,13 +57,11 @@ pprint.PrettyPrinter._dispatch[dict.__repr__] = _pprint_dict
 
 class PeakEnvelope:
 
-    def __init__(self, pdf_file, name='peak-envelope'):
+    def __init__(self):
 
-        self.pp = PdfPages(pdf_file)
+        plt.close('peak-envelope')
 
-        plt.close(name)
-
-        self.fig = plt.figure(num=name, figsize=(18,6), dpi=144)
+        self.fig = plt.figure(num='peak-envelope', figsize=(18,6), dpi=144)
         gs = gridspec.GridSpec(1, 3, figure=self.fig, wspace=0.333, width_ratios=[0.2,0.2,0.6])
 
         gs0 = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=gs[0], hspace=0.25)
@@ -100,11 +96,11 @@ class PeakEnvelope:
         self.ax_Qv_fit.minorticks_on()
         self.ax_uv_fit.minorticks_on()
 
-        #self.ax_p_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_s_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        #self.ax_p_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_s_proj.set_xlabel('Q\u2081 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
-        self.ax_p_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_s_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_p_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_s_proj.set_ylabel('Q\u2082 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
         # self.ax_p_proj.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
         # self.ax_s_proj.ticklabel_format(axis='both', style='sci', scilimits=(0,0))
@@ -151,7 +147,7 @@ class PeakEnvelope:
         self.ax_s_proj.add_patch(self.elli_s)
 
         self.ax_Q2.set_rasterization_zorder(100)
-        self.ax_Q2.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Q2.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
         self.ax_Q2.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
 
         self.line_Q2_p, self.caps_Q2_p, self.bars_Q2_p = self.ax_Q2.errorbar([0], [0], yerr=[0], fmt='.-', rasterized=False, zorder=2)
@@ -257,21 +253,21 @@ class PeakEnvelope:
         self.ax_uv_fit.add_patch(self.inner_uv_fit)
         self.ax_uv_fit.add_patch(self.outer_uv_fit)
 
-        # self.ax_Qv.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        # self.ax_Qu.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        # self.ax_uv.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        # self.ax_Qv.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        # self.ax_Qu.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        # self.ax_uv.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
-        self.ax_Qu.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_Qv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_uv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qu.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_Qv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_uv.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
-        self.ax_Qv_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_Qu_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_uv_fit.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qv_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_Qu_fit.set_xlabel('Q\u209A [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_uv_fit.set_xlabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
-        self.ax_Qu_fit.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_Qv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
-        self.ax_uv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [$\AA^{-1}$]
+        self.ax_Qu_fit.set_ylabel('Q\u2081\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_Qv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
+        self.ax_uv_fit.set_ylabel('Q\u2082\u2032 [\u212B\u207B\u00B9]') # [\u212B\u207B\u00B9]
 
         self.__show_plots = False
 
@@ -781,14 +777,14 @@ class PeakEnvelope:
 
             # op = ' < ' if Dmax < Dn_crit else ' >= '
             # self.ax_Qv_fit.set_title('D\u2099 = {:.3}'.format(Dmax)+op+'{:.3}'.format(Dn_crit))
-            
+
             self.ax_Qv_fit.set_title('\u03A7\u00B2 = {:.4f}'.format(chi_sq))
 
             if self.__show_plots: self.fig.show()
 
-    def write_figure(self):
+    def write_figure(self, figname):
 
-        self.pp.savefig(self.fig)
+        self.fig.savefig(figname, facecolor='white', transparent=False)
 
 class PeakInformation:
 
@@ -2155,7 +2151,7 @@ class PeakDictionary:
                 varphi = peak.get_rotation_angle()
                 u = peak.get_rotation_axis()
 
-                if len(u) > 1:
+                if len(u) > 1 and eps < 360:
 
                     #clusters = self.__dbscan_orientation(varphi, u, eps)
                     clusters = self.__dbscan_1d(omega, eps)
@@ -2328,14 +2324,13 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, adaptive_scale=False, cross_terms=False):
+    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, adaptive_scale=False, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
                            SortAscending=False,
                            OutputWorkspace=self.iws)
 
-        scale = 1
         if adaptive_scale:
             if self.iws.getNumberPeaks() > 0:
                 I = self.iws.getPeak(0).getIntensity()
@@ -2406,8 +2401,10 @@ class PeakDictionary:
                     items.extend([intens, sig_intens, d_spacing])
 
                     f.write(hkl_format.format(*items))
+                    
+        return scale
 
-    def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, normalize=True):
+    def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, scale=1, normalize=True):
 
         # SortPeaksWorkspace(InputWorkspace=self.iws,
         #                    ColumnNameToSortBy='Intens',
@@ -2528,8 +2525,6 @@ class PeakDictionary:
 
             if adaptive_scale:
                 scale = 9999.99/I_max
-            else:
-                scale = 1
 
             pk_num = 0
 
@@ -2554,6 +2549,8 @@ class PeakDictionary:
                 f.write(hkl_fmt.format(*[0]*25))
             else:
                 f.write(hkl_fmt.format(*[0]*22))
+
+        return scale
 
     def save_calibration(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.9):
 
@@ -2859,7 +2856,10 @@ class PeakDictionary:
 
         return f
 
-    def apply_spherical_correction(self, vanadium_mass=0):
+    def apply_spherical_correction(self, vanadium_mass=0, fname=None):
+
+        if fname is not None:
+            absorption_file = open(fname, 'w')
 
         f = self.__spherical_aborption()
 
@@ -2884,22 +2884,24 @@ class PeakDictionary:
 
             R = (0.75/np.pi*V)**(1/3)
 
-        # print(chemical_formula)
-        # print('absoption cross section: {} barn'.format(sigma_a))
-        # print('scattering cross section: {} barn'.format(sigma_s))
+        if fname is not None:
 
-        # print('linear scattering coefficient: {} 1/cm'.format(n*sigma_s))
-        # print('linear absorption coefficient: {} 1/cm'.format(n*sigma_a))
+            absorption_file.write('{}\n'.format(chemical_formula))
+            absorption_file.write('absoption cross section: {:.4f} barn\n'.format(sigma_a))
+            absorption_file.write('scattering cross section: {:.4f} barn\n'.format(sigma_s))
 
-        # print('mass: {} g'.format(m))
-        # print('density: {} g/cm^3'.format(rho))
+            absorption_file.write('linear scattering coefficient: {:.4f} 1/cm\n'.format(n*sigma_s))
+            absorption_file.write('linear absorption coefficient: {:.4f} 1/cm\n'.format(n*sigma_a))
 
-        # print('volume: {} cm^3'.format(V))
-        # print('radius: {} cm'.format(R))
+            absorption_file.write('mass: {:.4f} g\n'.format(m))
+            absorption_file.write('density: {:.4f} g/cm^3\n'.format(rho))
 
-        # print('total atoms: {}'.format(N))
-        # print('molar mass: {} g/mol'.format(M))
-        # print('number density: {} 1/A^3'.format(n))
+            absorption_file.write('volume: {:.4f} cm^3\n'.format(V))
+            absorption_file.write('radius: {:.4f} cm\n'.format(R))
+
+            absorption_file.write('total atoms: {:.4f}\n'.format(N))
+            absorption_file.write('molar mass: {:.4f} g/mol\n'.format(M))
+            absorption_file.write('number density: {:.4f} 1/A^3\n'.format(n))
         
         van = mtd['nws'].sample().getMaterial()
         
@@ -2918,22 +2920,26 @@ class PeakDictionary:
         van_mu_s = van_n*van_sigma_s
         van_mu_a = van_n*van_sigma_a
 
-        # print('V')
-        # print('absoption cross section: {} barn'.format(van_sigma_a))
-        # print('scattering cross section: {} barn'.format(van_sigma_s))
+        if fname is not None:
 
-        # print('linear scattering coefficient: {} 1/cm'.format(van_n*van_sigma_s))
-        # print('linear absorption coefficient: {} 1/cm'.format(van_n*van_sigma_a))
+            absorption_file.write('\nV\n')
+            absorption_file.write('absoption cross section: {:.4f} barn\n'.format(van_sigma_a))
+            absorption_file.write('scattering cross section: {:.4f} barn\n'.format(van_sigma_s))
 
-        # print('mass: {} g'.format(vanadium_mass))
-        # print('density: {} g/cm^3'.format(van_rho))
+            absorption_file.write('linear scattering coefficient: {:.4f} 1/cm\n'.format(van_n*van_sigma_s))
+            absorption_file.write('linear absorption coefficient: {:.4f} 1/cm\n'.format(van_n*van_sigma_a))
 
-        # print('volume: {} cm^3'.format(van_V))
-        # print('radius: {} cm'.format(van_R))
+            absorption_file.write('mass: {:.4f} g\n'.format(vanadium_mass))
+            absorption_file.write('density: {:.4f} g/cm^3\n'.format(van_rho))
 
-        # print('total atoms: {}'.format(van_N))
-        # print('molar mass: {} g/mol'.format(van_M))
-        # print('number density: {} 1/A^3'.format(van_n))
+            absorption_file.write('volume: {:.4f} cm^3\n'.format(van_V))
+            absorption_file.write('radius: {:.4f} cm\n'.format(van_R))
+
+            absorption_file.write('total atoms: {:.4f}\n'.format(van_N))
+            absorption_file.write('molar mass: {:.4f} g/mol\n'.format(van_M))
+            absorption_file.write('number density: {:.4f} 1/A^3\n'.format(van_n))
+        
+            absorption_file.close()
 
         for key in self.peak_dict.keys():
 

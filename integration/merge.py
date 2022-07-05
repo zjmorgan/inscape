@@ -9,10 +9,13 @@ import psutil
 import itertools
 
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.stats import kstwobign
 
 import peak
 from peak import PeakEnvelope, PeakDictionary, GaussianFit3D
+
+import img2pdf
 
 import fitting
 from fitting import Ellipsoid, Profile, Projection
@@ -364,12 +367,12 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
             else:
                 LoadIsawDetCal(InputWorkspace='flux', Filename=detector_calibration)
 
-def pre_integration(runs, outname, directory, facility, instrument, ipts, all_runs, ub_file, reflection_condition, min_d,
+def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts, all_runs, ub_file, reflection_condition, min_d,
                     spectrum_file, counts_file, tube_calibration, detector_calibration,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, exp=None, tmp=None):
 
-    min_d_spacing = min_d
+    min_d_spacing = np.min([min_d, 0.7])
     max_d_spacing= 100
 
     # peak centroid radius ---------------------------------------------------------
@@ -384,6 +387,11 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, all_ru
         CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
 
     CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
+    
+    CreateEmptyTableWorkspace(OutputWorkspace='run_info')
+
+    mtd['run_info'].addColumn('Int', 'RunNumber')
+    mtd['run_info'].addColumn('Double', 'Scale')
 
     if instrument == 'HB3A':
         LoadEmptyInstrument(InstrumentName='HB3A', OutputWorkspace='rws')
@@ -1030,6 +1038,13 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, all_ru
         if instrument == 'HB2C':
             RenameWorkspace(InputWorkspace=omd, OutputWorkspace='md')
 
+        if facility == 'SNS':
+            norm_scale = mtd[ows].getRun().getPropertyAsSingleValueWithTimeAveragedMean('gd_prtn_chrg')
+        else:
+            norm_scale = 1
+        
+        mtd['run_info'].addRow([r,norm_scale])
+
         if mtd.doesExist(ows):
             DeleteWorkspace(ows)
         if mtd.doesExist(opk):
@@ -1042,9 +1057,10 @@ def pre_integration(runs, outname, directory, facility, instrument, ipts, all_ru
     if mtd.doesExist('md'):
         DeleteWorkspace('md')
 
-    SaveNexus(InputWorkspace='tmp_lean', Filename=os.path.join(directory, outname+'_pk_lean.nxs'))
-    SaveNexus(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'_pk.nxs'))
-    SaveIsawUB(InputWorkspace='tmp', Filename=os.path.join(directory, outname+'.mat'))
+    SaveNexus(InputWorkspace='run_info', Filename=os.path.join(outdir, outname+'_log.nxs'))
+    SaveNexus(InputWorkspace='tmp_lean', Filename=os.path.join(outdir, outname+'_pk_lean.nxs'))
+    SaveNexus(InputWorkspace='tmp', Filename=os.path.join(outdir, outname+'_pk.nxs'))
+    SaveIsawUB(InputWorkspace='tmp', Filename=os.path.join(outdir, outname+'.mat'))
 
 def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, norm_scale,
                  directory, ipts, outname, exp=None, tmp=None):
@@ -1126,6 +1142,11 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                            XMax=mtd['flux'].dataX(0).max(),
                                            OutputWorkspace=ows)
 
+                min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
+                                                             QDimensions='Q3D',
+                                                             dEAnalysisMode='Elastic',
+                                                             Q3DFrames='Q')
+
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
                             QDimensions='Q3D',
@@ -1133,8 +1154,8 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                             Q3DFrames='Q_sample',
                             LorentzCorrection=False,
                             PreprocDetectorsWS='-',
-                            MinValues='-20,-20,-20',
-                            MaxValues='20,20,20',
+                            MinValues=min_vals,
+                            MaxValues=max_vals,
                             Uproj='1,0,0',
                             Vproj='0,1,0',
                             Wproj='0,0,1')
@@ -1161,8 +1182,6 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                   Axis0='s1,0,1,0,1',
                                   Average=False)
 
-                norm_scale[(r,i)] = 1
-
 def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank_keys, bank_group, key, exp=None):
 
     for r, b, i in zip(runs, banks, indices):
@@ -1185,6 +1204,8 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
         bank_keys[b] = key_list
 
         if facility == 'SNS':
+            
+            #print(peak_keys)
 
             if len(peak_keys) == 0 or psutil.virtual_memory().percent > 85:
                 if mtd.doesExist(omd):
@@ -1264,7 +1285,7 @@ def cdf(signal, fit):
 
 def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                      spectrum_file, counts_file, tube_calibration, detector_calibration,
-                     directory, facility, instrument, ipts, runs,
+                     outdir, directory, facility, instrument, ipts, runs,
                      split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
                      mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
                      chemical_formula, z_parameter, sample_mass, experiment, tmp):
@@ -1372,23 +1393,18 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     peak_dictionary.split_peaks(split_angle)
     peak_dict = peak_dictionary.to_be_integrated()
 
-    peak_envelope = PeakEnvelope(os.path.join(directory, '{}.pdf'.format(outname)), 'pk_env')
+    peak_envelope = PeakEnvelope()
     peak_envelope.show_plots(False)
-
-    excl_envelope = PeakEnvelope(os.path.join(directory, 'rej_{}.pdf'.format(outname)), 'ex_env')
-    excl_envelope.show_plots(False)
 
     DeleteWorkspace('tmp')
 
     norm_scale = {}
 
-    if facility == 'SNS':
-        LoadEmptyInstrument(InstrumentName=instrument, OutputWorkspace=instrument+'_empty')
-        for r in runs:
-            logfile = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
-            LoadNexusLogs(Workspace=instrument+'_empty', Filename=logfile, OverwriteLogs=True, AllowList='gd_prtn_chrg')
-            norm_scale[r] = mtd[instrument+'_empty'].getRun().getPropertyAsSingleValueWithTimeAveragedMean('gd_prtn_chrg')
-        DeleteWorkspace(instrument+'_empty')
+    LoadNexus(Filename=os.path.join(directory, filename+'_log.nxs'), OutputWorkspace='log')
+    for j in range(mtd['log'].rowCount()):
+        items = mtd['log'].row(j)
+        r, scale = items.values()
+        norm_scale[r] = scale
 
     bank_set = set()
 
@@ -1469,20 +1485,21 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
         #                     InputWorkspaceIndexSet=bank_group[b],
         #                     OutputWorkspace='flux')
 
-    peak_summary = open(os.path.join(directory, '{}_summary.txt'.format(outname)), 'w')
-    excl_summary = open(os.path.join(directory, 'rej_{}_summary.txt'.format(outname)), 'w')
+    peak_summary = open(os.path.join(outdir, '{}_summary.txt'.format(outname)), 'w')
+    excl_summary = open(os.path.join(outdir, 'rej_{}_summary.txt'.format(outname)), 'w')
 
-    peak_stats = open(os.path.join(directory, '{}_stats.txt'.format(outname)), 'w')
-    excl_stats = open(os.path.join(directory, 'rej_{}_stats.txt'.format(outname)), 'w')
+    peak_stats = open(os.path.join(outdir, '{}_stats.txt'.format(outname)), 'w')
+    excl_stats = open(os.path.join(outdir, 'rej_{}_stats.txt'.format(outname)), 'w')
 
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
     fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+9*'{:10.2f}'+'\n'
 
-    #keys = [key for key in keys if (1.14 < peak_dictionary.get_d(*key) < 1.26)]
-
     for i, key in enumerate(keys[:]):
 
         key = tuple(key)
+
+        pk_env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
+        ex_env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
 
         #print('\tIntegrating peak : {}'.format(key))
 
@@ -1532,7 +1549,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
             n_runs = len(wls)
 
             peak_envelope.clear_plots(key, d, lamda, two_theta, n_runs)
-            excl_envelope.clear_plots(key, d, lamda, two_theta, n_runs)
 
             gon_omega = [np.min(omega), np.max(omega)]
             gon_chi = [np.min(chi), np.max(chi)]
@@ -1675,7 +1691,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     ellip.sigma = sigma
 
                     peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
-                    excl_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
 
                     #print('\tPeak-fit Q: {}'.format(peak_fit_1))
                     #print('\tPeak background ratio Q: {}'.format(peak_bkg_ratio_1))
@@ -1727,7 +1742,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     sigma = [sigma_x, sigma_y]
 
                     peak_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
-                    excl_envelope.plot_projection(proj.z_sub, proj.z, x_extents, y_extents, mu, sigma, rho, peak_fit2d)
 
                     #print('\tPeak-score 2d: {}'.format(peak_fit2d))
                     #print('\tPeak background ratio 2d: {}'.format(peak_bkg_ratio2d))
@@ -1770,7 +1784,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     sig_noise_ratio = np.nanmax([sig_noise_ratio_1, sig_noise_ratio_2])
 
                     peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
-                    excl_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
 
                     #print('\tPeak-fit Q second pass: {}'.format(peak_fit_2))
                     #print('\tPeak background ratio Q second pass: {}'.format(peak_bkg_ratio_2))
@@ -1805,7 +1818,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     fit_stats = [peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d]
 
                     peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
-                    excl_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
 
                     var = ellip.var()
                     dQ1, dQ2, Qp, _, _ = data_norm
@@ -1837,16 +1849,16 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     else:
                         sig = 0
 
-#                     peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, var)
-# 
-#                     A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01 = peak_fit_3d.fit()
-# 
-#                     fit = peak_fit_3d.model((dQ1, dQ2, Qp), A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
-# 
-#                     intens = peak_fit_3d.integrated(A, sig0, sig1, sig2, rho12, rho02, rho01)
-#                     bkg = B
-# 
-#                     sig = 0
+                    # peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, var)
+                    # 
+                    # A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01 = peak_fit_3d.fit()
+                    # 
+                    # fit = peak_fit_3d.model((dQ1, dQ2, Qp), A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+                    # 
+                    # intens = peak_fit_3d.integrated(A, sig0, sig1, sig2, rho12, rho02, rho01)
+                    # bkg = B
+                    # 
+                    # sig = 0
 
                     fit_prod = [intens, bkg, sig]
 
@@ -1888,7 +1900,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-2)
 
                     peak_envelope.plot_fitting(fit, I, err, chi_sq)
-                    excl_envelope.plot_fitting(fit, I, err, chi_sq)
 
                     if intens <= sig:
 
@@ -1900,30 +1911,28 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 if remove:
 
-                    excl_envelope.write_figure()
+                    peak_envelope.write_figure(ex_env)
 
                     excl_summary.write(fmt_summary.format(*summary_list))
                     excl_stats.write(fmt_stats.format(*stats_list))
 
                 else:
 
-                    peak_envelope.write_figure()
+                    peak_envelope.write_figure(pk_env)
 
                     peak_summary.write(fmt_summary.format(*summary_list))
                     peak_stats.write(fmt_stats.format(*stats_list))
 
-            runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank_keys, bank_group, key, exp=experiment)
+                runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, 
+                                                        runs_banks, bank_keys, bank_group, key, exp=experiment)
 
         if i % 15 == 0:
 
-            peak_dictionary.save_hkl(os.path.join(directory, '{}.hkl'.format(outname)), min_signal_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
-            peak_dictionary.save(os.path.join(directory, '{}.pkl'.format(outname)))
+            peak_dictionary.save_hkl(os.path.join(outdir, '{}.hkl'.format(outname)), min_signal_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
+            peak_dictionary.save(os.path.join(outdir, '{}.pkl'.format(outname)))
 
-    peak_dictionary.save_hkl(os.path.join(directory, '{}.hkl'.format(outname)))
-    peak_dictionary.save(os.path.join(directory, '{}.pkl'.format(outname)))
-
-    peak_envelope.create_pdf()
-    excl_envelope.create_pdf()
+    peak_dictionary.save_hkl(os.path.join(outdir, '{}.hkl'.format(outname)))
+    peak_dictionary.save(os.path.join(outdir, '{}.pkl'.format(outname)))
 
     peak_summary.close()
     excl_summary.close()
@@ -1937,3 +1946,59 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
         DeleteWorkspace('flux')
     if mtd.doesExist('van'):
         DeleteWorkspace('van')
+
+#     merger = PdfFileMerger()
+# 
+#     for i, key in enumerate(keys[:]):
+#         env = os.path.join(outdir, '{}_{}.pdf'.format(outname,i))
+#         if os.path.exists(env):
+#             merger.append(env)
+# 
+#     merger.write(os.path.join(outdir, '{}.pdf'.format(outname)))       
+#     merger.close()
+# 
+#     merger = PdfFileMerger()
+# 
+#     for i, key in enumerate(keys[:]):
+#         env = os.path.join(outdir, 'rej_{}_{}.pdf'.format(outname,i))
+#         if os.path.exists(env):
+#             merger.append(env)
+# 
+#     merger.write(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))       
+#     merger.close()
+
+    with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        for i, key in enumerate(keys[:]):
+            env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
+            if os.path.exists(env):
+                img = plt.imread(env)
+                plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
+                merger.append(env.replace('.png', '.jpg'))
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(outdir, '{}.pdf'.format(outname)))
+
+    with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        for i, key in enumerate(keys[:]):
+            env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
+            if os.path.exists(env):
+                img = plt.imread(env)
+                plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
+                merger.append(env.replace('.png', '.jpg'))
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
+
+    for i, key in enumerate(keys[:]):
+        env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
+        if os.path.exists(env):
+            os.remove(env)
+            os.remove(env.replace('.png', '.jpg'))
+        env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
+        if os.path.exists(env):
+            os.remove(env)            
+            os.remove(env.replace('.png', '.jpg'))

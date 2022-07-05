@@ -1,6 +1,6 @@
 import sys, os, re, imp, copy, shutil
 
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
+# os.environ['OPENMP_NUM_THREADS'] = '1'
 
 import multiprocessing
 
@@ -54,6 +54,12 @@ if __name__ == '__main__':
     if min_d is None:
         min_d = 0.7
 
+    adaptive_scale = dictionary.get('adaptive-scale')
+    scale_factor = dictionary.get('scale-factor')
+    
+    if scale_factor is None:
+        scale_factor = 1
+
     reflection_condition = dictionary['reflection-condition']
     group = dictionary['group']
 
@@ -83,7 +89,11 @@ if __name__ == '__main__':
 
     z_parameter = dictionary['z-parameter']
     sample_mass = dictionary['sample-mass']
-
+    vanadium_mass = dictionary.get('vanadium-mass')
+    
+    if vanadium_mass is None:
+        vanadium_mass = 0
+    
     facility, instrument = merge.set_instrument(dictionary['instrument'])
     ipts = dictionary['ipts']
 
@@ -119,6 +129,11 @@ if __name__ == '__main__':
 
     directory = os.path.dirname(os.path.abspath(filename))
     outname = dictionary['name']
+
+    outdir = os.path.join(directory, outname)
+    if not os.path.exists(outdir):
+        #shutil.rmtree(outdir)
+        os.mkdir(outdir)
 
     parameters.output_input_file(filename, directory, outname)
 
@@ -203,7 +218,7 @@ if __name__ == '__main__':
 
         split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
 
-        args = [directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
+        args = [outdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
                 spectrum_file, counts_file, tube_calibration, detector_calibration,
                 mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
 
@@ -223,25 +238,38 @@ if __name__ == '__main__':
 
         CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
 
+        CreateEmptyTableWorkspace(OutputWorkspace='run_info')
+
+        mtd['run_info'].addColumn('Int', 'RunNumber')
+        mtd['run_info'].addColumn('Double', 'Scale')
+
         for i in range(m_proc):
             partname = outname+'_p{}'.format(i)
 
-            LoadNexus(Filename=os.path.join(directory, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
-            LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(directory, partname+'.mat'))
+            LoadNexus(Filename=os.path.join(outdir, partname+'_log.nxs'), OutputWorkspace=partname+'_log')
+            for j in range(mtd[partname+'_log'].rowCount()):
+                items = mtd[partname+'_log'].row(j)
+                mtd['run_info'].addRow(list(items.values()))
+            DeleteWorkspace(partname+'_log')
+
+            LoadNexus(Filename=os.path.join(outdir, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
+            LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(outdir, partname+'.mat'))
             CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
-            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, partname+'.mat'))
+            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(outdir, partname+'.mat'))
             DeleteWorkspace(partname+'_pk')
 
-            LoadNexus(Filename=os.path.join(directory, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
-            LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(directory, partname+'.mat'))
+            LoadNexus(Filename=os.path.join(outdir, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
+            LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(outdir, partname+'.mat'))
             CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
-            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, partname+'.mat'))
+            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(outdir, partname+'.mat'))
             DeleteWorkspace(partname+'_pk_lean')
 
-            os.remove(os.path.join(directory, partname+'_pk_lean.nxs'))
-            os.remove(os.path.join(directory, partname+'_pk.nxs'))
-            os.remove(os.path.join(directory, partname+'.mat'))
+            os.remove(os.path.join(outdir, partname+'_log.nxs'))
+            os.remove(os.path.join(outdir, partname+'_pk_lean.nxs'))
+            os.remove(os.path.join(outdir, partname+'_pk.nxs'))
+            os.remove(os.path.join(outdir, partname+'.mat'))
 
+        SaveNexus(InputWorkspace='run_info', Filename=os.path.join(directory, tmp+'_log.nxs'))
         SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, tmp+'_pk_lean.nxs'))
         SaveNexus(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'_pk.nxs'))
         SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
@@ -356,20 +384,17 @@ if __name__ == '__main__':
     # ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True)
 
     keys = list(peak_dict.keys())
+    keys = [key for key in keys if peak_dictionary.get_d(*key) > min_d]
+
     split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
 
     filename = os.path.join(directory, tmp)
-
-    outdir = os.path.join(directory, outname)
-    if not os.path.exists(outdir):
-        #shutil.rmtree(outdir)
-        os.mkdir(outdir)
 
     int_list, peak_tree = None, None
 
     args = [ref_dict, peak_tree, int_list, filename,
             spectrum_file, counts_file, tube_calibration, detector_calibration,
-            directory, facility, instrument, ipts, runs,
+            outdir, directory, facility, instrument, ipts, runs,
             split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
             mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
             chemical_formula, z_parameter, sample_mass, experiment, tmp]
@@ -384,35 +409,37 @@ if __name__ == '__main__':
     merger = PdfFileMerger()
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, outname+'_p{}'.format(i)+'.pdf')
-        merger.append(partfile)
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pdf')
+        if os.path.exists(partfile):
+            merger.append(partfile)
 
     merger.write(os.path.join(directory, outname+'.pdf'))       
     merger.close()
 
     if os.path.exists(os.path.join(directory, outname+'.pdf')):
         for i in range(n_proc):
-            partfile = os.path.join(directory, outname+'_p{}'.format(i)+'.pdf')
+            partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pdf')
             if os.path.exists(partfile):
                 os.remove(partfile)
 
     merger = PdfFileMerger()
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
-        merger.append(partfile)
-
-    merger.write(os.path.join(directory, outname+'/rejected.pdf'))       
+        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
+        if os.path.exists(partfile):
+            merger.append(partfile)
+                
+    merger.write(os.path.join(outdir, 'rejected.pdf'))       
     merger.close()
 
-    if os.path.exists(os.path.join(directory, outname+'/rejected.pdf')):
+    if os.path.exists(os.path.join(outdir, 'rejected.pdf')):
         for i in range(n_proc):
-            partfile = os.path.join(directory, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
+            partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
             if os.path.exists(partfile):
                 os.remove(partfile)
 
     for i in range(n_proc):
-        tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(directory, outname+'_p{}.pkl'.format(i)))
+        tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(outdir, outname+'_p{}.pkl'.format(i)))
 
         if i == 0:
             peak_dict = copy.deepcopy(tmp_peak_dict)
@@ -435,9 +462,13 @@ if __name__ == '__main__':
             pws.removePeak(pn)
 
     peak_dictionary._PeakDictionary__repopulate_workspaces()
-    peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), adaptive_scale=True)
+    scale = peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), adaptive_scale=adaptive_scale, scale=scale_factor)
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
+    scale_file = open(os.path.join(outdir, 'scale.txt'), 'w')
+    scale_file.write('{:10.4e}'.format(scale))
+    scale_file.close()
+    
     # ---
 
     keys = peak_dictionary.peak_dict.keys()
@@ -472,7 +503,7 @@ if __name__ == '__main__':
 
         args = [peak_dict, peak_tree, int_list, filename,
                 spectrum_file, counts_file, tube_calibration, detector_calibration,
-                directory, facility, instrument, ipts, runs,
+                outdir, directory, facility, instrument, ipts, runs,
                 split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
                 mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
                 chemical_formula, z_parameter, sample_mass, experiment, tmp]
@@ -487,15 +518,16 @@ if __name__ == '__main__':
         merger = PdfFileMerger()
 
         for i in range(n_proc):
-            partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'.pdf')
-            merger.append(partfile)
+            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pdf')
+            if os.path.exists(partfile):
+                merger.append(partfile)
 
-        merger.write(os.path.join(directory, outname+'_weak.pdf'))       
+        merger.write(os.path.join(outdir, outname+'_weak.pdf'))       
         merger.close()
 
-        if os.path.exists(os.path.join(directory, outname+'_weak.pdf')):
+        if os.path.exists(os.path.join(outdir, outname+'_weak.pdf')):
             for i in range(n_proc):
-                partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'.pdf')
+                partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pdf')
                 if os.path.exists(partfile):
                     os.remove(partfile)
 
@@ -505,19 +537,19 @@ if __name__ == '__main__':
             partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
             merger.append(partfile)
 
-        merger.write(os.path.join(directory, outname+'/rejected_weak.pdf'))       
+        merger.write(os.path.join(outdir, 'rejected_weak.pdf'))       
         merger.close()
 
-        if os.path.exists(os.path.join(directory, outname+'/rejected_weak.pdf')):
+        if os.path.exists(os.path.join(outdir, 'rejected_weak.pdf')):
             for i in range(n_proc):
-                partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
+                partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
                 if os.path.exists(partfile):
                     os.remove(partfile)
 
         merge_peak_dict = {}
 
         for i in range(n_proc):
-            tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(directory, outname+'_weak_p{}.pkl'.format(i)))
+            tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(outdir, outname+'_weak_p{}.pkl'.format(i)))
 
             for key in list(tmp_peak_dict.keys()):
                 peaks, tmp_peaks = peak_dict[key], tmp_peak_dict[key]
@@ -538,7 +570,7 @@ if __name__ == '__main__':
                 pws.removePeak(pn)
 
         peak_dictionary._PeakDictionary__repopulate_workspaces()
-        peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), min_pk_vol_fract=0.5, adaptive_scale=True)
+        peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), adaptive_scale=False, scale=scale)
         peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
     # ---
@@ -549,24 +581,26 @@ if __name__ == '__main__':
 
     peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
 
+    absorption_file = os.path.join(outdir, 'absorption.txt')
+
     if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
-        peak_dictionary.apply_spherical_correction()
-        peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'))
-        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'))
+        peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
+        peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
+        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
 
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, outname+'_p{}'.format(i)+'.hkl')
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(directory, outname+'_p{}'.format(i)+'.pkl')
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'.hkl')
+        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'.pkl')
+        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pkl')
         if os.path.exists(partfile):
             os.remove(partfile)
 
@@ -583,13 +617,13 @@ if __name__ == '__main__':
                  ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d']
 
     peak_file = open(os.path.join(directory, outname+'_summary.txt'), 'w')
-    excl_file = open(os.path.join(directory, outname+'/rejected_summary.txt'), 'w')
+    excl_file = open(os.path.join(outdir, 'rejected_summary.txt'), 'w')
 
     peak_file.write(fmt_summary.format(*hdr_summary))
     excl_file.write(fmt_summary.format(*hdr_summary))
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, outname+'_p{}'.format(i)+'_summary.txt')
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_summary.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -599,7 +633,7 @@ if __name__ == '__main__':
             os.remove(partfile)
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, 'rej_'+outname+'_p{}'.format(i)+'_summary.txt')
+        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_summary.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -612,13 +646,13 @@ if __name__ == '__main__':
     excl_file.close()
 
     peak_file = open(os.path.join(directory, outname+'_stats.txt'), 'w')
-    excl_file = open(os.path.join(directory, outname+'/rejected_stats.txt'), 'w')
+    excl_file = open(os.path.join(outdir, 'rejected_stats.txt'), 'w')
 
     peak_file.write(fmt_stats.format(*hdr_stats))
     excl_file.write(fmt_stats.format(*hdr_stats))
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, outname+'_p{}'.format(i)+'_stats.txt')
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_stats.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -628,7 +662,7 @@ if __name__ == '__main__':
             os.remove(partfile)
 
     for i in range(n_proc):
-        partfile = os.path.join(directory, 'rej_'+outname+'_p{}'.format(i)+'_stats.txt')
+        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_stats.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -645,13 +679,13 @@ if __name__ == '__main__':
     if weak:
 
         peak_file = open(os.path.join(directory, outname+'_weak_summary.txt'), 'w')
-        excl_file = open(os.path.join(directory, outname+'/rejected_weak_summary.txt'), 'w')
+        excl_file = open(os.path.join(outdir, 'rejected_weak_summary.txt'), 'w')
 
         peak_file.write(fmt_summary.format(*hdr_summary))
         excl_file.write(fmt_summary.format(*hdr_summary))
 
         for i in range(n_proc):
-            partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'_summary.txt')
+            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_summary.txt')
             if os.path.exists(partfile):
                 tmp_file = open(partfile, 'r')
                 tmp_lines = tmp_file.readlines()
@@ -661,7 +695,7 @@ if __name__ == '__main__':
                 os.remove(partfile)
 
         for i in range(n_proc):
-            partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'_summary.txt')
+            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_summary.txt')
             if os.path.exists(partfile):
                 tmp_file = open(partfile, 'r')
                 tmp_lines = tmp_file.readlines()
@@ -674,13 +708,13 @@ if __name__ == '__main__':
         excl_file.close()
 
         peak_file = open(os.path.join(directory, outname+'_weak_stats.txt'), 'w')
-        excl_file = open(os.path.join(directory, outname+'/rejected_weak_stats.txt'), 'w')
+        excl_file = open(os.path.join(outdir, 'rejected_weak_stats.txt'), 'w')
 
         peak_file.write(fmt_stats.format(*hdr_stats))
         excl_file.write(fmt_stats.format(*hdr_stats))
 
         for i in range(n_proc):
-            partfile = os.path.join(directory, outname+'_weak_p{}'.format(i)+'_stats.txt')
+            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_stats.txt')
             if os.path.exists(partfile):
                 tmp_file = open(partfile, 'r')
                 tmp_lines = tmp_file.readlines()
@@ -690,7 +724,7 @@ if __name__ == '__main__':
                 os.remove(partfile)
 
         for i in range(n_proc):
-            partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'_stats.txt')
+            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_stats.txt')
             if os.path.exists(partfile):
                 tmp_file = open(partfile, 'r')
                 tmp_lines = tmp_file.readlines()
