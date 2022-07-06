@@ -22,7 +22,7 @@ def load_input_file(filename):
                 var = var.lower()
                 if val.isnumeric():
                    val = int(val)
-                elif val.replace('.','',1).isdigit():
+                elif val.lower().replace('.','',1).replace('e+','',1).replace('e-','',1).isdigit():
                    val = float(val)
                 else:
                     if val.lower() == 'none':
