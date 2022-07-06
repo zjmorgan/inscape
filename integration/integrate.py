@@ -32,9 +32,10 @@ if n_proc > os.cpu_count():
 
 scale_constant = 1e+4
 
-# multiprocessing.set_start_method('spawn')
-
 if __name__ == '__main__':
+
+    multiprocessing.set_start_method('spawn', force=True)
+
     multiprocessing.freeze_support()
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
 
@@ -56,7 +57,7 @@ if __name__ == '__main__':
 
     adaptive_scale = dictionary.get('adaptive-scale')
     scale_factor = dictionary.get('scale-factor')
-    
+
     if scale_factor is None:
         scale_factor = 1
 
