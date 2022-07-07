@@ -4,6 +4,9 @@ import sys, os, re, imp, copy, shutil
 
 import multiprocessing
 
+from mantid import config
+config.setLogLevel(0, quiet=True)
+
 from mantid.simpleapi import *
 import numpy as np
 

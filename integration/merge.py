@@ -387,7 +387,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
         CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
 
     CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
-    
+
     CreateEmptyTableWorkspace(OutputWorkspace='run_info')
 
     mtd['run_info'].addColumn('Int', 'RunNumber')
@@ -1639,7 +1639,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 Qave = 2*np.pi*np.mean([ol.astar(), ol.bstar(), ol.cstar()])
 
                 radius = 0.25*Qave
-                binsize = 0.005*Qave
+                binsize = 0.0025*Qave
 
                 W = np.eye(3)
                 D = np.diag([1/radius**2,1/radius**2,1/radius**2])
@@ -1835,7 +1835,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     B = signal[mask]/error[mask]
 
                     if N > 3:
-                        coeff, r, rank, s = np.linalg.lstsq(A, B)
+                        coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
                     else:
                         coeff = [0,0]
 

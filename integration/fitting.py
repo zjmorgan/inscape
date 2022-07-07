@@ -381,7 +381,7 @@ class Profile:
         B = y[mask]/e[mask]
 
         if y[mask].size > 3:
-            coeff, r, rank, s = np.linalg.lstsq(A, B)
+            coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
 
             args = (x[mask], y[mask], e[mask])
             result = scipy.optimize.least_squares(self.sub, args=args, x0=coeff, loss='cauchy')
@@ -727,7 +727,7 @@ class Projection:
         B = z[mask]/e[mask]
 
         if z[mask].size > 5:
-            coeff, r, rank, s = np.linalg.lstsq(A, B)
+            coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
 
             args = (x[mask], y[mask], z[mask], e[mask])
             result = scipy.optimize.least_squares(self.sub, args=args, x0=coeff, loss='cauchy')

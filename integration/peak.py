@@ -24,6 +24,11 @@ import numpy as np
 import scipy.interpolate
 import scipy.optimize
 
+#np.seterr(divide='ignore', invalid='ignore')
+#np.seterr(**settings)
+
+np.seterr(divide='ignore', invalid='ignore')
+
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import MeanShift, estimate_bandwidth
 
