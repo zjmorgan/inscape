@@ -352,8 +352,15 @@ class PeakEnvelope:
         # ---
 
         if n_runs > 1:
-            self.ax_Qu.set_title('\u03BB = {:.3f}-{:.3f} \u212B'.format(*lamda))
-            self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}-{:.1f}\u00B0'.format(*two_theta))
+            if np.isclose(lamda[0],lamda[1]):
+                self.ax_Qu.set_title('\u03BB = {:.3f} \u212B'.format(lamda[0]))
+            else:
+                self.ax_Qu.set_title('\u03BB = {:.3f}-{:.3f} \u212B'.format(*lamda))
+
+            if np.isclose(two_theta[0],two_theta[1]):
+                self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}\u00B0'.format(two_theta[0]))
+            else:
+                self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}-{:.1f}\u00B0'.format(*two_theta))
 
             self.ax_Qv.set_title('{} orientations'.format(n_runs))
         else:
@@ -829,6 +836,8 @@ class PeakInformation:
         self.__peak_bkg_ratio2d = 0.0
         self.__peak_score2d = 0.0
 
+        self._chi_sq = 0
+
         self.__data_scale = np.array([])
         self.__norm_scale = np.array([])
 
@@ -1291,14 +1300,15 @@ class PeakInformation:
         self.__peak_bkg_ratio = peak_bkg_ratio
         self.__peak_score = peak_score
 
-    def add_fit(self, fit_1d, fit_2d, fit_prod):
+    def add_fit(self, fit_1d, fit_2d, fit_prod, chi_sq):
 
-        intens_fit, bkg_fit, sig_sq = fit_prod
+        intens_fit, bkg_fit, sig = fit_prod
 
         self.__intens_fit = intens_fit
         self.__bkg_fit = bkg_fit
 
-        self.__sig_fit = sig_sq
+        self.__sig_fit = sig
+        self.__chi_sq = chi_sq
 
         mu_1d, sigma_1d = fit_1d # a_1d, b_1d, c_1d
 
@@ -1400,11 +1410,11 @@ class PeakInformation:
             data_norm[np.isinf(data_norm)] = np.nan
             bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
 
-            Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
-            IQR = Q3-Q1
-            mask = (bkg_data_norm > Q3+1.5*IQR) | (bkg_data_norm < Q1-1.5*IQR)
+            # Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
+            # IQR = Q3-Q1
+            # mask = (bkg_data_norm > Q3+1.5*IQR) | (bkg_data_norm < Q1-1.5*IQR)
 
-            bkg_data_norm[mask] = Q2
+            # bkg_data_norm[mask] = Q2
 
             intens = np.nansum(data_norm)
             bkg_intens = np.nansum(bkg_data_norm)
@@ -1647,6 +1657,10 @@ class PeakInformation:
         if statistics.all() is not None:
 
             good = True
+
+            if self.__chi_sq < 0.02 or self.__chi_sq > 50:
+
+                good = False
 
             if self.peak_fit < 0.02 or self.peak_fit2d < 0.02 or self.peak_fit > 200 or self.peak_fit2d > 200:
 
@@ -2289,12 +2303,12 @@ class PeakDictionary:
         peak = peaks[index]
         peak.add_partial_integration(Q, A, peak_fit, peak_bkg_ratio, peak_score)
 
-    def fitted_result(self, key, fit_1d, fit_2d, fit_prod, index=0):
+    def fitted_result(self, key, fit_1d, fit_2d, fit_prod, chi_sq, index=0):
 
         peaks = self.peak_dict[key]
 
         peak = peaks[index]
-        peak.add_fit(fit_1d, fit_2d, fit_prod)
+        peak.add_fit(fit_1d, fit_2d, fit_prod, chi_sq)
 
     def calibrated_result(self, key, run_num, Q, index=0):
 
@@ -3023,20 +3037,20 @@ class PeakDictionary:
 
 class GaussianFit3D:
 
-    def __init__(self, x, y, e, mu, var):
+    def __init__(self, x, y, e, mu, sigma):
 
         self.params = Parameters()
 
-        self.params.add('A', value=y.max()-np.min(y), min=y.min()/1000, max=y.max())
-        self.params.add('B', value=np.min(y), min=0, max=y.mean())
+        self.params.add('A', value=np.mean(y), min=np.min(y), max=2*np.max(y))
+        self.params.add('B', value=np.min(y), min=0, max=np.max(y))
 
         self.params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
         self.params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
         self.params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
 
-        self.params.add('var0', value=var[0], min=0.25*var[0], max=4*var[0])
-        self.params.add('var1', value=var[1], min=0.25*var[1], max=4*var[1])
-        self.params.add('var2', value=var[2], min=0.25*var[2], max=4*var[2])
+        self.params.add('sigma0', value=sigma[0], min=0.5*sigma[0], max=2*sigma[0])
+        self.params.add('sigma1', value=sigma[1], min=0.5*sigma[1], max=2*sigma[1])
+        self.params.add('sigma2', value=sigma[2], min=0.5*sigma[2], max=2*sigma[2])
 
         self.params.add('phi', value=0, min=-np.pi, max=np.pi)
         self.params.add('theta', value=np.pi/2, min=0, max=np.pi)
@@ -3046,9 +3060,9 @@ class GaussianFit3D:
         self.y = y
         self.e = e
 
-    def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, var0, var1, var2, phi=0, theta=0, omega=0):
+    def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
 
-        S = self.S_matrix(var0, var1, var2, phi, theta, omega)
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
         inv_S = np.linalg.inv(S)
 
@@ -3057,18 +3071,18 @@ class GaussianFit3D:
         return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
                           +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))+B
 
-    def S_matrix(self, var0, var1, var2, phi=0, theta=0, omega=0):
+    def S_matrix(self, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
 
-        V = self.V_matrix(var0, var1, var2)
+        V = self.V_matrix(sigma0, sigma1, sigma2)
         U = self.U_matrix(phi, theta, omega)
 
         S = np.dot(np.dot(U,V),U.T)
 
         return S
 
-    def V_matrix(self, var0, var1, var2):
+    def V_matrix(self, sigma0, sigma1, sigma2):
 
-        V = np.diag([var0, var1, var2])
+        V = np.diag([sigma0**2, sigma1**2, sigma2**2])
 
         return V
 
@@ -3095,15 +3109,15 @@ class GaussianFit3D:
         mu1 = params['mu1']
         mu2 = params['mu2']
 
-        var0 = params['var0']
-        var1 = params['var1']
-        var2 = params['var2']
+        sigma0 = params['sigma0']
+        sigma1 = params['sigma1']
+        sigma2 = params['sigma2']
 
         phi = params['phi']
         theta = params['theta']
         omega = params['omega']
 
-        args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, var0, var1, var2, phi, theta, omega
+        args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
 
         yfit = self.gaussian_3d(*args)
 
@@ -3117,6 +3131,8 @@ class GaussianFit3D:
         out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e))
         result = out.minimize(method='leastsq')
 
+        self.result = result
+
         report_fit(result)
 
         A = result.params['A'].value
@@ -3126,15 +3142,39 @@ class GaussianFit3D:
         mu1 = result.params['mu1'].value
         mu2 = result.params['mu2'].value
 
-        var0 = result.params['var0'].value
-        var1 = result.params['var1'].value
-        var2 = result.params['var2'].value
+        sigma0 = result.params['sigma0'].value
+        sigma1 = result.params['sigma1'].value
+        sigma2 = result.params['sigma2'].value
 
         phi = result.params['phi'].value
         theta = result.params['theta'].value
         omega = result.params['omega'].value
 
-        S = self.S_matrix(var0, var1, var2, phi, theta, omega)
+        # print(result.params['A'])
+        # print(result.params['B'])
+        # print(result.params['mu0'])
+        # print(result.params['mu1'])
+        # print(result.params['mu2'])
+        # print(result.params['sigma0'])
+        # print(result.params['sigma1'])
+        # print(result.params['sigma2'])
+        # print(result.params['phi'])
+        # print(result.params['theta'])
+        # print(result.params['omega'])
+
+        boundary = np.isclose(A, result.params['A'].min) | np.isclose(A, result.params['A'].max) \
+                 | np.isclose(B, result.params['B'].min) | np.isclose(B, result.params['B'].max) \
+                 | np.isclose(mu0, result.params['mu0'].min) | np.isclose(mu0, result.params['mu0'].max) \
+                 | np.isclose(mu1, result.params['mu1'].min) | np.isclose(mu1, result.params['mu1'].max) \
+                 | np.isclose(mu2, result.params['mu2'].min) | np.isclose(mu2, result.params['mu2'].max) \
+                 | np.isclose(sigma0, result.params['sigma0'].min) | np.isclose(sigma0, result.params['sigma0'].max) \
+                 | np.isclose(sigma1, result.params['sigma1'].min) | np.isclose(sigma1, result.params['sigma1'].max) \
+                 | np.isclose(sigma2, result.params['sigma2'].min) | np.isclose(sigma2, result.params['sigma2'].max) \
+                 | np.isclose(phi, result.params['phi'].min) | np.isclose(phi, result.params['phi'].max) \
+                 | np.isclose(theta, result.params['theta'].min) | np.isclose(theta, result.params['theta'].max) \
+                 | np.isclose(omega, result.params['omega'].min) | np.isclose(omega, result.params['omega'].max)
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
         var = np.diag(S)
         sig = np.sqrt(var)
@@ -3146,7 +3186,7 @@ class GaussianFit3D:
         sig0, sig1, sig2 = sig[0], sig[1], sig[2]
         rho12, rho02, rho01 = rho[1,2], rho[0,2], rho[0,1]
 
-        return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01
+        return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary
 
     def covariance_matrix(self, sig0, sig1, sig2, rho12, rho02, rho01):
 
@@ -3160,13 +3200,48 @@ class GaussianFit3D:
 
         return S
 
-    def integrated(self, A, sig0, sig1, sig2, rho12, rho02, rho01):
+    def integrated(self):
 
-        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+        result = self.result
 
-        return A*np.sqrt((2*np.pi)**3*np.linalg.det(S))
+        mu0 = result.params['mu0'].value
+        mu1 = result.params['mu1'].value
+        mu2 = result.params['mu2'].value
 
-    def model(self, x, A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
+        sigma0 = result.params['sigma0'].value
+        sigma1 = result.params['sigma1'].value
+        sigma2 = result.params['sigma2'].value
+
+        phi = result.params['phi'].value
+        theta = result.params['theta'].value
+        omega = result.params['omega'].value
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+
+        inv_S = np.linalg.inv(S)
+
+        Q0, Q1, Q2 = self.x
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        norm = np.sqrt(np.linalg.det(2*np.pi*S))
+
+        x = np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                     +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm
+
+        A = (np.array([x, np.ones_like(x)])/self.e).T
+        b = self.y/self.e
+
+        coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+
+        intens, bkg = coeff
+
+        cov = np.dot(A.T, A)
+        sig = np.sqrt(np.linalg.inv(cov)[0,0])
+
+        return intens, bkg, sig
+
+    def model(self, x, intens, bkg, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
 
         S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -3174,5 +3249,9 @@ class GaussianFit3D:
 
         x0, x1, x2 = x[0]-mu0, x[1]-mu1, x[2]-mu2
 
-        return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
-                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))+B
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+        
+        norm = np.sqrt(np.linalg.det(2*np.pi*S))
+
+        return intens*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                               +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm+bkg

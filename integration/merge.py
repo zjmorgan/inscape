@@ -817,7 +817,9 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
             run = mtd[omd].getExperimentInfo(0).run()
             scans = run.getNumGoniometers()
 
-            rotation, _, _ = np.array([run.getGoniometer(i).getEulerAngles('YZY') for i in range(scans)]).T
+            signs = np.array([1 if run.getGoniometer(i).getR()[0,2] > run.getGoniometer(i).getR()[2,0] else -1 for i in range(scans)])
+
+            rotation = signs*np.rad2deg(np.array([np.arccos((np.trace(run.getGoniometer(i).getR())-1)/2) for i in range(scans)]))
 
             rotation_start, rotation_stop = rotation[0], rotation[-1]
 
@@ -912,8 +914,9 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
             log_dict = {}
 
             for log in logs:
-                prop = run.getProperty(log)
-                log_dict[log] = prop.times.copy(), prop.value.copy()
+                if run.hasProperty(log):
+                    prop = run.getProperty(log)
+                    log_dict[log] = prop.times.copy(), prop.value.copy()
 
             for log in run.keys():
                 if log not in logs:
@@ -937,10 +940,9 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
 
                 R = pk.getGoniometerMatrix()
 
-                g = Goniometer()
-                g.setR(R)
+                sign = 1 if R[0,2] > R[2,0] else -1
 
-                rot, _, _ = g.getEulerAngles('YZY')
+                rot = sign*np.rad2deg(np.arccos((np.trace(R)-1)/2))
 
                 i_ind = int(round((rot-rotation_start)/(rotation_stop-rotation_start)*(scans-1))) 
 
@@ -969,6 +971,9 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 c_start = c_ind-c_diff if c_ind-c_diff > 0 else 0
                 c_stop = c_ind+c_diff if c_ind+c_diff < columns else columns
 
+                print(rotation)
+                print(i_start, i_stop, i_ind, i_diff)
+
                 SliceMDHisto(InputWorkspace=ows,
                              Start='{},{},{}'.format(c_start,r_start,i_start),
                              End='{},{},{}'.format(c_stop,r_stop,i_stop),
@@ -982,12 +987,13 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 crop_run = mtd['crop_data'].getExperimentInfo(0).run()
 
                 for log in logs:
-                    prop_times, prop_values = log_dict[log]
-                    times, values = prop_times[i_start:i_stop], prop_values[i_start:i_stop]
-                    new_log = FloatTimeSeriesProperty(log)
-                    for t, v in zip(times, values):
-                        new_log.addValue(t, v)
-                    crop_run[log] = new_log
+                    if log_dict.get(log) is not None:
+                        prop_times, prop_values = log_dict[log]
+                        times, values = prop_times[i_start:i_stop], prop_values[i_start:i_stop]
+                        new_log = FloatTimeSeriesProperty(log)
+                        for t, v in zip(times, values):
+                            new_log.addValue(t, v)
+                        crop_run[log] = new_log
 
                 if instrument == 'HB3A':
                     crop_run.addProperty('twotheta', twotheta[c_start:c_stop,r_start:r_stop].T.flatten().tolist(), True)
@@ -1778,7 +1784,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     elif peak_fit_1 > 1 and peak_fit_2 > 1:
                         peak_fit = np.min([peak_fit_1,peak_fit_2])
                     else:
-                        peak_fit = peak_fit_2
+                        peak_fit = peak_fit_1 if np.abs(peak_fit_1-1) < np.abs(peak_fit_2-1) else peak_fit_2
 
                     peak_bkg_ratio = np.nanmax([peak_bkg_ratio_1, peak_bkg_ratio_2])
                     sig_noise_ratio = np.nanmax([sig_noise_ratio_1, sig_noise_ratio_2])
@@ -1819,89 +1825,96 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
 
-                    var = ellip.var()
+                    sigs = ellip.sig()
                     dQ1, dQ2, Qp, _, _ = data_norm
-
-                    inv_var = 1/var
 
                     mask = (signal > 0) & (error > 0)
                     N = signal[mask].size
 
-                    x = 1/np.sqrt(np.prod(2*np.pi*var))*np.exp(-0.5*((dQ1-Q_rot[0])**2*inv_var[0]+\
-                                                                     (dQ2-Q_rot[1])**2*inv_var[1]+\
-                                                                      (Qp-Q_rot[2])**2*inv_var[2]))
-
-                    A = (np.array([x[mask], np.ones_like(x[mask])])/error[mask]).T
-                    B = signal[mask]/error[mask]
-
-                    if N > 3:
-                        coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
-                    else:
-                        coeff = [0,0]
-
-                    intens, bkg = coeff
-
-                    fit = intens*x+bkg
-
-                    if N > 3:
-                        cov = np.dot(A.T, A)
-                        sig = np.sqrt(np.linalg.inv(cov)[0,0])
-                    else:
-                        sig = 0
-
-                    # peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, var)
+                    # x = 1/np.sqrt(np.prod(2*np.pi*var))*np.exp(-0.5*((dQ1-Q_rot[0])**2*inv_var[0]+\
+                    #                                                  (dQ2-Q_rot[1])**2*inv_var[1]+\
+                    #                                                   (Qp-Q_rot[2])**2*inv_var[2]))
                     # 
-                    # A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01 = peak_fit_3d.fit()
+                    # A = (np.array([x[mask], np.ones_like(x[mask])])/error[mask]).T
+                    # B = signal[mask]/error[mask]
                     # 
-                    # fit = peak_fit_3d.model((dQ1, dQ2, Qp), A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+                    # if N > 3:
+                    #     coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
+                    # else:
+                    #     coeff = [0,0]
                     # 
-                    # intens = peak_fit_3d.integrated(A, sig0, sig1, sig2, rho12, rho02, rho01)
-                    # bkg = B
+                    # intens, bkg = coeff
                     # 
-                    # sig = 0
-
-                    fit_prod = [intens, bkg, sig]
+                    # fit = intens*x+bkg
+                    # 
+                    # if N > 3:
+                    #     cov = np.dot(A.T, A)
+                    #     sig = np.sqrt(np.linalg.inv(cov)[0,0])
+                    # else:
+                    #     sig = 0
 
                     if N > 27:
 
                         peak_dictionary.integrated_result(key, Q0, D, W, fit_stats, data_norm, pkg_bk, j)
-                        peak_dictionary.fitted_result(key, fit_1d, fit_2d, fit_prod, j)
 
-                    scale = peak_dictionary.peak_dict.get(key)[j].get_peak_constant()
+                        I_est = peak_dictionary.peak_dict.get(key)[j].get_merged_intensity()
+                        sig_est = peak_dictionary.peak_dict.get(key)[j].get_merged_intensity_error()
 
-                    I = [peak_dictionary.peak_dict.get(key)[j].get_merged_intensity(), intens*scale]
-                    err = [peak_dictionary.peak_dict.get(key)[j].get_merged_intensity_error(), sig*scale]
+                        peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sigs)
 
-                    # cdf_data_high = np.arange(1,N+1)/N
-                    # cdf_data_low  = np.arange(N)/N
-                    # 
-                    # CDF = cdf(signal[mask], fit[mask])
-                    # 
-                    # D = cdf_data_high-CDF
-                    # 
-                    # Dip = D.argmax()
-                    # Dplus = D[Dip]
-                    # 
-                    # D = CDF-cdf_data_low
-                    # 
-                    # Dim = D.argmax()
-                    # Dmin = D[Dim]
-                    # 
-                    # # if Dplus >= Dmin:
-                    # #    Di = Dip
-                    # # else:
-                    # #    Di = Dim
-                    # 
-                    # Dmax = np.max([Dplus, Dmin])
-                    # 
-                    # dist = kstwobign()
-                    # Dn_crit = dist.ppf(0.95)/np.sqrt(N)
+                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        
+                        intens, bkg, sig = peak_fit_3d.integrated()
 
-                    chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-2)
+                        fit = peak_fit_3d.model((dQ1, dQ2, Qp), intens, bkg, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 
-                    peak_envelope.plot_fitting(fit, I, err, chi_sq)
+                        scale = peak_dictionary.peak_dict.get(key)[j].get_peak_constant()
 
-                    if intens <= sig:
+                        I_fit, sig_fit = intens*scale, sig*scale
+
+                        I = [I_est, I_fit]
+                        err = [sig_est, sig_fit]
+
+                        chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
+
+                        # cdf_data_high = np.arange(1,N+1)/N
+                        # cdf_data_low  = np.arange(N)/N
+                        # 
+                        # CDF = cdf(signal[mask], fit[mask])
+                        # 
+                        # D = cdf_data_high-CDF
+                        # 
+                        # Dip = D.argmax()
+                        # Dplus = D[Dip]
+                        # 
+                        # D = CDF-cdf_data_low
+                        # 
+                        # Dim = D.argmax()
+                        # Dmin = D[Dim]
+                        # 
+                        # # if Dplus >= Dmin:
+                        # #    Di = Dip
+                        # # else:
+                        # #    Di = Dim
+                        # 
+                        # Dmax = np.max([Dplus, Dmin])
+                        # 
+                        # dist = kstwobign()
+                        # Dn_crit = dist.ppf(0.95)/np.sqrt(N)
+
+                        if intens <= sig or chi_sq > 50 or chi_sq < 0.02 or np.isclose(I_est, 0) or boundary:
+
+                            remove = True
+
+                            chi_sq = np.inf
+
+                        fit_prod = [intens, bkg, sig]
+
+                        peak_dictionary.fitted_result(key, fit_1d, fit_2d, fit_prod, chi_sq, j)
+
+                        peak_envelope.plot_fitting(fit, I, err, chi_sq)
+
+                    else:
 
                         remove = True
 

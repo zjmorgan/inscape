@@ -131,7 +131,7 @@ class Ellipsoid:
 
         return Q, W, D
 
-    def var(self):
+    def sig(self):
 
         sigma, sigma_x, sigma_y, rho = self.sigma, self.sigma_x, self.sigma_y, self.rho
 
@@ -145,7 +145,7 @@ class Ellipsoid:
         if sigma_i[0] > sigma_i[1]:
             sigma_i = sigma_i[::-1]
 
-        return np.append(sigma_i,sigma)**2
+        return np.append(sigma_i,sigma)
 
     def A(self, W, D):
 
@@ -177,7 +177,7 @@ class Ellipsoid:
 
         mu, sigma = self.mu, self.sigma
 
-        n_std = self.n_std+1.5
+        n_std = self.n_std+2
 
         Qp = self.Qp
 
@@ -365,14 +365,6 @@ class Profile:
 
         return bin_centers, bin_data_norm, bin_err, bin_data_norm_sub, bin_err_sub, bin_bkg
 
-    def sub(self, params, x, y, e):
-
-        a, b = params
-
-        y_fit = self.linear(x, a, b)
-
-        return ((y_fit-y)/e).flatten()
-
     def background(self, x, y, e):
 
         mask = (y > -np.inf) & (e > 0) & (y < np.inf) & (e < np.inf)
@@ -382,10 +374,6 @@ class Profile:
 
         if y[mask].size > 3:
             coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
-
-            args = (x[mask], y[mask], e[mask])
-            result = scipy.optimize.least_squares(self.sub, args=args, x0=coeff, loss='cauchy')
-            coeff = result.x
 
         else:
             coeff = np.array([0, 0])
@@ -404,7 +392,7 @@ class Profile:
 
         mask = (y > -np.inf) & (e > 0) & (y_fit > -np.inf) & (y < np.inf) & (e < np.inf)
 
-        n_df = y[mask].size-4
+        n_df = y[mask].size-5
 
         chi_sq = np.sum((y[mask]-y_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
 
@@ -445,7 +433,7 @@ class Profile:
             x_range = (x[mask].max()-x[mask].min())
             y_range = (y[mask].max()-y[mask].min())
 
-            min_bounds = (0,      x[mask].min(), 0.001/3,       0-0.1*y_range, -10*y_range/x_range)
+            min_bounds = (0,      x[mask].min(), 0.00001/3,     0-0.1*y_range, -10*y_range/x_range)
             max_bounds = (1.15*a, x[mask].max(), width.max()/3, y[mask].max()+0.1*y_range,  10*y_range/x_range)
 
             if np.any([mu < min_bounds[1], mu > max_bounds[1], sigma > width/3]):
@@ -711,14 +699,6 @@ class Projection:
 
         return bin_centers_x, bin_centers_y, bin_data_norm, bin_err, bin_data_norm_sub, bin_err_sub, bin_bkg
 
-    def sub(self, params, x, y, z, e):
-
-        a, b, c, d = params
-
-        z_fit = self.nonlinear(x, y, a, b, c, d)
-
-        return ((z_fit-z)/e).flatten()
-
     def background(self, x, y, z, e):
 
         mask = (z > -np.inf) & (e > 0) & (z < np.inf) & (e < np.inf)
@@ -729,10 +709,6 @@ class Projection:
         if z[mask].size > 5:
             coeff, r, rank, s = np.linalg.lstsq(A, B, rcond=None)
 
-            args = (x[mask], y[mask], z[mask], e[mask])
-            result = scipy.optimize.least_squares(self.sub, args=args, x0=coeff, loss='cauchy')
-
-            coeff = result.x
         else:
             coeff = np.array([0, 0, 0, 0])
 
@@ -742,7 +718,7 @@ class Projection:
 
         mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
 
-        n_df = z[mask].size-6
+        n_df = z[mask].size-10
 
         chi_sq = np.sum((z[mask]-z_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
 
@@ -1237,7 +1213,7 @@ class LineCut(Profile):
                      result.params['b'].value, \
                      result.params['c'].value
 
-            print(fit_report(result))
+            # print(fit_report(result))
 
         a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c = params
 
