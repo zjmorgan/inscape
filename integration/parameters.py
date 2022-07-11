@@ -32,7 +32,7 @@ def load_input_file(filename):
                     elif val.lower() == 'true':
                         val = True
                     elif val.count(',') > 0:
-                        val = [np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 and val[0] != '-' else \
+                        val = [np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 and v[0] != '-' else \
                                int(v) if v.isdigit() else \
                                float(v) if v.replace('-','',1).replace('.','',1).isdigit() else \
                                v for v in val.split(',')]

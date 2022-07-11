@@ -1906,8 +1906,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                             remove = True
 
-                            chi_sq = np.inf
-
                         fit_prod = [intens, bkg, sig]
 
                         peak_dictionary.fitted_result(key, fit_1d, fit_2d, fit_prod, chi_sq, j)

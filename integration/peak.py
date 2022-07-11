@@ -3133,7 +3133,7 @@ class GaussianFit3D:
 
         self.result = result
 
-        report_fit(result)
+        # report_fit(result)
 
         A = result.params['A'].value
         B = result.params['B'].value
@@ -3237,7 +3237,10 @@ class GaussianFit3D:
         intens, bkg = coeff
 
         cov = np.dot(A.T, A)
-        sig = np.sqrt(np.linalg.inv(cov)[0,0])
+        if np.linalg.det(cov) > 0:
+            sig = np.sqrt(np.linalg.inv(cov)[0,0])
+        else:
+            sig = intens
 
         return intens, bkg, sig
 
