@@ -1,7 +1,7 @@
 from mantid.simpleapi import CreateSingleValuedWorkspace, CreatePeaksWorkspace
 from mantid.simpleapi import CloneWorkspace, DeleteWorkspace
 from mantid.simpleapi import SortPeaksWorkspace, FilterPeaks
-from mantid.simpleapi import SetUB, SaveIsawUB, FindUBUsingIndexedPeaks
+from mantid.simpleapi import SetUB, SaveIsawUB, CalculatePeaksHKL
 from mantid.simpleapi import SetSampleMaterial, SaveNexus
 from mantid.simpleapi import mtd
 
@@ -1652,35 +1652,36 @@ class PeakInformation:
 
     def __has_good_fit(self):
 
-        statistics = np.array([self.peak_fit, self.peak_bkg_ratio, self.peak_score, self.peak_fit2d, self.peak_bkg_ratio2d, self.peak_score2d])
+        statistics = np.array([self.__peak_fit,   self.__peak_bkg_ratio,   self.__peak_score,
+                               self.__peak_fit2d, self.__peak_bkg_ratio2d, self.__peak_score2d])
 
         if statistics.all() is not None:
 
             good = True
 
-            if self.__chi_sq < 0.02 or self.__chi_sq > 50:
+            if self.__chi_sq < 0.02 or self.__chi_sq > 200:
 
                 good = False
 
-            if self.peak_fit < 0.02 or self.peak_fit2d < 0.02 or self.peak_fit > 200 or self.peak_fit2d > 200:
+            if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02 or self.__peak_fit > 200 or self.__peak_fit2d > 200:
 
                 good = False
 
-            if self.peak_bkg_ratio < 0.5:
+            if self.__peak_bkg_ratio < 0.5:
 
                 good = False
 
-            if self.peak_score < 3 or self.peak_score2d < 3:
+            if self.__peak_score < 3 or self.__peak_score2d < 3:
 
                 good = False
 
             # powder line in profile
-            if self.peak_bkg_ratio > 1 and self.peak_bkg_ratio2d < 1 and self.peak_bkg_ratio/self.peak_bkg_ratio2d > 10:
+            if self.__peak_bkg_ratio > 1 and self.__peak_bkg_ratio2d < 1 and self.__peak_bkg_ratio/self.__peak_bkg_ratio2d > 10:
 
                 good = False
 
             # powder line in projection
-            if self.peak_bkg_ratio2d > 1 and self.peak_bkg_ratio < 1 and self.peak_bkg_ratio2d/self.peak_bkg_ratio > 10:
+            if self.__peak_bkg_ratio2d > 1 and self.__peak_bkg_ratio < 1 and self.__peak_bkg_ratio2d/self.__peak_bkg_ratio > 10:
 
                 good = False
 
@@ -2250,52 +2251,6 @@ class PeakDictionary:
         peak = peaks[index]
         peak.add_integration(Q, D, W, statistics, data_norm, pkg_bk)
 
-        h, k, l, m, n, p = key
-        Qx, Qy, Qz = Q
-
-        peak_num = self.iws.getNumberPeaks()+1
-        intens = peak.get_merged_intensity()
-        sig_intens = peak.get_merged_intensity_error()
-        pk_vol_fract = peak.get_merged_peak_volume_fraction()
-
-        run = peak.get_run_numbers().tolist()[0]
-        R = peak.get_goniometers()[0]
-
-        self.iws.run().getGoniometer().setR(R)
-        self.cws.run().getGoniometer().setR(R)
-
-        ol = self.pws.sample().getOrientedLattice()
-
-        mod_vec_1 = ol.getModVec(0)
-        mod_vec_2 = ol.getModVec(1)
-        mod_vec_3 = ol.getModVec(2)
-
-        dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
-
-        pk = self.iws.createPeakHKL(V3D(h+dh,k+dk,l+dl))
-        pk.setGoniometerMatrix(R)
-        pk.setIntHKL(V3D(h,k,l))
-        pk.setIntMNP(V3D(m,n,p))
-        pk.setPeakNumber(peak_num)
-        pk.setIntensity(intens)
-        pk.setSigmaIntensity(sig_intens)
-        pk.setBinCount(pk_vol_fract)
-        self.iws.addPeak(pk)
-
-        peak_num = self.cws.getNumberPeaks()+1
-
-        pk = self.cws.createPeakQSample(V3D(Qx,Qy,Qz))
-        pk.setGoniometerMatrix(R)
-        pk.setHKL(h+dh,k+dk,l+dl)
-        pk.setIntHKL(V3D(h,k,l))
-        pk.setIntMNP(V3D(m,n,p))
-        pk.setPeakNumber(peak_num)
-        pk.setIntensity(intens)
-        pk.setSigmaIntensity(sig_intens)
-        pk.setBinCount(pk_vol_fract)
-        pk.setRunNumber(run)
-        self.cws.addPeak(pk)
-
     def partial_result(self, key, Q, A, peak_fit, peak_bkg_ratio, peak_score, index=0):
 
         peaks = self.peak_dict[key]
@@ -2309,6 +2264,54 @@ class PeakDictionary:
 
         peak = peaks[index]
         peak.add_fit(fit_1d, fit_2d, fit_prod, chi_sq)
+
+        if peak.is_peak_integrated():
+
+            h, k, l, m, n, p = key
+            Qx, Qy, Qz = peak.get_Q()
+
+            peak_num = self.iws.getNumberPeaks()+1
+            intens = peak.get_merged_intensity()
+            sig_intens = peak.get_merged_intensity_error()
+            pk_vol_fract = peak.get_merged_peak_volume_fraction()
+
+            run = peak.get_run_numbers().tolist()[0]
+            R = peak.get_goniometers()[0]
+
+            self.iws.run().getGoniometer().setR(R)
+            self.cws.run().getGoniometer().setR(R)
+
+            ol = self.pws.sample().getOrientedLattice()
+
+            mod_vec_1 = ol.getModVec(0)
+            mod_vec_2 = ol.getModVec(1)
+            mod_vec_3 = ol.getModVec(2)
+
+            dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
+
+            pk = self.iws.createPeakHKL(V3D(h+dh,k+dk,l+dl))
+            pk.setGoniometerMatrix(R)
+            pk.setIntHKL(V3D(h,k,l))
+            pk.setIntMNP(V3D(m,n,p))
+            pk.setPeakNumber(peak_num)
+            pk.setIntensity(intens)
+            pk.setSigmaIntensity(sig_intens)
+            pk.setBinCount(pk_vol_fract)
+            self.iws.addPeak(pk)
+
+            peak_num = self.cws.getNumberPeaks()+1
+
+            pk = self.cws.createPeakQSample(V3D(Qx,Qy,Qz))
+            pk.setGoniometerMatrix(R)
+            pk.setHKL(h+dh,k+dk,l+dl)
+            pk.setIntHKL(V3D(h,k,l))
+            pk.setIntMNP(V3D(m,n,p))
+            pk.setPeakNumber(peak_num)
+            pk.setIntensity(intens)
+            pk.setSigmaIntensity(sig_intens)
+            pk.setBinCount(pk_vol_fract)
+            pk.setRunNumber(run)
+            self.cws.addPeak(pk)
 
     def calibrated_result(self, key, run_num, Q, index=0):
 
@@ -2420,7 +2423,7 @@ class PeakDictionary:
                     items.extend([intens, sig_intens, d_spacing])
 
                     f.write(hkl_format.format(*items))
-                    
+
         return scale
 
     def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, scale=1, normalize=True):
@@ -2441,43 +2444,44 @@ class PeakDictionary:
         hkl_fmt = n_ind*'{:4d}'+2*'{:8.2f}'+'{:4d}'+2*'{:8.5f}'+6*'{:9.5f}'+\
                   '{:6d}{:7d}{:7.4f}{:4d}{:9.5f}{:8.4f}'+2*'{:7.2f}'+'\n'
 
-        with open(filename, 'w') as f:
+        hkl_intensity = []
 
-            hkl_intensity = []
+        pk_info_1 = []
+        pk_info_2 = []
 
-            pk_info_1 = []
-            pk_info_2 = []
+        run_bank_dict = {}
+        bank_run_dict = {}
 
-            run_bank_dict = {}
+        j = 0
 
-            j = 0
+        key_set = set()
 
-            key_set = set()
+        for pn in range(self.iws.getNumberPeaks()):
 
-            for pn in range(self.iws.getNumberPeaks()):
+            pk = self.iws.getPeak(pn)
 
-                pk = self.iws.getPeak(pn)
+            h, k, l = pk.getIntHKL()
+            m, n, p = pk.getIntMNP()
 
-                h, k, l = pk.getIntHKL()
-                m, n, p = pk.getIntMNP()
+            h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
 
-                h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
+            key = (h, k, l, m, n, p)
 
-                key = (h, k, l, m, n, p)
+            key_set.add(key)
 
-                key_set.add(key)
+        keys = set(key_set)
 
-            keys = set(key_set)
+        I_max = 1
 
-            I_max = 1
+        for key in keys:
 
-            for key in keys:
+            peaks = self.peak_dict.get(key)
 
-                peaks = self.peak_dict.get(key)
+            h, k, l, m, n, p = key
 
-                h, k, l, m, n, p = key
+            for peak in peaks:
 
-                for peak in peaks:
+                if peak.is_peak_integrated():
 
                     intens = peak.get_intensity(normalize=normalize)
                     sig_intens = peak.get_intensity_error(normalize=normalize)
@@ -2540,10 +2544,23 @@ class PeakDictionary:
                                 ind.append(j)
                                 run_bank_dict[key] = ind
 
+                            key = (bank)
+
+                            if bank_run_dict.get(key) is None:
+                                bank_run_dict[key] = [j]
+                            else:
+                                ind = bank_run_dict[key]
+                                ind.append(j)
+                                bank_run_dict[key] = ind
+
                             j += 1
 
-            if adaptive_scale:
-                scale = 9999.99/I_max
+        if adaptive_scale:
+            scale = 9999.99/I_max
+
+        filename, ext = os.path.splitext(filename)
+
+        with open(filename+'_sn'+ext, 'w') as f:
 
             pk_num = 0
 
@@ -2552,6 +2569,32 @@ class PeakDictionary:
                 seq_num = j+1
 
                 for i in run_bank_dict[(run)]:
+
+                    if max_order == 0:
+                        hkl_intensity[i][3] *= scale
+                        hkl_intensity[i][4] *= scale
+                    else:
+                        hkl_intensity[i][6] *= scale
+                        hkl_intensity[i][7] *= scale
+
+                    f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
+
+                    pk_num += 1
+
+            if max_order > 0:
+                f.write(hkl_fmt.format(*[0]*25))
+            else:
+                f.write(hkl_fmt.format(*[0]*22))
+
+        with open(filename+'_dn'+ext, 'w') as f:
+
+            pk_num = 0
+
+            for j, (bank) in enumerate(sorted(bank_run_dict.keys())):
+
+                seq_num = j+1
+
+                for i in bank_run_dict[(bank)]:
 
                     if max_order == 0:
                         hkl_intensity[i][3] *= scale
@@ -2665,7 +2708,21 @@ class PeakDictionary:
 
         SaveNexus(InputWorkspace='cal', Filename=filename)
 
-        DeleteWorkspace('cal')
+    def recalculate_hkl(self, tol=0.08):
+
+        if mtd.doesExist('cal'):
+
+            CloneWorkspace(InputWorkspace=self.iws, OutputWorkspace='out')
+
+            SetUB(Workspace='out', UB=mtd['cal'].sample().getOrientedLattice().getUB())
+
+            CalculatePeaksHKL(PeaksWorkspace='out', OverWrite=True)
+
+            for pn in range(self.iws.getNumberPeaks()-1,-1,-1):
+                ipk, opk = self.iws.getPeak(pn), mtd['out'].getPeak(pn)
+                dHKL = np.abs(np.array(ipk.getHKL())-np.array(opk.getHKL()))
+                if np.any(dHKL > tol):
+                    self.iws.removePeak(pn)
 
     def __U_matrix(self, phi, theta, omega):
 
@@ -2801,6 +2858,10 @@ class PeakDictionary:
 
         return peak_dict
 
+    def repopulate_workspaces(self):
+
+        self.__repopulate_workspaces()
+
     def __repopulate_workspaces(self):
 
         ol = self.pws.sample().getOrientedLattice()
@@ -2828,7 +2889,7 @@ class PeakDictionary:
                 h, k, l, m, n, p = key
                 Qx, Qy, Qz = peak.get_Q()
 
-                if intens > 0 and sig_intens > 0:
+                if peak.is_peak_integrated():
 
                     peak_num = self.iws.getNumberPeaks()+1
 
@@ -2926,7 +2987,7 @@ class PeakDictionary:
         
         van_sigma_a = van.absorbXSection()
         van_sigma_s = van.totalScatterXSection()
-        
+
         van_M = van.relativeMolecularMass()
         van_n = van.numberDensityEffective # A^-3
         van_N = van.totalAtoms 
@@ -2957,7 +3018,7 @@ class PeakDictionary:
             absorption_file.write('total atoms: {:.4f}\n'.format(van_N))
             absorption_file.write('molar mass: {:.4f} g/mol\n'.format(van_M))
             absorption_file.write('number density: {:.4f} 1/A^3\n'.format(van_n))
-        
+
             absorption_file.close()
 
         for key in self.peak_dict.keys():
@@ -3005,11 +3066,14 @@ class PeakDictionary:
                 peak.set_transmission_coefficient(T)
                 peak.set_weighted_mean_path_length(Tbar)
 
+        self.clear_peaks()
+        self.repopulate_workspaces()
+
+    def clear_peaks(self):
+
         for pws in [self.iws, self.cws]:
             for pn in range(pws.getNumberPeaks()-1,-1,-1):
                 pws.removePeak(pn)
-
-        self.__repopulate_workspaces()
 
 #     def apply_extinction_correction(self, constants):
 # 
@@ -3041,8 +3105,12 @@ class GaussianFit3D:
 
         self.params = Parameters()
 
-        self.params.add('A', value=np.mean(y), min=np.min(y), max=2*np.max(y))
-        self.params.add('B', value=np.min(y), min=0, max=np.max(y))
+        y_min, y_max = np.min(y), np.max(y)
+
+        y_range = y_max-y_min
+
+        self.params.add('A', value=y_range, min=0.25*y_range, max=4*y_range)
+        self.params.add('B', value=y_min, min=0, max=y_max)
 
         self.params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
         self.params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
@@ -3060,7 +3128,7 @@ class GaussianFit3D:
         self.y = y
         self.e = e
 
-    def gaussian_3d(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
+    def gaussian_3d(self, Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
 
         S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
@@ -3069,7 +3137,23 @@ class GaussianFit3D:
         x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
 
         return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
-                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))+B
+                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))
+
+    def gaussian(self, Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        U = self.U_matrix(phi, theta, omega)
+
+        a = 0.5*(U[0,0]**2/sigma0**2+U[0,1]**2/sigma1**2+U[0,2]**2/sigma2**2)
+        b = 0.5*(U[1,0]**2/sigma0**2+U[1,1]**2/sigma1**2+U[1,2]**2/sigma2**2)
+        c = 0.5*(U[2,0]**2/sigma0**2+U[2,1]**2/sigma1**2+U[2,2]**2/sigma2**2)
+
+        d = U[1,0]*U[2,0]/sigma0**2+U[1,1]*U[2,1]/sigma1**2+U[1,2]*U[2,2]/sigma2**2
+        e = U[2,0]*U[0,0]/sigma0**2+U[2,1]*U[0,1]/sigma1**2+U[2,2]*U[0,2]/sigma2**2
+        f = U[0,0]*U[1,0]/sigma0**2+U[0,1]*U[1,1]/sigma1**2+U[0,2]*U[1,2]/sigma2**2
+
+        return A*np.exp(-(a*x0**2+b*x1**2+c*x2**2+d*x1*x2+e*x0*x2+f*x0*x1))
 
     def S_matrix(self, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
 
@@ -3119,12 +3203,143 @@ class GaussianFit3D:
 
         args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
 
-        yfit = self.gaussian_3d(*args)
+        yfit = self.func(*args)
 
         yfit[np.isnan(yfit)] = 1e+15
         yfit[np.isinf(yfit)] = 1e+15
 
         return (y-yfit)/e
+
+    def func(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega):
+
+        args = Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
+
+        return self.gaussian(*args)+B
+
+    def gradient(self, params, x, y, e):
+
+        Q0, Q1, Q2 = x
+
+        A = params['A']
+        B = params['B']
+
+        mu0 = params['mu0']
+        mu1 = params['mu1']
+        mu2 = params['mu2']
+
+        sigma0 = params['sigma0']
+        sigma1 = params['sigma1']
+        sigma2 = params['sigma2']
+
+        phi = params['phi']
+        theta = params['theta']
+        omega = params['omega']
+
+        args = Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
+
+        return self.jac(*args)/e
+
+    def jac(self, Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega):
+
+        yfit = self.gaussian(Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        U = self.U_matrix(phi, theta, omega)
+
+        a = 0.5*(U[0,0]**2/sigma0**2+U[0,1]**2/sigma1**2+U[0,2]**2/sigma2**2)
+        b = 0.5*(U[1,0]**2/sigma0**2+U[1,1]**2/sigma1**2+U[1,2]**2/sigma2**2)
+        c = 0.5*(U[2,0]**2/sigma0**2+U[2,1]**2/sigma1**2+U[2,2]**2/sigma2**2)
+
+        d = U[1,0]*U[2,0]/sigma0**2+U[1,1]*U[2,1]/sigma1**2+U[1,2]*U[2,2]/sigma2**2
+        e = U[2,0]*U[0,0]/sigma0**2+U[2,1]*U[0,1]/sigma1**2+U[2,2]*U[0,2]/sigma2**2
+        f = U[0,0]*U[1,0]/sigma0**2+U[0,1]*U[1,1]/sigma1**2+U[0,2]*U[1,2]/sigma2**2
+
+        yprime_A = np.exp(-(a*x0**2+b*x1**2+c*x2**2+d*x1*x2+e*x0*x2+f*x0*x1))
+        yprime_B = np.ones_like(yprime_A)
+
+        aprime_sigma0 = -U[0,0]**2/sigma0**3
+        aprime_sigma1 = -U[0,1]**2/sigma1**3
+        aprime_sigma2 = -U[0,2]**2/sigma2**3
+
+        bprime_sigma0 = -U[1,0]**2/sigma0**3
+        bprime_sigma1 = -U[1,1]**2/sigma1**3
+        bprime_sigma2 = -U[1,2]**2/sigma2**3
+
+        cprime_sigma0 = -U[2,0]**2/sigma0**3
+        cprime_sigma1 = -U[2,1]**2/sigma1**3
+        cprime_sigma2 = -U[2,2]**2/sigma2**3
+
+        dprime_sigma0 = -2*U[1,0]*U[2,0]/sigma0**3
+        dprime_sigma1 = -2*U[1,1]*U[2,1]/sigma1**3
+        dprime_sigma2 = -2*U[1,2]*U[2,2]/sigma2**3
+        
+        eprime_sigma0 = -2*U[2,0]*U[0,0]/sigma0**3
+        eprime_sigma1 = -2*U[2,1]*U[0,1]/sigma1**3
+        eprime_sigma2 = -2*U[2,2]*U[0,2]/sigma2**3
+
+        fprime_sigma0 = -2*U[0,0]*U[1,0]/sigma0**3
+        fprime_sigma1 = -2*U[0,1]*U[1,1]/sigma1**3
+        fprime_sigma2 = -2*U[0,2]*U[1,2]/sigma2**3
+
+        ux = np.cos(phi)*np.sin(theta)
+        uy = np.sin(phi)*np.sin(theta)
+        uz = np.cos(theta)
+
+        Uprime_omega = np.array([[(ux**2-1)*np.sin(omega), ux*uy*np.sin(omega)-uz*np.cos(omega), ux*uz*np.sin(omega)+uy*np.cos(omega)],
+                                 [uy*ux*np.sin(omega)+uz*np.cos(omega), (uy**2-1)*np.sin(omega), uy*uz*np.sin(omega)-ux*np.cos(omega)],
+                                 [uz*ux*np.sin(omega)-uy*np.cos(omega), uz*uy*np.sin(omega)+ux*np.cos(omega), (uz**2-1)*np.sin(omega)]])
+
+        Uprime_phi = np.array([[-2*ux*uy*(1-np.cos(omega)), (ux**2-uy**2)*(1-np.cos(omega)), -uy*uz*(1-np.cos(omega))+ux*np.sin(omega)],
+                               [(ux**2-uy**2)*(1-np.cos(omega)),  2*uy*ux*(1-np.cos(omega)),  ux*uz*(1-np.cos(omega))+uy*np.sin(omega)],
+                               [-uz*uy*(1-np.cos(omega))-ux*np.sin(omega),  uz*ux*(1-np.cos(omega))-uy*np.sin(omega),                0]])
+
+        Uprime_theta = np.array([[2*ux**2*(1-np.cos(omega)), 2*ux*uy*(1-np.cos(omega))+uz*np.sin(omega)*np.tan(theta)**2, ux*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)+ux*np.sin(omega)],
+                                 [2*uy*ux*(1-np.cos(omega))-uz*np.sin(omega)*np.tan(theta)**2, 2*uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)-uy*np.sin(omega)],
+                                 [uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)-ux*np.sin(omega), uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)+uy*np.sin(omega), -2*uz**2*(1-np.cos(omega))*np.tan(theta)**2]])/np.tan(theta)
+
+        yprime_mu0 = yfit*(2*a*x0+  f*x1+  e*x2)
+        yprime_mu1 = yfit*(  f*x0+2*b*x1+  d*x2)
+        yprime_mu2 = yfit*(  e*x0+  d*x1+2*c*x2)
+
+        yprime_sigma0 = -yfit*(aprime_sigma0*x0**2+bprime_sigma0*x1**2+cprime_sigma0*x2**2+dprime_sigma0*x1*x2+eprime_sigma0*x0*x2+fprime_sigma0*x0*x1)
+        yprime_sigma1 = -yfit*(aprime_sigma1*x0**2+bprime_sigma1*x1**2+cprime_sigma1*x2**2+dprime_sigma1*x1*x2+eprime_sigma1*x0*x2+fprime_sigma1*x0*x1)
+        yprime_sigma2 = -yfit*(aprime_sigma2*x0**2+bprime_sigma2*x1**2+cprime_sigma2*x2**2+dprime_sigma2*x1*x2+eprime_sigma2*x0*x2+fprime_sigma2*x0*x1)
+
+        aprime_phi   =   Uprime_phi[0,0]*U[0,0]/sigma0**2+  Uprime_phi[0,1]*U[0,1]/sigma1**2+  Uprime_phi[0,2]*U[0,2]/sigma2**2
+        aprime_theta = Uprime_theta[0,0]*U[0,0]/sigma0**2+Uprime_theta[0,1]*U[0,1]/sigma1**2+Uprime_theta[0,2]*U[0,2]/sigma2**2
+        aprime_omega = Uprime_omega[0,0]*U[0,0]/sigma0**2+Uprime_omega[0,1]*U[0,1]/sigma1**2+Uprime_omega[0,2]*U[0,2]/sigma2**2
+
+        bprime_phi   =   Uprime_phi[1,0]*U[1,0]/sigma0**2+  Uprime_phi[1,1]*U[1,1]/sigma1**2+  Uprime_phi[1,2]*U[1,2]/sigma2**2
+        bprime_theta = Uprime_theta[1,0]*U[1,0]/sigma0**2+Uprime_theta[1,1]*U[1,1]/sigma1**2+Uprime_theta[1,2]*U[1,2]/sigma2**2
+        bprime_omega = Uprime_omega[1,0]*U[1,0]/sigma0**2+Uprime_omega[1,1]*U[1,1]/sigma1**2+Uprime_omega[1,2]*U[1,2]/sigma2**2
+
+        cprime_phi   =   Uprime_phi[2,0]*U[2,0]/sigma0**2+  Uprime_phi[2,1]*U[2,1]/sigma1**2+  Uprime_phi[2,2]*U[2,2]/sigma2**2
+        cprime_theta = Uprime_theta[2,0]*U[2,0]/sigma0**2+Uprime_theta[2,1]*U[2,1]/sigma1**2+Uprime_theta[2,2]*U[2,2]/sigma2**2
+        cprime_omega = Uprime_omega[2,0]*U[2,0]/sigma0**2+Uprime_omega[2,1]*U[2,1]/sigma1**2+Uprime_omega[2,2]*U[2,2]/sigma2**2
+
+        dprime_phi   = (  Uprime_phi[1,0]*U[2,0]+  Uprime_phi[2,0]*U[1,0])/sigma0**2+(  Uprime_phi[1,1]*U[2,1]+  Uprime_phi[2,1]*U[1,1])/sigma1**2+(  Uprime_phi[1,2]*U[2,2]+  Uprime_phi[2,2]*U[1,2])/sigma2**2
+        dprime_theta = (Uprime_theta[1,0]*U[2,0]+Uprime_theta[2,0]*U[1,0])/sigma0**2+(Uprime_theta[1,1]*U[2,1]+Uprime_theta[2,1]*U[1,1])/sigma1**2+(Uprime_theta[1,2]*U[2,2]+Uprime_theta[2,2]*U[1,2])/sigma2**2
+        dprime_omega = (Uprime_omega[1,0]*U[2,0]+Uprime_omega[2,0]*U[1,0])/sigma0**2+(Uprime_omega[1,1]*U[2,1]+Uprime_omega[2,1]*U[1,1])/sigma1**2+(Uprime_omega[1,2]*U[2,2]+Uprime_omega[2,2]*U[1,2])/sigma2**2
+
+        eprime_phi   = (  Uprime_phi[2,0]*U[0,0]+  Uprime_phi[0,0]*U[2,0])/sigma0**2+(  Uprime_phi[2,1]*U[0,1]+  Uprime_phi[0,1]*U[2,1])/sigma1**2+(  Uprime_phi[2,2]*U[0,2]+  Uprime_phi[0,2]*U[2,2])/sigma2**2
+        eprime_theta = (Uprime_theta[2,0]*U[0,0]+Uprime_theta[0,0]*U[2,0])/sigma0**2+(Uprime_theta[2,1]*U[0,1]+Uprime_theta[0,1]*U[2,1])/sigma1**2+(Uprime_theta[2,2]*U[0,2]+Uprime_theta[0,2]*U[2,2])/sigma2**2
+        eprime_omega = (Uprime_omega[2,0]*U[0,0]+Uprime_omega[0,0]*U[2,0])/sigma0**2+(Uprime_omega[2,1]*U[0,1]+Uprime_omega[0,1]*U[2,1])/sigma1**2+(Uprime_omega[2,2]*U[0,2]+Uprime_omega[0,2]*U[2,2])/sigma2**2
+
+        fprime_phi   = (  Uprime_phi[0,0]*U[1,0]+  Uprime_phi[1,0]*U[0,0])/sigma0**2+(  Uprime_phi[0,1]*U[1,1]+  Uprime_phi[1,1]*U[0,1])/sigma1**2+(  Uprime_phi[0,2]*U[1,2]+  Uprime_phi[1,2]*U[0,2])/sigma2**2
+        fprime_theta = (Uprime_theta[0,0]*U[1,0]+Uprime_theta[1,0]*U[0,0])/sigma0**2+(Uprime_theta[0,1]*U[1,1]+Uprime_theta[1,1]*U[0,1])/sigma1**2+(Uprime_theta[0,2]*U[1,2]+Uprime_theta[1,2]*U[0,2])/sigma2**2
+        fprime_omega = (Uprime_omega[0,0]*U[1,0]+Uprime_omega[1,0]*U[0,0])/sigma0**2+(Uprime_omega[0,1]*U[1,1]+Uprime_omega[1,1]*U[0,1])/sigma1**2+(Uprime_omega[0,2]*U[1,2]+Uprime_omega[1,2]*U[0,2])/sigma2**2
+
+        yprime_phi   = -yfit*(  aprime_phi*x0**2+  bprime_phi*x1**2+  cprime_phi*x2**2+  dprime_phi*x1*x2+  eprime_phi*x0*x2+  fprime_phi*x0*x1)
+        yprime_theta = -yfit*(aprime_theta*x0**2+bprime_theta*x1**2+cprime_theta*x2**2+dprime_theta*x1*x2+eprime_theta*x0*x2+fprime_theta*x0*x1)
+        yprime_omega = -yfit*(aprime_omega*x0**2+bprime_omega*x1**2+cprime_omega*x2**2+dprime_omega*x1*x2+eprime_omega*x0*x2+fprime_omega*x0*x1)
+
+        J = np.stack((yprime_A,yprime_B,yprime_mu0,yprime_mu1,yprime_mu2,yprime_sigma0,yprime_sigma1,yprime_sigma2,yprime_phi,yprime_theta,yprime_omega))
+
+        #J[np.isnan(J)] = 1e+15
+        #J[np.isinf(J)] = 1e+15
+
+        return J
 
     def fit(self):
 
@@ -3150,6 +3365,16 @@ class GaussianFit3D:
         theta = result.params['theta'].value
         omega = result.params['omega'].value
 
+        Q0, Q1, Q2 = self.x
+
+        params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
+
+        # h = 1e-1
+        # for i in range(11):
+        #     fargs = list(params)
+        #     fargs[i+3] += h
+        #     print(i,(self.func(*fargs)-self.func(*params))/h, self.jac(*params)[i,:])
+
         # print(result.params['A'])
         # print(result.params['B'])
         # print(result.params['mu0'])
@@ -3169,10 +3394,7 @@ class GaussianFit3D:
                  | np.isclose(mu2, result.params['mu2'].min) | np.isclose(mu2, result.params['mu2'].max) \
                  | np.isclose(sigma0, result.params['sigma0'].min) | np.isclose(sigma0, result.params['sigma0'].max) \
                  | np.isclose(sigma1, result.params['sigma1'].min) | np.isclose(sigma1, result.params['sigma1'].max) \
-                 | np.isclose(sigma2, result.params['sigma2'].min) | np.isclose(sigma2, result.params['sigma2'].max) \
-                 | np.isclose(phi, result.params['phi'].min) | np.isclose(phi, result.params['phi'].max) \
-                 | np.isclose(theta, result.params['theta'].min) | np.isclose(theta, result.params['theta'].max) \
-                 | np.isclose(omega, result.params['omega'].min) | np.isclose(omega, result.params['omega'].max)
+                 | np.isclose(sigma2, result.params['sigma2'].min) | np.isclose(sigma2, result.params['sigma2'].max)
 
         S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
@@ -3215,7 +3437,7 @@ class GaussianFit3D:
         phi = result.params['phi'].value
         theta = result.params['theta'].value
         omega = result.params['omega'].value
-
+       
         S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
         inv_S = np.linalg.inv(S)

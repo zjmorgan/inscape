@@ -1,3 +1,9 @@
+import logging
+logging.disable(logging.CRITICAL)
+
+import warnings
+warnings.filterwarnings('ignore')
+
 import sys, os, re, imp, copy, shutil
 
 # os.environ['OPENMP_NUM_THREADS'] = '1'
@@ -38,8 +44,8 @@ scale_constant = 1e+4
 if __name__ == '__main__':
 
     multiprocessing.set_start_method('spawn', force=True)
-
     multiprocessing.freeze_support()
+
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
 
     CreateSampleWorkspace(OutputWorkspace='sample')
@@ -94,10 +100,10 @@ if __name__ == '__main__':
     z_parameter = dictionary['z-parameter']
     sample_mass = dictionary['sample-mass']
     vanadium_mass = dictionary.get('vanadium-mass')
-    
+
     if vanadium_mass is None:
         vanadium_mass = 0
-    
+
     facility, instrument = merge.set_instrument(dictionary['instrument'])
     ipts = dictionary['ipts']
 
@@ -228,13 +234,15 @@ if __name__ == '__main__':
 
         join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
 
+        # merge.pre_integration(*join_args)
+
         with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
             pool.starmap(merge.pre_integration, join_args)
             pool.close()
             pool.join()
 
     if not mtd.doesExist(tmp):   
-        
+
         if mtd.doesExist('sa'):
             CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
         else:
@@ -289,7 +297,7 @@ if __name__ == '__main__':
                         FilterValue=r,
                         Operator='=',
                         OutputWorkspace=opk.format(r)+'_lean')
-                        
+
     if mtd.doesExist('sa'):
         DeleteWorkspace('sa')
 
@@ -381,6 +389,7 @@ if __name__ == '__main__':
 
         if mtd.doesExist(opk.format(r)):
             DeleteWorkspace(opk.format(r))
+            DeleteWorkspace(opk.format(r)+'_lean')
 
     peak_dictionary.split_peaks(split_angle)
     peak_dict = peak_dictionary.to_be_integrated()
@@ -404,6 +413,8 @@ if __name__ == '__main__':
             chemical_formula, z_parameter, sample_mass, experiment, tmp]
 
     join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_keys)]
+
+    # merge.integration_loop(*join_args[0])
 
     with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
         pool.starmap(merge.integration_loop, join_args)
@@ -461,18 +472,15 @@ if __name__ == '__main__':
 
     peak_dictionary.peak_dict = peak_dict
 
-    for pws in [mtd['iws'], mtd['cws']]:
-        for pn in range(pws.getNumberPeaks()-1,-1,-1):
-            pws.removePeak(pn)
-
-    peak_dictionary._PeakDictionary__repopulate_workspaces()
-    scale = peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), adaptive_scale=adaptive_scale, scale=scale_factor)
+    peak_dictionary.clear_peaks()
+    peak_dictionary.repopulate_workspaces()
+    scale = peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=adaptive_scale, scale=scale_factor)
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
     scale_file = open(os.path.join(outdir, 'scale.txt'), 'w')
     scale_file.write('{:10.4e}'.format(scale))
     scale_file.close()
-    
+
     # ---
 
     keys = peak_dictionary.peak_dict.keys()
@@ -518,7 +526,7 @@ if __name__ == '__main__':
             pool.starmap(merge.integration_loop, join_args)
             pool.close()
             pool.join()
-        
+
         merger = PdfFileMerger()
 
         for i in range(n_proc):
@@ -569,28 +577,28 @@ if __name__ == '__main__':
 
         peak_dictionary.peak_dict = merge_peak_dict
 
-        for pws in [mtd['iws'], mtd['cws']]:
-            for pn in range(pws.getNumberPeaks()-1,-1,-1):
-                pws.removePeak(pn)
-
-        peak_dictionary._PeakDictionary__repopulate_workspaces()
-        peak_dictionary.save_hkl(os.path.join(directory, outname+'.hkl'), adaptive_scale=False, scale=scale)
+        peak_dictionary.clear_peaks()
+        peak_dictionary.repopulate_workspaces()
+        peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
         peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
     # ---
 
-    peak_dictionary.save_reflections(os.path.join(directory, outname+'.int'), adaptive_scale=True)
+    peak_dictionary.save_reflections(os.path.join(directory, outname+'.hkl'), adaptive_scale=True)
 
     LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, tmp+'.mat'))
 
     peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
+    #peak_dictionary.recalculate_hkl()
+    peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
 
     absorption_file = os.path.join(outdir, 'absorption.txt')
 
     if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
         peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
+        #peak_dictionary.recalculate_hkl()
         peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
-        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
 
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 

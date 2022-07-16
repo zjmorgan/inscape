@@ -8,7 +8,7 @@ import numpy as np
 
 import imp
 
-import fitting
+imp.reload(peak)
 imp.reload(fitting)
 
 from fitting import Ellipsoid, Profile, Projection
@@ -112,19 +112,6 @@ int_mask, bkg_mask = ellip.projection_mask()
 
 dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
 
-stats, params = prof_x.fit(dQ1, data, norm, int_mask, bkg_mask, 0.99)
-chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
-a, mu_x, sigma_x = params
-
-stats, params = prof_y.fit(dQ2, data, norm, int_mask, bkg_mask, 0.99)
-chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
-a, mu_y, sigma_y = params
-
-ellip.mu_x, ellip.mu_y = mu_x, mu_y
-ellip.sigma_x, ellip.sigma_y = sigma_x, sigma_y 
-
-int_mask, bkg_mask = ellip.projection_mask()
-
 stats, params = proj.fit(dQ1, dQ2, data, norm, int_mask, bkg_mask, 0.99)
 
 chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
@@ -161,85 +148,3 @@ transf = transforms.Affine2D().rotate_deg(45).scale(scale_x,scale_y).translate(m
 ellipse.set_transform(transf+ax.transData)
 ax.add_patch(ellipse)
 plt.show()
-
-# ellip.mu_x, ellip.mu_y = mu_x, mu_y
-# ellip.sigma_x, ellip.sigma_y = sigma_x, sigma_y
-# ellip.rho = rho
-# 
-# prof = Profile()
-# 
-# int_mask, bkg_mask = ellip.profile_mask()
-# Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
-# stats, params = prof.fit(Qp, data, norm, int_mask, bkg_mask, 0.99)
-# 
-# chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
-# a, mu, sigma = params
-# 
-# # print(chi_sq)
-# 
-# x = prof.x
-# y = prof.y
-# 
-# y_sub = prof.y_sub
-# y_bkg = prof.y_bkg
-# y_fit = prof.y_fit
-# 
-# e = prof.e
-# e_sub = prof.e_sub
-# 
-# fig, ax = plt.subplots(num='Profile2')
-# ax.errorbar(x, y, e, fmt='-o')
-# ax.errorbar(x, y_sub, e_sub, fmt='-s')
-# ax.plot(x, y_fit, '--')
-# ax.plot(x, y_bkg, '--')
-# ax.set_xlabel('x')
-# ax.set_ylabel('y')
-# plt.show()
-# 
-# ellip.mu = mu
-# ellip.sigma = sigma
-# 
-# proj = Projection()
-# 
-# int_mask, bkg_mask = ellip.projection_mask()
-# dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
-# stats, params = proj.fit(dQ1, dQ2, data, norm , int_mask, bkg_mask, 0.99)
-# 
-# chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
-# a, mu_x, mu_y, sigma_x, sigma_y, rho = params
-# 
-# # print(proj.a)
-# 
-# x = proj.x
-# y = proj.y
-# z = proj.z
-# 
-# z_sub = proj.z_sub
-# z_fit = proj.z_fit
-# 
-# e_sub = proj.e_sub
-# 
-# rx = np.sqrt(1+rho)
-# ry = np.sqrt(1-rho)
-# 
-# ellipse = Ellipse((0,0), width=2*rx, height=2*ry, edgecolor='r', facecolor='none')
-# 
-# scale_x = 2*sigma_x
-# scale_y = 2*sigma_y
-# 
-# transf = transforms.Affine2D().rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
-# 
-# fig, ax = plt.subplots(num='Projection2')
-# im = ax.pcolormesh(x,y,z_sub/e_sub,linewidth=0,rasterized=True,cmap=plt.cm.viridis,norm=LogNorm())
-# ax.set_xlabel('x')
-# ax.set_ylabel('y')
-# cb = fig.colorbar(im)
-# cb.ax.yaxis.set_label_text(r'$z$')
-# transf = transforms.Affine2D().rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
-# ellipse.set_transform(transf+ax.transData)
-# ax.add_patch(ellipse)
-# plt.show()
-
-# print(ellip.mu, ellip.mu_x, ellip.mu_y)
-
-# print(ellip.sigma, ellip.sigma_x, ellip.sigma_y, ellip.rho)

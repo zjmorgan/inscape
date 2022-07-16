@@ -177,7 +177,7 @@ class Ellipsoid:
 
         mu, sigma = self.mu, self.sigma
 
-        n_std = self.n_std+2
+        n_std = self.n_std+1.5
 
         Qp = self.Qp
 
@@ -421,20 +421,21 @@ class Profile:
 
             sigma = np.sqrt(np.average((x[mask]-mu)**2, weights=weights[mask]))
 
-            a = y[mask].max()
-            if a <= 0:
-                a = 1
-
             b, c = 0, 0
 
-            center = 0.5*(x[mask].max()+x[mask].min())
-            width = 0.5*(x[mask].max()-x[mask].min())
+            x_min, x_max = x[mask].min(), x[mask].max()
+            y_min, y_max = y[mask].min(), y[mask].max()
 
-            x_range = (x[mask].max()-x[mask].min())
-            y_range = (y[mask].max()-y[mask].min())
+            center = 0.5*(x_max+x_min)
+            width  = 0.5*(x_max-x_min)
 
-            min_bounds = (0,      x[mask].min(), 0.00001/3,     0-0.1*y_range, -10*y_range/x_range)
-            max_bounds = (1.15*a, x[mask].max(), width.max()/3, y[mask].max()+0.1*y_range,  10*y_range/x_range)
+            x_range = (x_max-x_min)
+            y_range = (y_max-y_min)
+
+            min_bounds = (0.5*y_range, x[mask].min(), 0.00001/3,     y_min-0.5*y_range, -10*y_range/x_range)
+            max_bounds = (  2*y_range, x[mask].max(), width.max()/3, y_max+0.5*y_range,  10*y_range/x_range)
+            
+            a = y_range
 
             if np.any([mu < min_bounds[1], mu > max_bounds[1], sigma > width/3]):
 
@@ -759,23 +760,25 @@ class Projection:
             sigma_1, sigma_2 = np.sqrt(vals)
             theta = np.arctan(vecs[1,0]/vecs[0,0])
 
-            a = z[mask].max()
-            if a <= 0:
-                a = 1
-
             b, cx, cy, cxy = 0, 0, 0, 0
 
-            center = np.array([0.5*(x[mask].max()+x[mask].min()), 0.5*(y[mask].max()+y[mask].min())])
-            width = np.array([0.5*(x[mask].max()-x[mask].min()), 0.5*(y[mask].max()-y[mask].min())])
+            x_min, x_max = x[mask].min(), x[mask].max()
+            y_min, y_max = y[mask].min(), y[mask].max()
+            z_min, z_max = z[mask].min(), z[mask].max()
+
+            center = np.array([0.5*(x_max+x_min), 0.5*(y_max+y_min)])
+            width  = np.array([0.5*(x_max-x_min), 0.5*(y_max-y_min)])
 
             width[:] = np.mean(width)
 
-            x_range = (x[mask].max()-x[mask].min())
-            y_range = (y[mask].max()-y[mask].min())
-            z_range = (z[mask].max()-z[mask].min())
+            x_range = (x_max-x_min)
+            y_range = (y_max-y_min)
+            z_range = (z_max-z_min)
 
-            min_bounds = (0,      x[mask].min(), y[mask].min(), 0.01/3,    0.01/3,      -np.pi/2, 0-0.1*z_range,             -10*z_range/x_range, -10*z_range/y_range, -10*z_range/x_range/y_range)
-            max_bounds = (1.15*a, x[mask].max(), y[mask].max(), width[0]/3, width[1]/3,  np.pi/2, z[mask].max()+0.1*z_range,  10*z_range/x_range,  10*z_range/y_range,  10*z_range/x_range/y_range)
+            min_bounds = (0.1*z_range, x_min, y_min, 0.001/3,    0.001/3,    -np.pi, z_min-0.5*z_range, -10*z_range/x_range, -100*z_range/y_range, -10*z_range/x_range/y_range)
+            max_bounds = ( 10*z_range, x_max, y_max, width[0]/3, width[1]/3,  np.pi, z_max+0.5*z_range,  10*z_range/x_range,  100*z_range/y_range,  10*z_range/x_range/y_range)
+
+            a = z_range
 
             if np.any([mu_x < min_bounds[1], mu_y < min_bounds[2],
                        mu_x > max_bounds[1], mu_y > max_bounds[2],
@@ -925,6 +928,13 @@ class Projection:
         min_a, min_mu_x, min_mu_y, min_sigma_1, min_sigma_2, min_theta, min_b, min_cx, min_cy, min_cxy = min_bounds
         max_a, max_mu_x, max_mu_y, max_sigma_1, max_sigma_2, max_theta, max_b, max_cx, max_cy, max_cxy = max_bounds
 
+        # xa, ya, za, ea = args
+        # h = 1e+2
+        # for i in range(1):
+        #     fargs = list(params)
+        #     fargs[i] += h
+        #     print((self.func(fargs, xa, ya, za, ea)-self.func(params, xa, ya, za, ea))/h, self.jac(params, xa, ya, za, ea)[i,:])
+
         if args[0].size > 11:
 
             params = Parameters()
@@ -939,7 +949,7 @@ class Projection:
             params.add('cy', value=cy, min=min_cy, max=max_cy)
             params.add('cxy', value=cxy, min=min_cxy, max=max_cxy)
 
-            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='raise')
+            out = Minimizer(self.residual, params, fcn_args=(args)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
 
             result = out.minimize(method='leastsq')
 
@@ -1020,17 +1030,17 @@ class LineCut(Profile):
 
             b, c = 0, 0
 
-            center = 0.5*(x[mask].max()+x[mask].min())
-            width = 0.5*(x[mask].max()-x[mask].min())
-
             x_min, x_max = x[mask].min(), x[mask].max()
             y_min, y_max = y[mask].min(), y[mask].max()
+
+            center = 0.5*(x_max+x_min)
+            width  = 0.5*(x_max-x_min)
 
             x_range = x_max-x_min
             y_range = y_max-y_min
 
-            min_bounds = (0.01*y_range, 0.01*y_range, 0.01*y_range, x_min, x_min, x_min, 0.001/3,       0.001/3,       0.001/3,       0-0.1*y_range,     -10*y_range/x_range)
-            max_bounds = (1.15*a,       1.15*a,       1.15*a,       x_max, x_max, x_max, width.max()/3, width.max()/3, width.max()/3, y_min+0.1*y_range,  10*y_range/x_range)
+            min_bounds = (0.5*y_range, 0.5*y_range, 0.5*y_range, x_min, x_min, x_min, 0.001/3,       0.001/3,       0.001/3,       y_min-0.1*y_range, -10*y_range/x_range)
+            max_bounds = (  2*y_range,   2*y_range,   2*y_range, x_max, x_max, x_max, width.max()/3, width.max()/3, width.max()/3, y_max+0.1*y_range,  10*y_range/x_range)
 
             if np.any([mu < min_bounds[1], mu > max_bounds[1], sigma > width/3]):
 
