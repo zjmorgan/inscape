@@ -2708,6 +2708,10 @@ class PeakDictionary:
 
         SaveNexus(InputWorkspace='cal', Filename=filename)
 
+        if n > 20:
+
+            DeleteWorkspace('cal')
+
     def recalculate_hkl(self, tol=0.08):
 
         if mtd.doesExist('cal'):
@@ -2720,9 +2724,11 @@ class PeakDictionary:
 
             for pn in range(self.iws.getNumberPeaks()-1,-1,-1):
                 ipk, opk = self.iws.getPeak(pn), mtd['out'].getPeak(pn)
-                dHKL = np.abs(np.array(ipk.getHKL())-np.array(opk.getHKL()))
+                dHKL = np.abs(ipk.getHKL()-opk.getHKL())
                 if np.any(dHKL > tol):
                     self.iws.removePeak(pn)
+
+            SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
 
     def __U_matrix(self, phi, theta, omega):
 
@@ -2748,51 +2754,51 @@ class PeakDictionary:
 
     def __cub(self, x):
 
-        a, phi, theta, omega = x
+        a, *params = x
 
-        return a, a, a, np.pi/2, np.pi/2, np.pi/2, phi, theta, omega
+        return a, a, a, np.pi/2, np.pi/2, np.pi/2, *params
 
     def __rhom(self, x):
 
-        a, alpha, phi, theta, omega = x
+        a, alpha, *params = x
 
-        return a, a, a, alpha, alpha, alpha, phi, theta, omega
+        return a, a, a, alpha, alpha, alpha, *params
 
     def __tet(self, x):
 
-        a, c, phi, theta, omega = x
+        a, c, *params = x
 
-        return a, a, c, np.pi/2, np.pi/2, np.pi/2, phi, theta, omega
+        return a, a, c, np.pi/2, np.pi/2, np.pi/2, *params
 
     def __hex(self, x):
 
-        a, c, phi, theta, omega = x
+        a, c, *params = x
 
-        return a, a, c, np.pi/2, np.pi/2, 2*np.pi/3, phi, theta, omega
+        return a, a, c, np.pi/2, np.pi/2, 2*np.pi/3, *params
 
     def __ortho(self, x):
 
-        a, b, c, phi, theta, omega = x
+        a, b, c, *params = x
 
-        return a, b, c, np.pi/2, np.pi/2, np.pi/2, phi, theta, omega
+        return a, b, c, np.pi/2, np.pi/2, np.pi/2, *params
 
     def __mono1(self, x):
 
-        a, b, c, gamma, phi, theta, omega = x
+        a, b, c, gamma, *params = x
 
-        return a, b, c, np.pi/2, np.pi/2, gamma, phi, theta, omega
+        return a, b, c, np.pi/2, np.pi/2, gamma, *params
 
     def __mono2(self, x):
 
-        a, b, c, beta, phi, theta, omega = x
+        a, b, c, beta, *params = x
 
-        return a, b, c, np.pi/2, beta, np.pi/2, phi, theta, omega
+        return a, b, c, np.pi/2, beta, np.pi/2, *params
 
     def __tri(self, x):
 
-        a, b, c, alpha, beta, gamma, phi, theta, omega = x
+        a, b, c, alpha, beta, gamma, *params = x
 
-        return a, b, c, alpha, beta, gamma, phi, theta, omega
+        return a, b, c, alpha, beta, gamma, *params
 
     def __res(self, x, hkl, Q, fun):
 
@@ -3109,8 +3115,8 @@ class GaussianFit3D:
 
         y_range = y_max-y_min
 
-        self.params.add('A', value=y_range, min=0.25*y_range, max=4*y_range)
-        self.params.add('B', value=y_min, min=0, max=y_max)
+        self.params.add('A', value=y_range, min=0.01*y_range, max=100*y_range)
+        self.params.add('B', value=y_min, min=y_min-0.5*y_range, max=y_max+0.5*y_range)
 
         self.params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
         self.params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)

@@ -589,14 +589,14 @@ if __name__ == '__main__':
     LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, tmp+'.mat'))
 
     peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
-    #peak_dictionary.recalculate_hkl()
+    peak_dictionary.recalculate_hkl()
     peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
 
     absorption_file = os.path.join(outdir, 'absorption.txt')
 
     if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
         peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
-        #peak_dictionary.recalculate_hkl()
+        peak_dictionary.recalculate_hkl()
         peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
         peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
 
