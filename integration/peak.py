@@ -3126,9 +3126,9 @@ class GaussianFit3D:
         self.params.add('sigma1', value=sigma[1], min=0.5*sigma[1], max=2*sigma[1])
         self.params.add('sigma2', value=sigma[2], min=0.5*sigma[2], max=2*sigma[2])
 
-        self.params.add('phi', value=0, min=-np.pi, max=np.pi)
-        self.params.add('theta', value=np.pi/2, min=0, max=np.pi)
-        self.params.add('omega', value=0, min=-np.pi, max=np.pi)
+        self.params.add('phi', value=0.1, min=-np.pi, max=np.pi)
+        self.params.add('theta', value=np.pi/4, min=0, max=np.pi)
+        self.params.add('omega', value=0.1, min=-np.pi, max=np.pi)
 
         self.x = x
         self.y = y
@@ -3279,7 +3279,7 @@ class GaussianFit3D:
         dprime_sigma0 = -2*U[1,0]*U[2,0]/sigma0**3
         dprime_sigma1 = -2*U[1,1]*U[2,1]/sigma1**3
         dprime_sigma2 = -2*U[1,2]*U[2,2]/sigma2**3
-        
+
         eprime_sigma0 = -2*U[2,0]*U[0,0]/sigma0**3
         eprime_sigma1 = -2*U[2,1]*U[0,1]/sigma1**3
         eprime_sigma2 = -2*U[2,2]*U[0,2]/sigma2**3
@@ -3300,9 +3300,9 @@ class GaussianFit3D:
                                [(ux**2-uy**2)*(1-np.cos(omega)),  2*uy*ux*(1-np.cos(omega)),  ux*uz*(1-np.cos(omega))+uy*np.sin(omega)],
                                [-uz*uy*(1-np.cos(omega))-ux*np.sin(omega),  uz*ux*(1-np.cos(omega))-uy*np.sin(omega),                0]])
 
-        Uprime_theta = np.array([[2*ux**2*(1-np.cos(omega)), 2*ux*uy*(1-np.cos(omega))+uz*np.sin(omega)*np.tan(theta)**2, ux*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)+ux*np.sin(omega)],
-                                 [2*uy*ux*(1-np.cos(omega))-uz*np.sin(omega)*np.tan(theta)**2, 2*uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)-uy*np.sin(omega)],
-                                 [uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)-ux*np.sin(omega), uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)+uy*np.sin(omega), -2*uz**2*(1-np.cos(omega))*np.tan(theta)**2]])/np.tan(theta)
+        Uprime_theta = np.array([[2*ux**2*(1-np.cos(omega)), 2*ux*uy*(1-np.cos(omega))+uz*np.sin(omega)*np.tan(theta)**2, ux*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)+uy*np.sin(omega)],
+                                 [2*uy*ux*(1-np.cos(omega))-uz*np.sin(omega)*np.tan(theta)**2, 2*uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)-ux*np.sin(omega)],
+                                 [uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)-uy*np.sin(omega), uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)+ux*np.sin(omega), -2*uz**2*(1-np.cos(omega))*np.tan(theta)**2]])/np.tan(theta)
 
         yprime_mu0 = yfit*(2*a*x0+  f*x1+  e*x2)
         yprime_mu1 = yfit*(  f*x0+2*b*x1+  d*x2)
@@ -3343,13 +3343,13 @@ class GaussianFit3D:
         J = np.stack((yprime_A,yprime_B,yprime_mu0,yprime_mu1,yprime_mu2,yprime_sigma0,yprime_sigma1,yprime_sigma2,yprime_phi,yprime_theta,yprime_omega))
 
         J[~np.isfinite(J)] = 1e+15
-        J[~np.isfinite(J)] = 1e+155
+        J[~np.isfinite(J)] = 1e+15
 
         return J
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) #,  Dfun=self.gradient, col_deriv=True, nan_policy='raise'
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
         result = out.minimize(method='leastsq')
 
         # result = out.prepare_fit()
@@ -3373,15 +3373,19 @@ class GaussianFit3D:
         theta = result.params['theta'].value
         omega = result.params['omega'].value
 
-        Q0, Q1, Q2 = self.x
-
-        params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
-
-        # h = 1e-1
+        # Q0, Q1, Q2 = self.x
+        # Q0, Q1, Q2 = np.array([-0.06]), np.array([-0.05]), np.array([-0.025])
+        # 
+        # params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
+        # 
+        # h = 1e-4
         # for i in range(11):
         #     fargs = list(params)
         #     fargs[i+3] += h
-        #     print(i,(self.func(*fargs)-self.func(*params))/h, self.jac(*params)[i,:])
+        # 
+        #     print(fargs[3:])
+        #     print(params[3:])
+        #     print(i,(self.func(*fargs)-self.func(*params))/h, self.jac(*params)[i,:].round(8))
 
         # print(result.params['A'])
         # print(result.params['B'])

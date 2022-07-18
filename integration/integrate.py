@@ -21,6 +21,9 @@ import itertools
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
+directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
+sys.path.append(directory)
+
 import merge, peak, parameters
 
 imp.reload(merge)
@@ -104,7 +107,7 @@ if __name__ == '__main__':
     if vanadium_mass is None:
         vanadium_mass = 0
 
-    facility, instrument = merge.set_instrument(dictionary['instrument'])
+    facility, instrument = parameters.set_instrument(dictionary['instrument'])
     ipts = dictionary['ipts']
 
     working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument,ipts)

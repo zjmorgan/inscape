@@ -31,8 +31,8 @@ Qx_max += mu_x
 Qy_max += mu_y
 Qz_max += mu_z
 
-sigma_x, sigma_y, sigma_z = 0.015, 0.03, 0.04
-rho_yz, rho_xz, rho_xy = 0.1, -0.1, -0.2
+sigma_x, sigma_y, sigma_z = 0.12, 0.13, 0.1
+rho_yz, rho_xz, rho_xy = 0.14, -0.2, -0.25
 
 cov = np.array([[sigma_x**2, rho_xy*sigma_x*sigma_y, rho_xz*sigma_x*sigma_z],
                 [rho_xy*sigma_x*sigma_y, sigma_y**2, rho_yz*sigma_y*sigma_z],
@@ -69,4 +69,4 @@ peak_fit_3d = GaussianFit3D(x, y, e, mu, sigma)
 
 A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
-print(mu0, mu1, mu2)
+print(A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary)

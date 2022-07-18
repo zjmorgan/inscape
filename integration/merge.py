@@ -1242,30 +1242,6 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
 
     return runs_banks, bank_keys
 
-def set_instrument(instrument):
-
-    tof_instruments = ['CORELLI', 'MANDI', 'TOPAZ', 'SNAP']
-
-    instrument = instrument.upper()
-
-    if instrument == 'BL9':
-        instrument = 'CORELLI'
-    if instrument == 'BL11B':
-        instrument = 'MANDI'
-    if instrument == 'BL12':
-        instrument = 'TOPAZ'
-    if instrument == 'BL3':
-        instrument = 'SNAP'
-
-    if instrument == 'DEMAND':
-        instrument = 'HB3A'
-    if instrument == 'WAND2':
-        instrument = 'HB2C'
-
-    facility = 'SNS' if instrument in tof_instruments else 'HFIR'
-
-    return facility, instrument
-
 def projection_axes(n):
 
     n_ind = np.argmin(np.abs(n))

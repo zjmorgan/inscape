@@ -259,7 +259,7 @@ class Ellipsoid:
 
         return int_mask, bkg_mask
 
-def bin_size(val, mask, weights):
+def estimate_bins(val, mask, weights):
 
     bins = 51
 
@@ -301,7 +301,7 @@ class Profile:
         data_norm = data/norm
         data_norm[data_norm < 0] = 0
 
-        bins = bin_size(x, int_mask, data_norm)
+        bins = estimate_bins(x, int_mask, data_norm)
         bin_edges = np.histogram_bin_edges(x, bins=bins)
 
         bin_centers = 0.5*(bin_edges[1:]+bin_edges[:-1])
@@ -609,11 +609,11 @@ class Projection:
         data_norm = data/norm
         data_norm[data_norm < 0] = 0
 
-        bins_x = bin_size(x, int_mask, data_norm)
+        bins_x = estimate_bins(x, int_mask, data_norm)
         bin_edges_x = np.histogram_bin_edges(x, bins=bins_x)    
         bin_centers_x = 0.5*(bin_edges_x[1:]+bin_edges_x[:-1])
 
-        bins_y = bin_size(y, int_mask, data_norm)
+        bins_y = estimate_bins(y, int_mask, data_norm)
         bin_edges_y = np.histogram_bin_edges(y, bins=bins_y)
         bin_centers_y = 0.5*(bin_edges_y[1:]+bin_edges_y[:-1])
 
