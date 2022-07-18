@@ -187,6 +187,10 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoid=1.1,
                     inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5):
 
+    QXaxis = mtd['normDataMD'].getXDimension()
+    QYaxis = mtd['normDataMD'].getYDimension()
+    QZaxis = mtd['normDataMD'].getZDimension()
+
     Q_radii = 1/np.sqrt(D.diagonal())
 
     dQ = box_size*Q_radii
@@ -211,11 +215,15 @@ def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoi
         dQp[1] = np.min([Q1_bin_size,bin_size])
     dQp[2] = Q2_bin_size
 
-    Qbins = np.round(2*dQ/dQp).astype(int)+1
+    QXbin = (QXaxis.getMaximum()-QXaxis.getMinimum())/(QXaxis.getNBoundaries()-1)
+    QYbin = (QYaxis.getMaximum()-QYaxis.getMinimum())/(QYaxis.getNBoundaries()-1)
+    QZbin = (QZaxis.getMaximum()-QZaxis.getMinimum())/(QZaxis.getNBoundaries()-1)
 
-    QXaxis = mtd['normDataMD'].getXDimension()
-    QYaxis = mtd['normDataMD'].getYDimension()
-    QZaxis = mtd['normDataMD'].getZDimension()
+    dQp[0] = np.max([dQp[0],QXbin])
+    dQp[1] = np.max([dQp[1],QYbin])
+    dQp[2] = np.max([dQp[2],QZbin])
+
+    Qbins = np.round(2*dQ/dQp).astype(int)+1
 
     Qx = np.linspace(QXaxis.getMinimum(), QXaxis.getMaximum(), QXaxis.getNBoundaries())
     Qy = np.linspace(QYaxis.getMinimum(), QYaxis.getMaximum(), QYaxis.getNBoundaries())
