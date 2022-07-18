@@ -1354,10 +1354,10 @@ class PeakInformation:
             data = self.__get_partial_merged_peak_data_arrays(indices)
             norm = self.__get_partial_merged_peak_norm_arrays(indices)
 
-            pk_data = np.sum(data, axis=0)
-            pk_norm = np.sum(norm, axis=0)
+            pk_data = np.nansum(data, axis=0)
+            pk_norm = np.nansum(norm, axis=0)
 
-            pk_vol_fract = np.sum(~(np.isnan(pk_data/pk_norm)))/len(data[0])
+            pk_vol_fract = np.sum(np.isfinite(pk_data/pk_norm))/len(data[0])
 
             return pk_vol_fract
 
@@ -1375,8 +1375,8 @@ class PeakInformation:
             bkg_data = self.__get_partial_merged_background_data_arrays(indices)
             bkg_norm = self.__get_partial_merged_background_norm_arrays(indices)
 
-            pk_vol = np.sum(~np.isnan([data,norm]).any(axis=0))
-            bkg_vol = np.sum(~np.isnan([bkg_data,bkg_norm]).any(axis=0))
+            pk_vol = np.sum(np.isfinite(np.nansum(data, axis=0)/np.nansum(norm, axis=0)))
+            bkg_vol = np.sum(np.isfinite(np.nansum(bkg_data, axis=0)/np.nansum(bkg_norm, axis=0)))
 
             return pk_vol/bkg_vol
 
@@ -1407,8 +1407,8 @@ class PeakInformation:
             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)
             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)
 
-            data_norm[np.isinf(data_norm)] = np.nan
-            bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
+            data_norm[~np.isfinite(data_norm)] = np.nan
+            bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
 
             # Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
             # IQR = Q3-Q1
@@ -1452,8 +1452,8 @@ class PeakInformation:
             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
 
-            data_norm[np.isinf(data_norm)] = np.nan
-            bkg_data_norm[np.isinf(bkg_data_norm)] = np.nan
+            data_norm[~np.isfinite(data_norm)] = np.nan
+            bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
 
             intens = np.nansum(data_norm)
             bkg_intens = np.nansum(bkg_data_norm)
@@ -1475,7 +1475,7 @@ class PeakInformation:
             data = self.__get_peak_data_arrays()
             norm = self.__get_peak_norm_arrays()
 
-            pk_vol_fract = np.sum(~(np.isnan(np.array(data)/np.array(norm))), axis=1)/len(data[0])
+            pk_vol_fract = np.sum(np.isfinite(np.array(data)/np.array(norm)), axis=1)/len(data[0])
 
             return pk_vol_fract
 
@@ -1494,11 +1494,11 @@ class PeakInformation:
             bkg_norm = self.__get_background_norm_arrays()
 
             if normalize:
-                pk_vol = np.sum(~np.isnan([data,norm]).any(axis=0),axis=1)
-                bkg_vol = np.sum(~np.isnan([bkg_data,bkg_norm]).any(axis=0),axis=1)
+                pk_vol = np.sum(np.isfinite([data,norm]).any(axis=0),axis=1)
+                bkg_vol = np.sum(np.isfinite([bkg_data,bkg_norm]).any(axis=0),axis=1)
             else:
-                pk_vol = np.sum(~np.isnan([data]).any(axis=0),axis=1)
-                bkg_vol = np.sum(~np.isnan([bkg_data]).any(axis=0),axis=1)
+                pk_vol = np.sum(np.isfinite([data]).any(axis=0),axis=1)
+                bkg_vol = np.sum(np.isfinite([bkg_data]).any(axis=0),axis=1)
 
             return pk_vol/bkg_vol
 
@@ -2346,7 +2346,7 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, adaptive_scale=False, scale=1, cross_terms=False):
+    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.5, adaptive_scale=False, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
@@ -3211,8 +3211,8 @@ class GaussianFit3D:
 
         yfit = self.func(*args)
 
-        yfit[np.isnan(yfit)] = 1e+15
-        yfit[np.isinf(yfit)] = 1e+15
+        yfit[~np.isfinite(yfit)] = 1e+15
+        yfit[~np.isfinite(yfit)] = 1e+15
 
         return (y-yfit)/e
 
@@ -3336,21 +3336,23 @@ class GaussianFit3D:
         fprime_theta = (Uprime_theta[0,0]*U[1,0]+Uprime_theta[1,0]*U[0,0])/sigma0**2+(Uprime_theta[0,1]*U[1,1]+Uprime_theta[1,1]*U[0,1])/sigma1**2+(Uprime_theta[0,2]*U[1,2]+Uprime_theta[1,2]*U[0,2])/sigma2**2
         fprime_omega = (Uprime_omega[0,0]*U[1,0]+Uprime_omega[1,0]*U[0,0])/sigma0**2+(Uprime_omega[0,1]*U[1,1]+Uprime_omega[1,1]*U[0,1])/sigma1**2+(Uprime_omega[0,2]*U[1,2]+Uprime_omega[1,2]*U[0,2])/sigma2**2
 
-        yprime_phi   = -yfit*(  aprime_phi*x0**2+  bprime_phi*x1**2+  cprime_phi*x2**2+  dprime_phi*x1*x2+  eprime_phi*x0*x2+  fprime_phi*x0*x1)
+        yprime_phi   = -yfit*(aprime_phi  *x0**2+bprime_phi  *x1**2+cprime_phi  *x2**2+dprime_phi*  x1*x2+eprime_phi  *x0*x2+fprime_phi  *x0*x1)
         yprime_theta = -yfit*(aprime_theta*x0**2+bprime_theta*x1**2+cprime_theta*x2**2+dprime_theta*x1*x2+eprime_theta*x0*x2+fprime_theta*x0*x1)
         yprime_omega = -yfit*(aprime_omega*x0**2+bprime_omega*x1**2+cprime_omega*x2**2+dprime_omega*x1*x2+eprime_omega*x0*x2+fprime_omega*x0*x1)
 
         J = np.stack((yprime_A,yprime_B,yprime_mu0,yprime_mu1,yprime_mu2,yprime_sigma0,yprime_sigma1,yprime_sigma2,yprime_phi,yprime_theta,yprime_omega))
 
-        #J[np.isnan(J)] = 1e+15
-        #J[np.isinf(J)] = 1e+15
+        J[~np.isfinite(J)] = 1e+15
+        J[~np.isfinite(J)] = 1e+155
 
         return J
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e))
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) #,  Dfun=self.gradient, col_deriv=True, nan_policy='raise'
         result = out.minimize(method='leastsq')
+
+        # result = out.prepare_fit()
 
         self.result = result
 
@@ -3443,7 +3445,7 @@ class GaussianFit3D:
         phi = result.params['phi'].value
         theta = result.params['theta'].value
         omega = result.params['omega'].value
-       
+
         S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
         inv_S = np.linalg.inv(S)
@@ -3470,6 +3472,11 @@ class GaussianFit3D:
         else:
             sig = intens
 
+        A = result.params['A'].value
+        B = result.params['B'].value
+
+        intens, bkg = A*norm, B
+
         return intens, bkg, sig
 
     def model(self, x, intens, bkg, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
@@ -3479,8 +3486,6 @@ class GaussianFit3D:
         inv_S = np.linalg.inv(S)
 
         x0, x1, x2 = x[0]-mu0, x[1]-mu1, x[2]-mu2
-
-        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
         
         norm = np.sqrt(np.linalg.det(2*np.pi*S))
 
