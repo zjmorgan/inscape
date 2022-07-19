@@ -70,3 +70,8 @@ peak_fit_3d = GaussianFit3D(x, y, e, mu, sigma)
 A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
 print(A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary)
+
+A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+
+print(A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary)
+

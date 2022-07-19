@@ -1675,7 +1675,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 # peak_total_data_ratio = prof.y.max()/prof.y_sub.max()
 
-                if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
+                if np.any(prof.y_sub > 0) and np.isfinite([a,mu,sigma]).all():
 
                     ellip.mu = mu
                     ellip.sigma = sigma
@@ -1720,7 +1720,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = stats
                 a, mu_x, mu_y, sigma_x, sigma_y, rho = params
 
-                if np.any(proj.z_sub > 0) and not np.isnan([a,mu_x,mu_y,sigma_x,sigma_y,rho]).any():
+                # ---
+
+                if np.any(proj.z_sub > 0) and np.isfinite([a,mu_x,mu_y,sigma_x,sigma_y,rho]).all():
 
                     ellip.mu_x, ellip.mu_y = mu_x, mu_y
                     ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
@@ -1758,7 +1760,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2 = stats
                 a, mu, sigma = params
 
-                if np.any(prof.y_sub > 0) and not np.isnan([a,mu,sigma]).any():
+                if np.any(prof.y_sub > 0) and np.isfinite([a,mu,sigma]).all():
 
                     ellip.mu = mu
                     ellip.sigma = sigma
@@ -1787,6 +1789,42 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     remove = True
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
+
+                # ---
+
+                int_mask, bkg_mask = ellip.projection_mask()
+                dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
+
+                proj = Projection()
+
+                x = dQ1.copy()
+                y = dQ2.copy()
+
+                xh, yh, _, _, z_sub, e_sub, _ = proj.histogram(x, y, data, norm, int_mask, bkg_mask, 0.95)
+
+                args, params, bounds = proj.estimate(xh, yh, z_sub, e_sub)
+
+                a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy = params
+
+                if np.isfinite([a,mu_x,mu_y,sigma_1,sigma_2,theta]).all() and sigma_1 > 0 and sigma_2 > 0:
+
+                    R = np.array([[np.cos(theta), -np.sin(theta)],
+                                  [np.sin(theta),  np.cos(theta)]])
+
+                    cov = np.dot(R, np.dot(np.diag([sigma_1**2, sigma_2**2]), R.T))
+
+                    sigma_x, sigma_y = np.sqrt(np.diag(cov))
+                    rho = cov[0,1]/(sigma_x*sigma_y)
+
+                    ellip.mu_x, ellip.mu_y = mu_x, mu_y
+                    ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
+
+                    mu = [mu_x, mu_y]
+                    sigma = [sigma_x, sigma_y]
+
+                    peak_envelope.update_ellipse(mu, sigma, rho)
+
+                # ---
 
                 Q0, W, D = ellip.ellipsoid()
 
@@ -1830,9 +1868,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sigs)
 
-                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
 
-                        intens, bkg, sig = peak_fit_3d.integrated()
+                        if boundary:
+                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+
+                        intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 
                         fit = peak_fit_3d.model((dQ1, dQ2, Qp), intens, bkg, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 

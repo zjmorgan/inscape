@@ -605,6 +605,27 @@ class PeakEnvelope:
             self.elli_s.set_transform(self.trans_elli_s+self.ax_s_proj.transData)
 
             if self.__show_plots: self.fig.show()
+            
+    def update_ellipse(self, mu, sigma, rho):
+
+        mu_x, mu_y = mu
+        sigma_x, sigma_y = sigma
+
+        rx = np.sqrt(1+rho)
+        ry = np.sqrt(1-rho)
+
+        scale_x = 3*sigma_x
+        scale_y = 3*sigma_y
+        
+        self.trans_elli_s.clear()
+
+        self.elli_s.width = 2*rx
+
+        self.elli_s.height = 2*ry
+
+        self.trans_elli_s.rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)
+
+        self.elli_s.set_transform(self.trans_elli_s+self.ax_s_proj.transData)
 
     def plot_integration(self, signal, u_extents, v_extents, Q_extents, centers, radii, scales):
 
@@ -3109,26 +3130,28 @@ class GaussianFit3D:
 
     def __init__(self, x, y, e, mu, sigma):
 
-        self.params = Parameters()
+        params = Parameters()
 
         y_min, y_max = np.min(y), np.max(y)
 
         y_range = y_max-y_min
 
-        self.params.add('A', value=y_range, min=0.01*y_range, max=100*y_range)
-        self.params.add('B', value=y_min, min=y_min-0.5*y_range, max=y_max+0.5*y_range)
+        params.add('A', value=y_range, min=0.001*y_range, max=1000*y_range)
+        params.add('B', value=y_min, min=y_min-10*y_range, max=y_max+10*y_range)
 
-        self.params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
-        self.params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
-        self.params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
+        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
+        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
+        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
 
-        self.params.add('sigma0', value=sigma[0], min=0.5*sigma[0], max=2*sigma[0])
-        self.params.add('sigma1', value=sigma[1], min=0.5*sigma[1], max=2*sigma[1])
-        self.params.add('sigma2', value=sigma[2], min=0.5*sigma[2], max=2*sigma[2])
+        params.add('sigma0', value=sigma[0], min=0.1*sigma[0], max=2*sigma[0])
+        params.add('sigma1', value=sigma[1], min=0.1*sigma[1], max=2*sigma[1])
+        params.add('sigma2', value=sigma[2], min=0.1*sigma[2], max=2*sigma[2])
 
-        self.params.add('phi', value=0.1, min=-np.pi, max=np.pi)
-        self.params.add('theta', value=np.pi/4, min=0, max=np.pi)
-        self.params.add('omega', value=0.1, min=-np.pi, max=np.pi)
+        params.add('phi', value=0.0, min=-np.pi, max=np.pi)
+        params.add('theta', value=np.pi/2, min=0, max=np.pi)
+        params.add('omega', value=0.0, min=-np.pi, max=np.pi)
+
+        self.params = params
 
         self.x = x
         self.y = y
@@ -3349,12 +3372,12 @@ class GaussianFit3D:
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) # , Dfun=self.gradient, col_deriv=True, nan_policy='raise'
         result = out.minimize(method='leastsq')
 
         # result = out.prepare_fit()
 
-        self.result = result
+        self.params = result.params
 
         # report_fit(result)
 
@@ -3378,7 +3401,7 @@ class GaussianFit3D:
         # 
         # params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
         # 
-        # h = 1e-4
+        # h = 1e-6
         # for i in range(11):
         #     fargs = list(params)
         #     fargs[i+3] += h
@@ -3399,14 +3422,7 @@ class GaussianFit3D:
         # print(result.params['theta'])
         # print(result.params['omega'])
 
-        boundary = np.isclose(A, result.params['A'].min) | np.isclose(A, result.params['A'].max) \
-                 | np.isclose(B, result.params['B'].min) | np.isclose(B, result.params['B'].max) \
-                 | np.isclose(mu0, result.params['mu0'].min) | np.isclose(mu0, result.params['mu0'].max) \
-                 | np.isclose(mu1, result.params['mu1'].min) | np.isclose(mu1, result.params['mu1'].max) \
-                 | np.isclose(mu2, result.params['mu2'].min) | np.isclose(mu2, result.params['mu2'].max) \
-                 | np.isclose(sigma0, result.params['sigma0'].min) | np.isclose(sigma0, result.params['sigma0'].max) \
-                 | np.isclose(sigma1, result.params['sigma1'].min) | np.isclose(sigma1, result.params['sigma1'].max) \
-                 | np.isclose(sigma2, result.params['sigma2'].min) | np.isclose(sigma2, result.params['sigma2'].max)
+        boundary = self.check_boundary(A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, result.params)
 
         S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
 
@@ -3422,6 +3438,99 @@ class GaussianFit3D:
 
         return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary
 
+    def estimate(self):
+
+        Q0, Q1, Q2 = self.x
+        y, e = self.y, self.e
+
+        params = self.params
+        
+        bkg = np.percentile(y, 5)
+
+        weights = (y-bkg)**2/e**2
+
+        mask = (y > -np.inf) & (y < np.inf) & (e > 0) & (e < np.inf)
+
+        mu0 = np.average(Q0[mask], weights=weights[mask])
+        mu1 = np.average(Q1[mask], weights=weights[mask])
+        mu2 = np.average(Q2[mask], weights=weights[mask])
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        sig0 = np.sqrt(np.average(x0**2, weights=weights[mask]))
+        sig1 = np.sqrt(np.average(x1**2, weights=weights[mask]))
+        sig2 = np.sqrt(np.average(x2**2, weights=weights[mask]))
+
+        rho12 = np.average(x1*x2, weights=weights[mask])/sig1/sig2
+        rho02 = np.average(x0*x2, weights=weights[mask])/sig0/sig2
+        rho01 = np.average(x0*x1, weights=weights[mask])/sig0/sig1
+
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+
+        inv_S = np.linalg.inv(S)
+
+        x = np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                     +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))
+
+        A = (np.array([x, np.ones_like(x)])/e).T
+        b = y/e
+
+        coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+
+        A, B = coeff
+
+        boundary = self.check_outside(A, B, mu0, mu1, mu2, sig0, sig1, sig2, params)
+
+        return A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary
+
+    def check_outside(self, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A_min, A_max = params['A'].min, params['A'].max
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary =  (A <= A_min) or (A >= A_max)\
+                 or (B <= B_min) or (B >= B_max)\
+                 or (mu0 <= mu0_min) or (mu0 >= mu0_max)\
+                 or (mu1 <= mu1_min) or (mu1 >= mu1_max)\
+                 or (mu2 <= mu2_min) or (mu2 >= mu2_max)\
+                 or (sigma0 <= sigma0_min) or (sigma0 >= sigma0_max)\
+                 or (sigma1 <= sigma1_min) or (sigma1 >= sigma1_max)\
+                 or (sigma2 <= sigma2_min) or (sigma2 >= sigma2_max)
+
+        return boundary
+
+    def check_boundary(self, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A_min, A_max = params['A'].min, params['A'].max
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary = np.isclose(A, A_min, rtol=1e-2) | np.isclose(A, A_max, rtol=1e-2) \
+                 | np.isclose(A, A_min, rtol=1e-2) | np.isclose(A, A_max, rtol=1e-2) \
+                 | np.isclose(mu0, mu0_min, rtol=1e-2) | np.isclose(mu0, mu0_max, rtol=1e-2) \
+                 | np.isclose(mu1, mu1_min, rtol=1e-2) | np.isclose(mu1, mu1_max, rtol=1e-2) \
+                 | np.isclose(mu2, mu2_min, rtol=1e-2) | np.isclose(mu2, mu2_max, rtol=1e-2) \
+                 | np.isclose(sigma0, sigma0_min, rtol=1e-2) | np.isclose(sigma0, sigma0_max, rtol=1e-2) \
+                 | np.isclose(sigma1, sigma1_min, rtol=1e-2) | np.isclose(sigma1, sigma1_max, rtol=1e-2) \
+                 | np.isclose(sigma2, sigma2_min, rtol=1e-2) | np.isclose(sigma2, sigma2_max, rtol=1e-2)
+
+        return boundary
+
     def covariance_matrix(self, sig0, sig1, sig2, rho12, rho02, rho01):
 
         sig = np.diag([sig0, sig1, sig2])
@@ -3434,23 +3543,9 @@ class GaussianFit3D:
 
         return S
 
-    def integrated(self):
+    def integrated(self, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
 
-        result = self.result
-
-        mu0 = result.params['mu0'].value
-        mu1 = result.params['mu1'].value
-        mu2 = result.params['mu2'].value
-
-        sigma0 = result.params['sigma0'].value
-        sigma1 = result.params['sigma1'].value
-        sigma2 = result.params['sigma2'].value
-
-        phi = result.params['phi'].value
-        theta = result.params['theta'].value
-        omega = result.params['omega'].value
-
-        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
 
         inv_S = np.linalg.inv(S)
 
@@ -3475,11 +3570,6 @@ class GaussianFit3D:
             sig = np.sqrt(np.linalg.inv(cov)[0,0])
         else:
             sig = intens
-
-        A = result.params['A'].value
-        B = result.params['B'].value
-
-        intens, bkg = A*norm, B
 
         return intens, bkg, sig
 
