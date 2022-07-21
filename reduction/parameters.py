@@ -32,11 +32,15 @@ def load_input_file(filename):
                     elif val.lower() == 'true':
                         val = True
                     elif val.count(';') > 0:
-                        if val.count(',') > 0:
+                        if val.count(',') > 0 and val.count('-') == 0:
                             val = [[int(x) for x in v.split(',')] for v in val.split(';')]
+                        elif val.count(',') > 0 and val.count('-') > 0:
+                            val = [[np.arange(*[int(y)+i for i, y in enumerate(x.split('-'))]).tolist() if x.count('-') > 0  else \
+                                   int(x) for x in v.split(',')] if not v.isdigit() else
+                                   int(v) for v in val.split(';')]
                         else:
                             val = [int(v) for v in val.split(';')]
-                    elif val.count(',') > 0:
+                    elif val.count(',') > 0 and val.count('/') == 0:
                         val = [np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 and v[0] != '-' else \
                                int(v) if v.isdigit() else \
                                float(v) if v.replace('-','',1).replace('.','',1).isdigit() else \

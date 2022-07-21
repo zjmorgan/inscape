@@ -8,6 +8,8 @@ import numpy as np
 
 import imp
 
+import peak, fitting
+
 imp.reload(peak)
 imp.reload(fitting)
 
@@ -24,7 +26,7 @@ Qz_min, Qz_max = -0.5, 0.5
 mu_x, mu_y, mu_z = 1, 0, 0
 
 sigma_x, sigma_y, sigma_z = 0.05, 0.3, 0.025
-rho_yz, rho_xz, rho_xy = 0.0, -0.0, -0.0
+rho_yz, rho_xz, rho_xy = -0.8, -0.0, -0.0
 
 d = 2
 

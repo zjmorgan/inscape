@@ -388,17 +388,22 @@ class Profile:
 
         return a, mu, sigma
 
-    def statistics(self, x, y, e, y_fit):
+    def statistics(self, x, y, e, y_fit, mu, sigma, n_std=3):
 
         mask = (y > -np.inf) & (e > 0) & (y_fit > -np.inf) & (y < np.inf) & (e < np.inf)
 
         n_df = y[mask].size-5
 
+        pk  = (np.abs(x-mu) <= n_std*sigma) & mask
+        bkg = (np.abs(x-mu) >  n_std*sigma) & mask
+
+        n_pk, n_bkg = np.sum(pk), np.sum(bkg)
+
         chi_sq = np.sum((y[mask]-y_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
 
-        peak_bkg_ratio = np.std(y[mask])/np.median(e[mask])
+        peak_bkg_ratio = np.std(y[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
 
-        sig_noise_ratio = np.sum(y[mask])/np.sqrt(np.sum(e[mask]**2))
+        sig_noise_ratio = np.sum(y[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
 
         return chi_sq, peak_bkg_ratio, sig_noise_ratio
 
@@ -543,7 +548,7 @@ class Profile:
             params.add('b', value=b, min=min_b, max=max_b)
             params.add('c', value=c, min=min_c, max=max_c)
 
-            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='raise')
+            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='raise') #
 
             result = out.minimize(method='leastsq')
 
@@ -571,7 +576,7 @@ class Profile:
         self.y_sub, self.e_sub = y_sub.copy(), e_sub.copy()
         self.y_bkg, self.y_fit = y_bkg.copy(), y_fit.copy()
 
-        return self.statistics(xh, y_sub, e_sub, y_fit), (a, mu, sigma)
+        return self.statistics(xh, y_sub, e_sub, y_fit, mu, sigma), (a, mu, sigma)
 
 class Projection:
 
@@ -702,17 +707,40 @@ class Projection:
 
         return tuple(coeff)
 
-    def statistics(self, x, y, z, e, z_fit):
+    def statistics(self, x, y, z, e, z_fit, mu_x, mu_y, sigma_x, sigma_y, rho, scale=4):
 
-        mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
+        cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
+                        [rho*sigma_x*sigma_y, sigma_y**2]])
 
-        n_df = z[mask].size-10
+        if np.linalg.det(cov) > 0:
 
-        chi_sq = np.sum((z[mask]-z_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
+            vals, vecs = np.linalg.eig(cov)
 
-        peak_bkg_ratio = np.std(z[mask])/np.median(e[mask])
+            radii = scale*np.sqrt(vals)
 
-        sig_noise_ratio = np.sum(z[mask])/np.sqrt(np.sum(e[mask]**2))
+            W = vecs.copy()
+            D = np.diag(1/radii**2)
+
+            A = np.dot(np.dot(W, D), W.T)
+            
+            mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
+
+            n_df = z[mask].size-10
+
+            pk  = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) <= 1) & mask
+            bkg = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) >  1) & mask
+
+            n_pk, n_bkg = np.sum(pk), np.sum(bkg)
+
+            chi_sq = np.sum((z[mask]-z_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
+
+            peak_bkg_ratio = np.std(z[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
+
+            sig_noise_ratio = np.sum(z[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
+
+        else:
+
+            chi_sq, peak_bkg_ratio, sig_noise_ratio = np.inf, np.inf, np.inf
 
         return chi_sq, peak_bkg_ratio, sig_noise_ratio
 
@@ -880,6 +908,10 @@ class Projection:
         x0 = (a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy)
 
         return self.jac(x0, x, y, z, e)
+        
+    # def loss(self, r):
+    #
+    #     return np.sum(2*(np.sqrt(1+r**2)-1))
 
     def fit(self, dQ1, dQ2, data, norm, int_mask, bkg_mask, bkg_scale=0.95):
 
@@ -900,12 +932,12 @@ class Projection:
         min_a, min_mu_x, min_mu_y, min_sigma_1, min_sigma_2, min_theta, min_b, min_cx, min_cy, min_cxy = min_bounds
         max_a, max_mu_x, max_mu_y, max_sigma_1, max_sigma_2, max_theta, max_b, max_cx, max_cy, max_cxy = max_bounds
 
-        # xa, ya, za, ea = args
-        # h = 1e+2
-        # for i in range(1):
+        # xa, ya, za, ea = np.array([0.005]), np.array([0.006]), np.array([1.1]), np.array([0.9])
+        # h = 1e-4
+        # for i in range(10):
         #     fargs = list(params)
         #     fargs[i] += h
-        #     print((self.func(fargs, xa, ya, za, ea)-self.func(params, xa, ya, za, ea))/h, self.jac(params, xa, ya, za, ea)[i,:])
+        #     print(i,(self.func(fargs, xa, ya, za, ea)-self.func(params, xa, ya, za, ea))/h, self.jac(params, xa, ya, za, ea)[i,:])
 
         if args[0].size > 11:
 
@@ -921,8 +953,9 @@ class Projection:
             params.add('cy', value=cy, min=min_cy, max=max_cy)
             params.add('cxy', value=cxy, min=min_cxy, max=max_cxy)
 
-            out = Minimizer(self.residual, params, fcn_args=(args)) # , Dfun=self.gradient, col_deriv=True, nan_policy='raise'
+            # reduce_fcn = None if not robust else self.loss
 
+            out = Minimizer(self.residual, params, fcn_args=(args)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
             result = out.minimize(method='leastsq')
 
             params = result.params['a'].value, \
@@ -964,7 +997,7 @@ class Projection:
         self.z_sub, self.e_sub = z_sub.copy(), e_sub.copy()
         self.z_bkg, self.z_fit = z_bkg.copy(), z_fit.copy()
 
-        return self.statistics(xh, yh, z_sub, e_sub, z_fit), (a, mu_x, mu_y, sigma_x, sigma_y, rho)
+        return self.statistics(xh, yh, z_sub, e_sub, z_fit, mu_x, mu_y, sigma_x, sigma_y, rho), (a, mu_x, mu_y, sigma_x, sigma_y, rho)
 
 class LineCut(Profile):
  

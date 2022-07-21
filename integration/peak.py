@@ -1663,7 +1663,7 @@ class PeakInformation:
 
         return not (self.__peak_num == 0 or self.__pk_norm is None)
 
-    def __good_intensities(self, min_vol_fract=0.5):
+    def __good_intensities(self, min_vol_fract=0.05):
 
         pk_vol_fract = np.array(self.__pk_vol_fract())
 
@@ -3147,9 +3147,9 @@ class GaussianFit3D:
         params.add('sigma1', value=sigma[1], min=0.1*sigma[1], max=2*sigma[1])
         params.add('sigma2', value=sigma[2], min=0.1*sigma[2], max=2*sigma[2])
 
-        params.add('phi', value=0.0, min=-np.pi, max=np.pi)
-        params.add('theta', value=np.pi/2, min=0, max=np.pi)
-        params.add('omega', value=0.0, min=-np.pi, max=np.pi)
+        params.add('phi', value=-0.1, min=-np.pi, max=np.pi)
+        params.add('theta', value=np.pi/2-0.1, min=0, max=np.pi)
+        params.add('omega', value=-0.1, min=-np.pi, max=np.pi)
 
         self.params = params
 
@@ -3327,6 +3327,8 @@ class GaussianFit3D:
                                  [2*uy*ux*(1-np.cos(omega))-uz*np.sin(omega)*np.tan(theta)**2, 2*uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)-ux*np.sin(omega)],
                                  [uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)-uy*np.sin(omega), uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)+ux*np.sin(omega), -2*uz**2*(1-np.cos(omega))*np.tan(theta)**2]])/np.tan(theta)
 
+        print(np.linalg.det(Uprime_theta))
+
         yprime_mu0 = yfit*(2*a*x0+  f*x1+  e*x2)
         yprime_mu1 = yfit*(  f*x0+2*b*x1+  d*x2)
         yprime_mu2 = yfit*(  e*x0+  d*x1+2*c*x2)
@@ -3372,10 +3374,10 @@ class GaussianFit3D:
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) # , Dfun=self.gradient, col_deriv=True, nan_policy='raise'
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
         result = out.minimize(method='leastsq')
 
-        # result = out.prepare_fit()
+        #result = out.prepare_fit()
 
         self.params = result.params
 
@@ -3401,7 +3403,7 @@ class GaussianFit3D:
         # 
         # params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
         # 
-        # h = 1e-6
+        # h = 1e-8
         # for i in range(11):
         #     fargs = list(params)
         #     fargs[i+3] += h
@@ -3444,10 +3446,15 @@ class GaussianFit3D:
         y, e = self.y, self.e
 
         params = self.params
-        
+
         bkg = np.percentile(y, 5)
 
-        weights = (y-bkg)**2/e**2
+        z = y.copy()
+
+        z -= bkg
+        z[z < 0] = 0
+
+        weights = z**2/e**2
 
         mask = (y > -np.inf) & (y < np.inf) & (e > 0) & (e < np.inf)
 
@@ -3580,7 +3587,7 @@ class GaussianFit3D:
         inv_S = np.linalg.inv(S)
 
         x0, x1, x2 = x[0]-mu0, x[1]-mu1, x[2]-mu2
-        
+
         norm = np.sqrt(np.linalg.det(2*np.pi*S))
 
         return intens*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\

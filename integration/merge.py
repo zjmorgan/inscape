@@ -1102,13 +1102,13 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                     else:
                         bank = ','.join(['bank{}'.format(bank) for bank in [b-1,b,b+1]])
                 else:
-                    banks = 'bank{}'.format(b)
+                    bank = 'bank{}'.format(b)
 
                 LoadEventNexus(Filename=filename, 
                                BankName=bank, 
                                SingleBankPixelsOnly=True,
                                LoadLogs=False,
-                               LoadNexusInstrumentXML=False,
+                               LoadNexusInstrumentXML=True,
                                OutputWorkspace=ows)
 
                 pc = norm_scale[r]
@@ -1258,7 +1258,7 @@ def projection_axes(n):
     return u, v
 
 def cdf(signal, fit):
-    
+
     signal, fit = np.sort(signal), np.sort(fit)
 
     n = fit.size
@@ -1696,23 +1696,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 int_mask, bkg_mask = ellip.projection_mask()
                 dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
-
-#                 prof_x = Profile()
-#                 stats, params = prof_x.fit(dQ1, data, norm, int_mask, bkg_mask, 0.99)
-# 
-#                 chi_sq2dx, peak_bkg_ratio2dx, sig_noise_ratio2dx = stats
-#                 a, mu_x, sigma_x = params
-# 
-#                 prof_y = Profile()
-#                 stats, params = prof_y.fit(dQ2, data, norm, int_mask, bkg_mask, 0.99)
-# 
-#                 chi_sq2dy, peak_bkg_ratio2dy, sig_noise_ratio2dy = stats
-#                 a, mu_y, sigma_y = params
-# 
-#                 ellip.mu_x, ellip.mu_y = mu_x, mu_y
-#                 ellip.sigma_x, ellip.sigma_y = sigma_x, sigma_y
-# 
-#                 int_mask, bkg_mask = ellip.projection_mask()
  
                 proj = Projection()
                 stats, params = proj.fit(dQ1, dQ2, data, norm, int_mask, bkg_mask, 0.99)
@@ -1750,6 +1733,53 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     remove = True
 
                     stats_list.extend([np.nan, np.nan, np.nan])
+
+
+                # ---
+
+                if peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20 and sig_noise_ratio > 20:
+
+                    int_mask, bkg_mask = ellip.projection_mask()
+                    dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
+
+                    proj = Projection()
+
+                    x = dQ1.copy()
+                    y = dQ2.copy()
+
+                    xh, yh, _, _, z_sub, e_sub, _ = proj.histogram(x, y, data, norm, int_mask, bkg_mask, 0.95)
+
+                    args, params, bounds = proj.estimate(xh, yh, z_sub, e_sub)
+
+                    a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy = params
+
+                    # int_mask, bkg_mask = ellip.projection_mask()
+                    # dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
+                    # 
+                    # proj = Projection()
+                    # stats, params = proj.fit(dQ1, dQ2, data, norm, int_mask, bkg_mask, 0.99, robust=True)
+                    # 
+                    # peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = stats
+                    # a, mu_x, mu_y, sigma_x, sigma_y, rho = params
+
+                    if np.isfinite([a,mu_x,mu_y,sigma_1,sigma_2,theta]).all() and sigma_1 > 0 and sigma_2 > 0:
+                    # if np.isfinite([a,mu_x,mu_y,sigma_x,sigma_y,rho]).all():
+
+                        R = np.array([[np.cos(theta), -np.sin(theta)],
+                                      [np.sin(theta),  np.cos(theta)]])
+
+                        cov = np.dot(R, np.dot(np.diag([sigma_1**2, sigma_2**2]), R.T))
+
+                        sigma_x, sigma_y = np.sqrt(np.diag(cov))
+                        rho = cov[0,1]/(sigma_x*sigma_y)
+
+                        ellip.mu_x, ellip.mu_y = mu_x, mu_y
+                        ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
+
+                        mu = [mu_x, mu_y]
+                        sigma = [sigma_x, sigma_y]
+
+                        peak_envelope.update_ellipse(mu, sigma, rho)
 
                 int_mask, bkg_mask = ellip.profile_mask()
                 Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
@@ -1789,40 +1819,6 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     remove = True
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
-
-                # ---
-
-                int_mask, bkg_mask = ellip.projection_mask()
-                dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
-
-                proj = Projection()
-
-                x = dQ1.copy()
-                y = dQ2.copy()
-
-                xh, yh, _, _, z_sub, e_sub, _ = proj.histogram(x, y, data, norm, int_mask, bkg_mask, 0.95)
-
-                args, params, bounds = proj.estimate(xh, yh, z_sub, e_sub)
-
-                a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy = params
-
-                if np.isfinite([a,mu_x,mu_y,sigma_1,sigma_2,theta]).all() and sigma_1 > 0 and sigma_2 > 0:
-
-                    R = np.array([[np.cos(theta), -np.sin(theta)],
-                                  [np.sin(theta),  np.cos(theta)]])
-
-                    cov = np.dot(R, np.dot(np.diag([sigma_1**2, sigma_2**2]), R.T))
-
-                    sigma_x, sigma_y = np.sqrt(np.diag(cov))
-                    rho = cov[0,1]/(sigma_x*sigma_y)
-
-                    ellip.mu_x, ellip.mu_y = mu_x, mu_y
-                    ellip.sigma_x, ellip.sigma_y, ellip.rho = sigma_x, sigma_y, rho
-
-                    mu = [mu_x, mu_y]
-                    sigma = [sigma_x, sigma_y]
-
-                    peak_envelope.update_ellipse(mu, sigma, rho)
 
                 # ---
 
@@ -1868,10 +1864,10 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sigs)
 
-                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+                        #A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
 
-                        if boundary:
-                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        #if boundary:
+                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
                         intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 

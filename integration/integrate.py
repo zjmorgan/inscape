@@ -129,7 +129,7 @@ if __name__ == '__main__':
 
     m_proc = len(runs) if n_proc > len(runs) else n_proc
 
-    experiment = dictionary['experiment']
+    experiment = dictionary.get('experiment')
 
     if dictionary['ub-file'] is not None:
         ub_file = os.path.join(working_directory, dictionary['ub-file'])
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     else:
         counts_file = None
 
-    if dictionary['tube-file'] is not None:
+    if dictionary.get('tube-file') is not None:
         tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
     else:
         tube_calibration = None

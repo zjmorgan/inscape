@@ -19,10 +19,13 @@ directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
 sys.path.append(directory)
 
 import parameters
-
+print(filename)
 dictionary = parameters.load_input_file(filename)
 
 run_nos = dictionary['runs'] if type(dictionary['runs']) is list else [dictionary['runs']]
+
+if len(run_nos) < n_proc:
+    n_proc = len(run_nos)
 
 facility, instrument = parameters.set_instrument(dictionary['instrument'])
 ipts = dictionary['ipts']
@@ -38,7 +41,7 @@ if not os.path.exists(outdir):
     #shutil.rmtree(outdir)
     os.mkdir(outdir)
 
-parameters.output_input_file(filename, directory, outname)
+parameters.output_input_file(filename, directory, outname+'_norm')
 
 if dictionary['flux-file'] is not None:
     spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
@@ -50,7 +53,7 @@ if dictionary['vanadium-file'] is not None:
 else:
     counts_file = None
 
-if dictionary['tube-file'] is not None:
+if dictionary.get('tube-file') is not None:
     tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
 else:
     tube_calibration = None
@@ -109,6 +112,16 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
     if tube_calibration is not None and not mtd.doesExist('tube_table'):
         LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
 
+    if tube_calibration is not None:
+        ApplyCalibration(Workspace='sa', CalibrationTable='tube_table')
+
+    if detector_calibration is not None:
+        _, ext =  os.path.splitext(detector_calibration)
+        if ext == '.xml':
+            LoadParameterFile(Workspace='sa', Filename=detector_calibration)
+        else:
+            LoadIsawDetCal(InputWorkspace='sa', Filename=detector_calibration)
+
     for r in runs:
 
         LoadEventNexus(Filename='/{}/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(facility,instrument,ipts,instrument,r), OutputWorkspace='data')
@@ -121,15 +134,7 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
             UB = mtd['data'].getExperimentInfo(0).sample().getOrientedLattice().getUB()
             SetUB(Workspace='data', UB=UB)
 
-        if tube_calibration is not None:
-            ApplyCalibration(Workspace='data', CalibrationTable='tube_table')
-
-        if detector_calibration is not None:
-            _, ext =  os.path.splitext(detector_calibration)
-            if ext == '.xml':
-                LoadParameterFile(Workspace='data', Filename=detector_calibration)
-            else:
-                LoadIsawDetCal(Workspace='data', Filename=detector_calibration)
+        CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace='data')
 
         if instrument == 'CORELLI':
             SetGoniometer('data', Axis0=str(gon_axis)+',0,1,0,1') 
@@ -184,7 +189,7 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
 
     SaveMD(Inputworkspace='dataMD', Filename=os.path.join(outdir,'data_p{}.nxs'.format(p)))
     SaveMD(Inputworkspace='normMD', Filename=os.path.join(outdir,'norm_p{}.nxs'.format(p)))
-      
+
 if __name__ == '__main__':
 
     args = [facility, instrument, ipts, detector_calibration, tube_calibration, 
