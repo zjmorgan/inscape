@@ -35,7 +35,7 @@ def load_input_file(filename):
                         if val.count(',') > 0 and val.count('-') == 0:
                             val = [[int(x) for x in v.split(',')] for v in val.split(';')]
                         elif val.count(',') > 0 and val.count('-') > 0:
-                            val = [[np.arange(*[int(y)+i for i, y in enumerate(x.split('-'))]).tolist() if x.count('-') > 0  else \
+                            val = [[np.arange(*[int(y)+i for i, y in enumerate(x.split('-'))]).tolist() if x.count('-') > 0 and x[0] != '-' else \
                                    int(x) for x in v.split(',')] if not v.isdigit() else
                                    int(v) for v in val.split(';')]
                         else:
@@ -47,10 +47,12 @@ def load_input_file(filename):
                                v for v in val.split(',')]
                     elif val.count('-') > 0 and val.count('/') == 0:
                         val = [int(v)+i if v.isdigit() else \
-                               v+'1' if v.isalpha() else \
+                               #v+'1' if v.isalpha() else \
                                v for i, v in enumerate(val.split('-'))]
                         if type(val[0]) is int:
                             val = np.arange(*val).tolist()
+                        elif type(val[0]) is str:
+                            val = '-'.join(val)
 
                 dictionary[var] = val
 

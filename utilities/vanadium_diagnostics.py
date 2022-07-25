@@ -15,6 +15,8 @@ bank_tube_pixel_to_mask = ['58,13-16,80-130', '59,1-4,80-130']
 
 ipts = 23019
 run_no = [269692,269752]
+run_no = [269754,269814]
+run_no = [270781,270841]
 
 k_min, k_max = 2.5, 10
 
@@ -120,3 +122,5 @@ ax.set_yscale('linear')
 ax.set_xlabel(r'Spectrum no') #
 ax.set_ylabel(r'Normalized counts')
 fig.show()
+
+plt.close('all')

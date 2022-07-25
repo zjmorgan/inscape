@@ -172,6 +172,21 @@ if detector_calibration is not None:
     else:
         LoadIsawDetCal(InputWorkspace='van',
                        Filename=os.path.join(calibration_directory, detector_calibration))
+CopyInstrumentParameters(InputWorkspace='van',
+                         OutputWorkspace=instrument)
+
+SaveNexusGeometry(InputWorkspace=instrument,
+                  Filename=os.path.join(vanadium_directory, 'calibration.nxs'))
+
+LoadInstrument(Workspace='van',
+               Filename=os.path.join(vanadium_directory, 'calibration.nxs'),
+               RewriteSpectraMap=False)
+
+LoadMask(Instrument=instrument,
+         InputFile=os.path.join(vanadium_directory, 'mask.xml'),
+         OutputWorkspace='mask')
+
+MaskDetectors(Workspace='van', MaskedWorkspace='mask')
 
 ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Momentum')
 Rebin(InputWorkspace='van', OutputWorkspace='van', Params=rebin_param)
