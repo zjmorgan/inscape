@@ -6,6 +6,7 @@ from mantid.simpleapi import SetSampleMaterial, SaveNexus
 from mantid.simpleapi import mtd
 
 from mantid.kernel import V3D
+from mantid.geometry import PointGroupFactory, SpaceGroupFactory
 from mantid import config
 
 import matplotlib as mpl
@@ -1663,7 +1664,7 @@ class PeakInformation:
 
         return not (self.__peak_num == 0 or self.__pk_norm is None)
 
-    def __good_intensities(self, min_vol_fract=0.05):
+    def __good_intensities(self, min_vol_fract=0.5):
 
         pk_vol_fract = np.array(self.__pk_vol_fract())
 
@@ -1697,12 +1698,12 @@ class PeakInformation:
                 good = False
 
             # powder line in profile
-            if self.__peak_bkg_ratio > 1 and self.__peak_bkg_ratio2d < 1 and self.__peak_bkg_ratio/self.__peak_bkg_ratio2d > 10:
+            if self.__peak_score/self.__peak_score2d > 2:
 
                 good = False
 
             # powder line in projection
-            if self.__peak_bkg_ratio2d > 1 and self.__peak_bkg_ratio < 1 and self.__peak_bkg_ratio2d/self.__peak_bkg_ratio > 10:
+            if self.__peak_score/self.__peak_score2d > 2:
 
                 good = False
 
@@ -2259,9 +2260,11 @@ class PeakDictionary:
 
             key = (h,k,l,m,n,p)
 
-            peaks = self.peak_dict.get(key)
+            if peak_dict.get(key) is None:
 
-            peak_dict[key] = peaks
+                peaks = self.peak_dict.get(key)
+
+                peak_dict[key] = peaks
 
         return peak_dict
 
@@ -3147,9 +3150,9 @@ class GaussianFit3D:
         params.add('sigma1', value=sigma[1], min=0.1*sigma[1], max=2*sigma[1])
         params.add('sigma2', value=sigma[2], min=0.1*sigma[2], max=2*sigma[2])
 
-        params.add('phi', value=-0.1, min=-np.pi, max=np.pi)
-        params.add('theta', value=np.pi/2-0.1, min=0, max=np.pi)
-        params.add('omega', value=-0.1, min=-np.pi, max=np.pi)
+        params.add('phi', value=0, min=-np.pi, max=np.pi)
+        params.add('theta', value=np.pi/2, min=0, max=np.pi)
+        params.add('omega', value=0, min=-np.pi, max=np.pi)
 
         self.params = params
 
@@ -3447,7 +3450,7 @@ class GaussianFit3D:
 
         params = self.params
 
-        bkg = np.percentile(y, 5)
+        bkg = np.percentile(y, 25)
 
         z = y.copy()
 
@@ -3456,7 +3459,7 @@ class GaussianFit3D:
 
         weights = z**2/e**2
 
-        mask = (y > -np.inf) & (y < np.inf) & (e > 0) & (e < np.inf)
+        mask = (z > 0) & (z < np.inf) & (e > 0) & (e < np.inf)
 
         mu0 = np.average(Q0[mask], weights=weights[mask])
         mu1 = np.average(Q1[mask], weights=weights[mask])
@@ -3464,13 +3467,13 @@ class GaussianFit3D:
 
         x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
 
-        sig0 = np.sqrt(np.average(x0**2, weights=weights[mask]))
-        sig1 = np.sqrt(np.average(x1**2, weights=weights[mask]))
-        sig2 = np.sqrt(np.average(x2**2, weights=weights[mask]))
+        sig0 = np.sqrt(np.average(x0[mask]**2, weights=weights[mask]))
+        sig1 = np.sqrt(np.average(x1[mask]**2, weights=weights[mask]))
+        sig2 = np.sqrt(np.average(x2[mask]**2, weights=weights[mask]))
 
-        rho12 = np.average(x1*x2, weights=weights[mask])/sig1/sig2
-        rho02 = np.average(x0*x2, weights=weights[mask])/sig0/sig2
-        rho01 = np.average(x0*x1, weights=weights[mask])/sig0/sig1
+        rho12 = np.average(x1[mask]*x2[mask], weights=weights[mask])/sig1/sig2
+        rho02 = np.average(x0[mask]*x2[mask], weights=weights[mask])/sig0/sig2
+        rho01 = np.average(x0[mask]*x1[mask], weights=weights[mask])/sig0/sig1
 
         S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -3592,3 +3595,240 @@ class GaussianFit3D:
 
         return intens*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
                                +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm+bkg
+
+class PeakStatistics:
+
+    def __init__(self, filename, space_group):
+
+        self.filename = filename
+        self.data = np.loadtxt(filename)
+
+        self.sg = SpaceGroupFactory.createSpaceGroup(space_group)
+        self.pg = PointGroupFactory.createPointGroupFromSpaceGroup(self.sg)
+
+    def prune_outliers(self):
+
+        filename = self.filename
+        data = self.data
+
+        sg = self.sg
+        pg = self.pg
+
+        miss, total = 0, 0
+
+        lines = []
+
+        fname, ext = os.path.splitext(filename)
+
+        f = open(fname+'_prune.txt', 'w')
+
+        f.write('space group #{} ({})\n'.format(sg.getNumber(),sg.getHMSymbol()))
+        f.write('reflections:\n')
+
+        dictionary = {}
+
+        for line in data:
+
+            h, k, l, I, sig, d = line
+
+            hkl = V3D(h,k,l)
+
+            if sg.isAllowedReflection(hkl):
+
+                lines.append(line)
+
+                equivalents = pg.getEquivalents(hkl)
+
+                key = tuple(equivalents)
+
+                if dictionary.get(key) is None:
+
+                    dictionary[key] = [len(equivalents),d,[(h,k,l)],[I],[sig]]
+
+                else:
+
+                    item = dictionary[key]
+
+                    redundancy, d_spacing, peak_list, intens_list, sig_intens_list = item
+
+                    intens_list.append(I)
+                    sig_intens_list.append(sig)
+                    peak_list.append((h,k,l))
+
+                    item = [redundancy, d_spacing, peak_list, intens_list, sig_intens_list]
+
+                    dictionary[key] = item
+
+            else:
+
+                f.write('({},{},{}) forbidden d = {:2.4f} \u212B\n'.format(int(h),int(k),int(l),d))
+
+                miss += 1
+
+            total += 1
+
+        f.write('{}/{} reflections not allowed in space group\n'.format(miss,total))
+
+        miss, total = 0, 0
+
+        data = []
+
+        for key in dictionary.keys():
+
+            item = dictionary[key]
+
+            redundancy, d_spacing, peak_list, intens_list, sig_intens_list = item
+
+            intens_list, sig_intens_list = np.array(intens_list), np.array(sig_intens_list)
+
+            median = np.median(intens_list)
+            Q1, Q3 = np.percentile(intens_list, [25,75])
+            IQR = Q3-Q1
+
+            high = np.argwhere(Q3+1.5*IQR < intens_list).flatten()
+            low = np.argwhere(Q1-1.5*IQR > intens_list).flatten()
+
+            if len(high) > 0:
+                f.write('outlier, intensity too high : {}\n'.format(','.join(['({},{},{})'.format(*peak_list[ind]) for ind in high])))
+
+            if len(low) > 0:
+                f.write('outlier, intensity too low : {}\n'.format(','.join(['({},{},{})'.format(*peak_list[ind]) for ind in low])))
+
+            mask = np.concatenate((low,high)).tolist()
+
+            median = np.median(sig_intens_list)
+            Q1, Q3 = np.percentile(sig_intens_list, [25,75])
+            IQR = Q3-Q1
+
+            high = np.argwhere(Q3+1.5*IQR < sig_intens_list).flatten().tolist()
+
+            mask += high
+
+            for i in range(len(intens_list)):
+
+                if i not in mask:
+
+                    h, k, l = peak_list[i]
+                    I = intens_list[i]
+                    sig = sig_intens_list[i]
+                    d = d_spacing
+
+                    line = h, k, l, I, sig, d
+
+                    data.append(line)
+
+                else:
+
+                    miss += 1
+
+                total += 1
+
+        f.write('{}/{} reflections outliers\n'.format(miss,total))
+
+        self.data = data
+
+    def write_statisics(self):
+
+        filename = self.filename
+        data = self.data
+
+        sg = self.sg
+        pg = self.pg
+
+        lines = []
+
+        fname, ext = os.path.splitext(filename)
+
+        f = open(fname+'_symm.txt', 'w')
+
+        f.write('d-spacing \u212B   | Comp    | R(mrg)  | R(pim)\n')
+
+        dictionary = {}
+
+        for line in data:
+
+            h, k, l, I, sig, d = line
+
+            hkl = V3D(h,k,l)
+
+            if sg.isAllowedReflection(hkl):
+
+                lines.append(line)
+
+                equivalents = pg.getEquivalents(hkl)
+
+                key = tuple(equivalents)
+
+                if dictionary.get(key) is None:
+
+                    dictionary[key] = [len(equivalents),d,[(h,k,l)],[I],[sig]]
+
+                else:
+
+                    item = dictionary[key]
+
+                    redundancy, d_spacing, peak_list, intens_list, sig_intens_list = item
+
+                    intens_list.append(I)
+                    sig_intens_list.append(sig)
+                    peak_list.append((h,k,l))
+
+                    item = [redundancy, d_spacing, peak_list, intens_list, sig_intens_list]
+
+                    dictionary[key] = item
+
+        r, n, d = [], [], []
+
+        I_sum, I_mae = [], []
+
+        for key in dictionary.keys():
+
+            item = dictionary[key]
+
+            redundancy, d_spacing, peak_list, intens_list, sig_intens_list = item
+
+            I_mean = np.mean(intens_list)
+
+            r.append(redundancy)
+            n.append(np.unique(peak_list,axis=0).size)
+            d.append(d_spacing)
+
+            I_sum.append(np.sum(intens_list))
+            I_mae.append(np.sum(np.abs(np.array(intens_list)-I_mean)))
+
+        r, n, d = np.array(r), np.array(n), np.array(d)
+
+        I_sum, I_mae = np.array(I_sum), np.array(I_mae)
+
+        sort = np.argsort(d)[::-1]
+
+        r, n, d = r[sort], n[sort], d[sort]
+        I_sum, I_mae = I_sum[sort], I_mae[sort]
+
+        n_pk = len(d)
+        n_sp = np.min([n_pk,20])
+
+        split = np.array_split(np.arange(len(d)), n_sp)
+
+        for s in split:
+
+            d_min, d_max = d[s].min(), d[s].max()
+
+            comp = 100*n[s].sum()/r[s].sum()
+
+            R_merge = 100*I_mae[s].sum()/I_sum[s].sum()
+            R_pim = 100*(np.sqrt(1/(n[s]-1))*I_mae[s]).sum()/I_sum[s].sum()
+
+            f.write('{:6.3f}-{:6.3f} | {:6.2f}% | {:6.2f}% | {:6.2f}%\n'.format(d_max,d_min,comp,R_merge,R_pim))
+
+    def write_intensity(self):
+
+        fname, ext = os.path.splitext(self.filename)
+
+        hkl_format = '{:4.0f}{:4.0f}{:4.0f}{:8.2f}{:8.2f}{:8.4f}\n'
+
+        with open(fname+'_prune'+ext, 'w') as f:
+
+            for line in self.data:
+
+                f.write(hkl_format.format(*line))

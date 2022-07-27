@@ -13,7 +13,7 @@ filename, n_proc = sys.argv[1], int(sys.argv[2])
 
 if n_proc > os.cpu_count():
     n_proc = os.cpu_count()
-    
+
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
@@ -43,7 +43,6 @@ outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
 if not os.path.exists(outdir):
-    #shutil.rmtree(outdir)
     os.mkdir(outdir)
 
 parameters.output_input_file(filename, directory, outname+'_norm')

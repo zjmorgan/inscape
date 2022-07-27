@@ -14,9 +14,12 @@ bank_tube_to_mask = ['45,11', '49,1', '52,16']
 bank_tube_pixel_to_mask = ['58,13-16,80-130', '59,1-4,80-130']
 
 ipts = 23019
-run_no = [269692,269752]
-run_no = [269754,269814]
-run_no = [270781,270841]
+run_no = [269692,269752] #311
+run_no = [269754,269814] #312
+
+run_no = [269692, 269752]
+#run_no = [270781,270841] #723
+#run_no = [271216,271245] #725
 
 k_min, k_max = 2.5, 10
 
@@ -86,7 +89,7 @@ varphi = np.array(varphi)
 varphi = np.mod(varphi, 360)
 
 fig, ax = plt.subplots(1, 1, num=i)
-for j in range(n_bins):
+for j in range(n_bins-3):
     ax.plot(varphi[1:-1], np.sum(Y[1:-1,:,j], axis=1)/np.sum(Y[1:-1,:,j], axis=1).mean(), linestyle='-', marker='.', label='{:2.2f}'.format(k_min+j*(k_max-k_min)/(n_bins-1)))
 ax.legend()
 ax.set_title('Sensitivity of momentum [ang.] on detector counts')
@@ -94,6 +97,7 @@ ax.set_xscale('linear')
 ax.set_yscale('linear')
 ax.set_xlabel(r'Goniometer angle [deg.]') #
 ax.set_ylabel(r'Normalized counts')
+ax.set_ylim(0.9,1.1)
 fig.show()
 
 for i in range(91):

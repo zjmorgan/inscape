@@ -187,6 +187,8 @@ class Ellipsoid:
 
         if radius > 0.75*size:
             radius = 0.75*size
+        elif radius < 0.05:
+            radius = 0.05
 
         mu_x, mu_y, sigma_x, sigma_y, rho = self.mu_x, self.mu_y, self.sigma_x, self.sigma_y, self.rho
 
@@ -282,6 +284,8 @@ class Profile:
     def __init__(self):
 
         self.a = 0
+        self.mu = 0
+        self.sigma = 0
 
         self.x, self.y, self.e = None, None, None
 
@@ -409,7 +413,7 @@ class Profile:
 
     def estimate(self, x, y, e): 
 
-        mask = (y > -np.inf) & (y < np.inf) & (e > 0) & (e < np.inf)
+        mask = (y > 0) & (y < np.inf) & (e > 0) & (e < np.inf)
 
         weights = y**2/e**2
 
@@ -534,6 +538,9 @@ class Profile:
 
         a, mu, sigma, b, c = params
 
+        self.mu = mu
+        self.sigma = sigma
+
         min_bounds, max_bounds = bounds
 
         min_a, min_mu, min_sigma, min_b, min_c = min_bounds
@@ -583,6 +590,8 @@ class Projection:
     def __init__(self):
 
         self.a = 0
+        self.mu_x, self.mu_y = 0, 0
+        self.sigma_x, self.sigma_y, self.rho = 0, 0, 0
 
         self.x, self.y, self.z, self.e = None, None, None, None
 
@@ -722,7 +731,7 @@ class Projection:
             D = np.diag(1/radii**2)
 
             A = np.dot(np.dot(W, D), W.T)
-            
+
             mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
 
             n_df = z[mask].size-10
@@ -746,7 +755,7 @@ class Projection:
 
     def estimate(self, x, y, z, e): 
 
-        mask = (z > -np.inf) & (z < np.inf) & (e > 0) & (e < np.inf)
+        mask = (z > 0) & (z < np.inf) & (e > 0) & (e < np.inf)
 
         weights = z**2/e**2
 
@@ -775,6 +784,10 @@ class Projection:
             sigma_1, sigma_2 = np.sqrt(vals)
             theta = np.arctan(vecs[1,0]/vecs[0,0])
 
+            # sigma_1 = np.sqrt(0.5*(sigma_x**2+sigma_y**2)+np.sqrt(0.5*(sigma_x**2-sigma_y**2)**2+(rho*sigma_x*sigma_y)**2))
+            # sigma_2 = np.sqrt(0.5*(sigma_x**2+sigma_y**2)-np.sqrt(0.5*(sigma_x**2-sigma_y**2)**2+(rho*sigma_x*sigma_y)**2))
+            # theta = 0.5*np.arctan(2*(rho*sigma_x*sigma_y)/(sigma_x**2-sigma_y**2))
+
             x_min, x_max = x[mask].min(), x[mask].max()
             y_min, y_max = y[mask].min(), y[mask].max()
             z_min, z_max = z[mask].min(), z[mask].max()
@@ -788,8 +801,8 @@ class Projection:
             y_range = (y_max-y_min)
             z_range = (z_max-z_min)
 
-            min_bounds = (0.01*z_range, x_min, y_min, 0.005/3,    0.005/3,    -np.pi, z_min-0.5*z_range, -100*z_range/x_range, -100*z_range/y_range, -100*z_range/x_range/y_range)
-            max_bounds = ( 100*z_range, x_max, y_max, width[0]/3, width[1]/3,  np.pi, z_max+0.5*z_range,  100*z_range/x_range,  100*z_range/y_range,  100*z_range/x_range/y_range)
+            min_bounds = (0.01*z_range, x_min, y_min, 0.005/3,    0.005/3,    -np.pi/2, z_min-0.5*z_range, -100*z_range/x_range, -100*z_range/y_range, -100*z_range/x_range/y_range)
+            max_bounds = ( 100*z_range, x_max, y_max, width[0]/2, width[1]/2,  np.pi/2, z_max+0.5*z_range,  100*z_range/x_range,  100*z_range/y_range,  100*z_range/x_range/y_range)
 
             a = z_range
             b = z_min
@@ -797,7 +810,7 @@ class Projection:
 
             if np.any([mu_x < min_bounds[1], mu_y < min_bounds[2],
                        mu_x > max_bounds[1], mu_y > max_bounds[2],
-                       sigma_1 > width[0]/3, sigma_2 > width[1]/3]):
+                       sigma_1 > width[0]/2, sigma_2 > width[1]/2]):
 
                 mu_x, mu_y = center
                 sigma_1, sigma_2 = width/6
@@ -926,6 +939,17 @@ class Projection:
         args, params, bounds = self.estimate(xh, yh, z_sub, e_sub)
 
         a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy = params
+
+        R = np.array([[np.cos(theta), -np.sin(theta)],
+                      [np.sin(theta),  np.cos(theta)]])
+
+        cov = np.dot(R, np.dot(np.diag([sigma_1**2, sigma_2**2]), R.T))
+
+        sigma_x, sigma_y = np.sqrt(np.diag(cov))
+        rho = cov[0,1]/(sigma_x*sigma_y)
+
+        self.mu_x, self.mu_y = mu_x, mu_y
+        self.sigma_x, self.sigma_y, self.rho = sigma_x, sigma_y, rho
 
         min_bounds, max_bounds = bounds
 

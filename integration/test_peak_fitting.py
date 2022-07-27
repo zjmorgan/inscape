@@ -62,7 +62,7 @@ e = error.flatten()
 
 x = (x_bin.flatten(), y_bin.flatten(), z_bin.flatten())
 
-mu = [mu_x, mu_y, mu_z]
+mu = [0, mu_y, mu_z]
 sigma = [sigma_x, sigma_y, sigma_z]
 
 peak_fit_3d = GaussianFit3D(x, y, e, mu, sigma)

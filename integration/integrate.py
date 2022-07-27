@@ -30,10 +30,11 @@ imp.reload(merge)
 imp.reload(peak)
 imp.reload(parameters)
 
-from peak import PeakDictionary
+from peak import PeakDictionary, PeakStatistics
 from PyPDF2 import PdfFileMerger
 
 from mantid.kernel import V3D
+from mantid.geometry import PointGroupFactory, SpaceGroupFactory
 
 from scipy.spatial import KDTree
 
@@ -95,10 +96,23 @@ if __name__ == '__main__':
     elif reflection_condition == 'H':
          reflection_condition = 'Hexagonally centred, reverse'
 
-    if dictionary['chemical-formula'] is not None:
+    pgs = [pg.replace(' ', '') for pg in PointGroupFactory.getAllPointGroupSymbols()]
+    sgs = [sg.replace(' ', '') for sg in SpaceGroupFactory.getAllSpaceGroupSymbols()]
+
+    sg = None
+    pg = None
+
+    if type(group) is int:
+        sg = SpaceGroupFactory.subscribedSpaceGroupSymbols(group)[0]
+    elif group in pgs:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
+    elif group in sgs:
+        sg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getHMSymbol()
+
+    if dictionary.get('chemical-formula') is not None:
         chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[A-Za-z]+|\d+', dictionary['chemical-formula'])]).lstrip(' ')
     else:
-        chemical_formula = dictionary['chemical-formula']
+        chemical_formula = None
 
     z_parameter = dictionary['z-parameter']
     sample_mass = dictionary['sample-mass']
@@ -147,6 +161,15 @@ if __name__ == '__main__':
     if not os.path.exists(outdir):
         #shutil.rmtree(outdir)
         os.mkdir(outdir)
+    else:
+        items = os.listdir(outdir)
+        for item in items:
+            if item.endswith('.png'):
+                os.remove(os.path.join(outdir, item))
+            elif item.endswith('.jpg'):
+                os.remove(os.path.join(outdir, item))
+            elif item.endswith('.txt'):
+                os.remove(os.path.join(outdir, item))
 
     parameters.output_input_file(filename, directory, outname)
 
@@ -595,13 +618,25 @@ if __name__ == '__main__':
     peak_dictionary.recalculate_hkl()
     peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
 
+    if sg is not None:
+        peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
+        peak_statistics.prune_outliers()
+        peak_statistics.write_statisics()
+        peak_statistics.write_intensity()
+
     absorption_file = os.path.join(outdir, 'absorption.txt')
 
     if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
         peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
         peak_dictionary.recalculate_hkl()
         peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
-        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
+        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+
+        # if sg is not None:
+        #     peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
+        #     peak_statistics.prune_outliers()
+        #     peak_statistics.write_statisics()
+        #     peak_statistics.write_intensity()
 
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 

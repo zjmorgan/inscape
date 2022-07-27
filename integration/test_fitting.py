@@ -25,8 +25,8 @@ Qz_min, Qz_max = -0.5, 0.5
 
 mu_x, mu_y, mu_z = 1, 0, 0
 
-sigma_x, sigma_y, sigma_z = 0.05, 0.3, 0.025
-rho_yz, rho_xz, rho_xy = -0.8, -0.0, -0.0
+sigma_x, sigma_y, sigma_z = 0.05, 0.03, 0.3
+rho_yz, rho_xz, rho_xy = 0.9, -0.0, -0.0
 
 d = 2
 
@@ -144,6 +144,7 @@ fig, ax = plt.subplots(num='Projection1')
 im = ax.pcolormesh(x,y,z_sub,linewidth=0,rasterized=True,cmap=plt.cm.viridis,norm=LogNorm())
 ax.set_xlabel('x')
 ax.set_ylabel('y')
+ax.set_aspect(1)
 cb = fig.colorbar(im)
 cb.ax.yaxis.set_label_text(r'$z$')
 transf = transforms.Affine2D().rotate_deg(45).scale(scale_x,scale_y).translate(mu_x,mu_y)

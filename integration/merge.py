@@ -1488,14 +1488,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
         key = tuple(key)
 
-        pk_env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
-        ex_env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
-
-        #print('\tIntegrating peak : {}'.format(key))
+        # print('\tIntegrating peak : {}'.format(key))
 
         peaks = peak_dict[key]
-
-        peaks_list = peak_dictionary.peak_dict.get(key)
 
         fixed = False
         if ref_dict is not None:
@@ -1509,12 +1504,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
         H, K, L = peak_dictionary.get_hkl(h, k, l, m, n, p)
         d = peak_dictionary.get_d(h, k, l, m, n, p)
 
-        summary_list = [H, K, L, d]
-        stats_list = [H, K, L, d]
-
         min_sig_noise_ratio = 3 if facility == 'SNS' else 1
 
         for j, peak in enumerate(peaks):
+
+            pk_env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+            ex_env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+
+            summary_list = [H, K, L, d]
+            stats_list = [H, K, L, d]
 
             runs = peak.get_run_numbers().tolist()
             banks = peak.get_bank_numbers().tolist()
@@ -1694,6 +1692,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     stats_list.extend([np.nan, np.nan, np.nan, np.nan])
 
+                sig_noise_ratio = sig_noise_ratio_1
+
                 int_mask, bkg_mask = ellip.projection_mask()
                 dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
  
@@ -1734,10 +1734,11 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     stats_list.extend([np.nan, np.nan, np.nan])
 
-
                 # ---
 
                 if peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20 and sig_noise_ratio > 20:
+
+                    b, cx, cy, cxy = proj.b, proj.cx, proj.cy, proj.cxy
 
                     int_mask, bkg_mask = ellip.projection_mask()
                     dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
@@ -1747,23 +1748,17 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     x = dQ1.copy()
                     y = dQ2.copy()
 
-                    xh, yh, _, _, z_sub, e_sub, _ = proj.histogram(x, y, data, norm, int_mask, bkg_mask, 0.95)
+                    xh, yh, _, _, z_sub, e_sub, _ = proj.histogram(x, y, data, norm, int_mask, bkg_mask, 0.99)
+
+                    bkg = proj.nonlinear(xh, yh, b, cx, cy, cxy)
+
+                    z_sub -= bkg
 
                     args, params, bounds = proj.estimate(xh, yh, z_sub, e_sub)
 
                     a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy = params
 
-                    # int_mask, bkg_mask = ellip.projection_mask()
-                    # dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
-                    # 
-                    # proj = Projection()
-                    # stats, params = proj.fit(dQ1, dQ2, data, norm, int_mask, bkg_mask, 0.99, robust=True)
-                    # 
-                    # peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d = stats
-                    # a, mu_x, mu_y, sigma_x, sigma_y, rho = params
-
-                    if np.isfinite([a,mu_x,mu_y,sigma_1,sigma_2,theta]).all() and sigma_1 > 0 and sigma_2 > 0:
-                    # if np.isfinite([a,mu_x,mu_y,sigma_x,sigma_y,rho]).all():
+                    if np.isfinite([mu_x,mu_y,sigma_1,sigma_2,theta]).all() and sigma_1 > 0 and sigma_2 > 0:
 
                         R = np.array([[np.cos(theta), -np.sin(theta)],
                                       [np.sin(theta),  np.cos(theta)]])
@@ -1864,10 +1859,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sigs)
 
-                        #A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
-
-                        #if boundary:
-                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        if peak_bkg_ratio > 2 and sig_noise_ratio > 20 and peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20:
+                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+                            if boundary:
+                                A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        else:
+                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
                         intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -1907,7 +1904,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         # dist = kstwobign()
                         # Dn_crit = dist.ppf(0.95)/np.sqrt(N)
 
-                        if intens <= sig or chi_sq > 200 or chi_sq < 0.02 or np.isclose(I_est, 0) or boundary:
+                        if intens <= sig or np.isclose(I_est, 0) or boundary:
 
                             remove = True
 
@@ -1948,6 +1945,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                                                         runs_banks, bank_keys, bank_group, key, exp=experiment)
 
         if i % 15 == 0:
+
+            peak_summary.flush()
+            excl_summary.flush()
+
+            peak_stats.flush()
+            excl_stats.flush()
 
             peak_dictionary.save_hkl(os.path.join(outdir, '{}.hkl'.format(outname)), min_signal_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
             peak_dictionary.save(os.path.join(outdir, '{}.pkl'.format(outname)))
@@ -1991,11 +1994,13 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
         merger = []
         for i, key in enumerate(keys[:]):
-            env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
-            if os.path.exists(env):
-                img = plt.imread(env)
-                plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
-                merger.append(env.replace('.png', '.jpg'))
+            peaks = peak_dict[tuple(key)]
+            for j, peak in enumerate(peaks):
+                env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+                if os.path.exists(env):
+                    img = plt.imread(env)
+                    plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
+                    merger.append(env.replace('.png', '.jpg'))
         if len(merger) > 0:
             f.write(img2pdf.convert(merger))
         else:
@@ -2004,22 +2009,26 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
         merger = []
         for i, key in enumerate(keys[:]):
-            env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
-            if os.path.exists(env):
-                img = plt.imread(env)
-                plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
-                merger.append(env.replace('.png', '.jpg'))
+            peaks = peak_dict[tuple(key)]
+            for j, peak in enumerate(peaks):
+                env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+                if os.path.exists(env):
+                    img = plt.imread(env)
+                    plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
+                    merger.append(env.replace('.png', '.jpg'))
         if len(merger) > 0:
             f.write(img2pdf.convert(merger))
         else:
             os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
 
     for i, key in enumerate(keys[:]):
-        env = os.path.join(outdir, '{}_{}.png'.format(outname,i))
-        if os.path.exists(env):
-            os.remove(env)
-            os.remove(env.replace('.png', '.jpg'))
-        env = os.path.join(outdir, 'rej_{}_{}.png'.format(outname,i))
-        if os.path.exists(env):
-            os.remove(env)            
-            os.remove(env.replace('.png', '.jpg'))
+        peaks = peak_dict[tuple(key)]
+        for j, peak in enumerate(peaks):   
+            env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+            if os.path.exists(env):
+                os.remove(env)
+                os.remove(env.replace('.png', '.jpg'))
+            env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+            if os.path.exists(env):
+                os.remove(env)            
+                os.remove(env.replace('.png', '.jpg'))
