@@ -1156,10 +1156,10 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                            XMax=mtd['flux'].dataX(0).max(),
                                            OutputWorkspace=ows)
 
-                min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
-                                                             QDimensions='Q3D',
-                                                             dEAnalysisMode='Elastic',
-                                                             Q3DFrames='Q')
+                # min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
+                #                                              QDimensions='Q3D',
+                #                                              dEAnalysisMode='Elastic',
+                #                                              Q3DFrames='Q')
 
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
@@ -1168,8 +1168,8 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                             Q3DFrames='Q_sample',
                             LorentzCorrection=False,
                             PreprocDetectorsWS='-',
-                            MinValues=min_vals,
-                            MaxValues=max_vals,
+                            MinValues='-20,-20,-20',
+                            MaxValues='20,20,20',
                             Uproj='1,0,0',
                             Vproj='0,1,0',
                             Wproj='0,0,1')

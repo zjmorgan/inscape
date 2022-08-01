@@ -29,6 +29,9 @@ dictionary = parameters.load_input_file(filename)
 
 run_nos = dictionary['runs'] if type(dictionary['runs']) is list else [dictionary['runs']]
 
+if np.any([type(run) is list for run in run_nos]):  
+    run_nos = [run for run_no in run_nos for run in run_no]
+
 if len(run_nos) < n_proc:
     n_proc = len(run_nos)
 

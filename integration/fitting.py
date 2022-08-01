@@ -275,9 +275,9 @@ def estimate_bins(val, mask, weights):
 
         if bin_size > 0 and not np.isclose(val_range,0):
 
-            bins = np.min([np.int(np.ceil(val_range/bin_size)),101])
+            bins = np.min([np.ceil(val_range/bin_size),101])
 
-    return bins
+    return int(bins)
 
 class Profile:
 
@@ -413,7 +413,7 @@ class Profile:
 
     def estimate(self, x, y, e): 
 
-        mask = (y > 0) & (y < np.inf) & (e > 0) & (e < np.inf)
+        mask = (y > -np.inf) & (y < np.inf) & (e > 0) & (e < np.inf)
 
         weights = y**2/e**2
 
@@ -439,8 +439,8 @@ class Profile:
             x_range = (x_max-x_min)
             y_range = (y_max-y_min)
 
-            min_bounds = (0.01*y_range, x[mask].min(), 0.00001/3,     y_min-0.5*y_range, -10*y_range/x_range)
-            max_bounds = ( 100*y_range, x[mask].max(), width.max()/3, y_max+0.5*y_range,  10*y_range/x_range)
+            min_bounds = (0.01*y_range, x[mask].min(), 0.00001/3,     y_min-0.5*y_range, -100*y_range/x_range)
+            max_bounds = ( 100*y_range, x[mask].max(), width.max()/3, y_max+0.5*y_range,  100*y_range/x_range)
 
             a = y_range
             b = y_min

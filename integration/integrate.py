@@ -632,11 +632,11 @@ if __name__ == '__main__':
         peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
         peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
 
-        # if sg is not None:
-        #     peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
-        #     peak_statistics.prune_outliers()
-        #     peak_statistics.write_statisics()
-        #     peak_statistics.write_intensity()
+        if sg is not None:
+            peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
+            peak_statistics.prune_outliers()
+            peak_statistics.write_statisics()
+            peak_statistics.write_intensity()
 
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 

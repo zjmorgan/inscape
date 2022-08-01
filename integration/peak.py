@@ -1048,6 +1048,10 @@ class PeakInformation:
 
         return self.__merge_pk_vol_fract()
 
+    def get_merged_background_volume_fraction(self):
+
+        return self.__merge_bkg_vol_fract()
+
     def get_merged_intensity(self):
 
         return self.__merge_intensity()
@@ -1060,6 +1064,10 @@ class PeakInformation:
 
         return self.__partial_merge_pk_vol_fract(indices)
 
+    def get_partial_merged_background_volume_fraction(self, indices):
+
+        return self.__partial_merge_bkg_vol_fract(indices)
+
     def get_partial_merged_intensity(self, indices):
 
         return self.__partial_merge_intensity(indices)
@@ -1071,6 +1079,10 @@ class PeakInformation:
     def get_peak_volume_fraction(self):
 
         return self.__pk_vol_fract()
+
+    def get_background_volume_fraction(self):
+
+        return self.__bkg_vol_fract()
 
     def get_intensity(self, normalize=True):
 
@@ -1236,7 +1248,8 @@ class PeakInformation:
               'Intensity': self.__round(self.__intensity(),2),
               'IntensitySigma': self.__round(self.__intensity_error(),2),
               'VolumeRatio': self.__round(self.__pk_bkg_ratio(),2),
-              'VolumeFraction': self.__round(self.__pk_vol_fract(),2),
+              'PeakVolumeFraction': self.__round(self.__pk_vol_fract(),2),
+              'BackgroundVolumeFraction': self.__round(self.__bkg_vol_fract(),2),
               'NormalizationScale': self.__round(self.__norm_scale,2),
               'ExctinctionScale': self.get_ext_constant(),
               'PeakScaleConstant': self.__round(self.get_peak_constant(),2),
@@ -1351,6 +1364,10 @@ class PeakInformation:
 
         return self.__partial_merge_pk_vol_fract(self.__good_intensities())
 
+    def __merge_bkg_vol_fract(self):
+
+        return self.__partial_merge_bkg_vol_fract(self.__good_intensities())
+
     def __merge_pk_bkg_ratio(self):
 
         return self.__partial_merge_pk_bkg_ratio(self.__good_intensities())
@@ -1382,6 +1399,43 @@ class PeakInformation:
             pk_vol_fract = np.sum(np.isfinite(pk_data/pk_norm))/len(data[0])
 
             return pk_vol_fract
+
+    def __partial_merge_bkg_vol_fract(self, indices):
+
+        if not self.__is_peak_integrated() or len(indices) == 0:
+
+            return 0.0
+
+        else:
+
+            data = self.__get_partial_merged_background_data_arrays(indices)
+            norm = self.__get_partial_merged_background_norm_arrays(indices)
+
+            bkg_data = np.nansum(data, axis=0)
+            bkg_norm = np.nansum(norm, axis=0)
+
+            bkg_vol_fract = np.sum(np.isfinite(bkg_data/bkg_norm))/len(data[0])
+
+            return bkg_vol_fract
+
+    def __partial_merge_pk_bkg_ratio(self, indices):
+
+        if not self.__is_peak_integrated() or len(indices) == 0:
+
+            return 0.0
+
+        else:
+
+            data = self.__get_partial_merged_peak_data_arrays(indices)
+            norm = self.__get_partial_merged_peak_norm_arrays(indices)
+
+            bkg_data = self.__get_partial_merged_background_data_arrays(indices)
+            bkg_norm = self.__get_partial_merged_background_norm_arrays(indices)
+
+            pk_vol = np.sum(np.isfinite(np.nansum(data, axis=0)/np.nansum(norm, axis=0)))
+            bkg_vol = np.sum(np.isfinite(np.nansum(bkg_data, axis=0)/np.nansum(bkg_norm, axis=0)))
+
+            return pk_vol/bkg_vol
 
     def __partial_merge_pk_bkg_ratio(self, indices):
 
@@ -1500,6 +1554,21 @@ class PeakInformation:
             pk_vol_fract = np.sum(np.isfinite(np.array(data)/np.array(norm)), axis=1)/len(data[0])
 
             return pk_vol_fract
+
+    def __bkg_vol_fract(self):
+
+        if not self.__is_peak_integrated():
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_background_data_arrays()
+            norm = self.__get_background_norm_arrays()
+
+            bkg_vol_fract = np.sum(np.isfinite(np.array(data)/np.array(norm)), axis=1)/len(data[0])
+
+            return bkg_vol_fract
 
     def __pk_bkg_ratio(self, normalize=True):
 
@@ -1838,7 +1907,7 @@ class PeakDictionary:
 
         self.set_constants(a, b, c, alpha, beta, gamma)
         self.set_satellite_info([0,0,0], [0,0,0], [0,0,0], 0)
-        
+
         chemical_formula = 'V'
         unit_cell_volume = 27.642
         z_parameter = 2
@@ -1993,6 +2062,7 @@ class PeakDictionary:
                 intens = peak.get_merged_intensity()
                 sig_intens = peak.get_merged_intensity_error()
                 pk_vol_fract = peak.get_merged_peak_volume_fraction()
+                bkg_vol_fract = peak.get_merged_background_volume_fraction()
 
                 R = peak.get_goniometers()[0]
 
@@ -2008,6 +2078,7 @@ class PeakDictionary:
                 pk.setSigmaIntensity(sig_intens)
                 pk.setPeakNumber(peak_num)
                 pk.setBinCount(pk_vol_fract)
+                pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
                 self.pws.addPeak(pk)
 
     def add_peaks(self, ws):
@@ -2298,6 +2369,7 @@ class PeakDictionary:
             intens = peak.get_merged_intensity()
             sig_intens = peak.get_merged_intensity_error()
             pk_vol_fract = peak.get_merged_peak_volume_fraction()
+            bkg_vol_fract = peak.get_merged_background_volume_fraction()
 
             run = peak.get_run_numbers().tolist()[0]
             R = peak.get_goniometers()[0]
@@ -2321,6 +2393,7 @@ class PeakDictionary:
             pk.setIntensity(intens)
             pk.setSigmaIntensity(sig_intens)
             pk.setBinCount(pk_vol_fract)
+            pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
             self.iws.addPeak(pk)
 
             peak_num = self.cws.getNumberPeaks()+1
@@ -2334,6 +2407,7 @@ class PeakDictionary:
             pk.setIntensity(intens)
             pk.setSigmaIntensity(sig_intens)
             pk.setBinCount(pk_vol_fract)
+            pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
             pk.setRunNumber(run)
             self.cws.addPeak(pk)
 
@@ -2370,7 +2444,7 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.5, adaptive_scale=False, scale=1, cross_terms=False):
+    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5, adaptive_scale=False, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
@@ -2424,9 +2498,10 @@ class PeakDictionary:
             for pn in range(self.iws.getNumberPeaks()):
 
                 pk = self.iws.getPeak(pn)
-                intens, sig_intens, pk_vol_fract = pk.getIntensity()*scale, pk.getSigmaIntensity()*scale, pk.getBinCount()
+                intens, sig_intens = pk.getIntensity()*scale, pk.getSigmaIntensity()*scale, 
+                pk_vol_fract, bkg_vol_fract = pk.getBinCount(), pk.getAbsorptionWeightedPathLength()
 
-                if (intens > 0 and sig_intens > 0 and intens/sig_intens > min_signal_noise_ratio and pk_vol_fract > min_pk_vol_fract):
+                if (intens > 0 and sig_intens > 0 and intens/sig_intens > min_signal_noise_ratio and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
 
                     h, k, l = pk.getIntHKL()
                     m, n, p = pk.getIntMNP()
@@ -2511,6 +2586,7 @@ class PeakDictionary:
                     sig_intens = peak.get_intensity_error(normalize=normalize)
 
                     pk_vol_fract = peak.get_peak_volume_fraction()
+                    bkg_vol_fract = peak.get_background_volume_fraction()
 
                     rows = peak.get_rows()
                     cols = peak.get_cols()
@@ -2752,7 +2828,7 @@ class PeakDictionary:
                 if np.any(dHKL > tol):
                     self.iws.removePeak(pn)
 
-            SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
+            # SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
 
     def __U_matrix(self, phi, theta, omega):
 
@@ -2780,49 +2856,49 @@ class PeakDictionary:
 
         a, *params = x
 
-        return a, a, a, np.pi/2, np.pi/2, np.pi/2, *params
+        return (a, a, a, np.pi/2, np.pi/2, np.pi/2, *params)
 
     def __rhom(self, x):
 
         a, alpha, *params = x
 
-        return a, a, a, alpha, alpha, alpha, *params
+        return (a, a, a, alpha, alpha, alpha, *params)
 
     def __tet(self, x):
 
         a, c, *params = x
 
-        return a, a, c, np.pi/2, np.pi/2, np.pi/2, *params
+        return (a, a, c, np.pi/2, np.pi/2, np.pi/2, *params)
 
     def __hex(self, x):
 
         a, c, *params = x
 
-        return a, a, c, np.pi/2, np.pi/2, 2*np.pi/3, *params
+        return (a, a, c, np.pi/2, np.pi/2, 2*np.pi/3, *params)
 
     def __ortho(self, x):
 
         a, b, c, *params = x
 
-        return a, b, c, np.pi/2, np.pi/2, np.pi/2, *params
+        return (a, b, c, np.pi/2, np.pi/2, np.pi/2, *params)
 
     def __mono1(self, x):
 
         a, b, c, gamma, *params = x
 
-        return a, b, c, np.pi/2, np.pi/2, gamma, *params
+        return (a, b, c, np.pi/2, np.pi/2, gamma, *params)
 
     def __mono2(self, x):
 
         a, b, c, beta, *params = x
 
-        return a, b, c, np.pi/2, beta, np.pi/2, *params
+        return (a, b, c, np.pi/2, beta, np.pi/2, *params)
 
     def __tri(self, x):
 
         a, b, c, alpha, beta, gamma, *params = x
 
-        return a, b, c, alpha, beta, gamma, *params
+        return (a, b, c, alpha, beta, gamma, *params)
 
     def __res(self, x, hkl, Q, fun):
 
@@ -2912,6 +2988,7 @@ class PeakDictionary:
                 intens = peak.get_merged_intensity()
                 sig_intens = peak.get_merged_intensity_error()
                 pk_vol_fract = peak.get_merged_peak_volume_fraction()
+                bkg_vol_fract = peak.get_merged_background_volume_fraction()
 
                 run = peak.get_run_numbers().tolist()[0]
                 R = peak.get_goniometers()[0]
@@ -2936,6 +3013,7 @@ class PeakDictionary:
                     pk.setIntensity(intens)
                     pk.setSigmaIntensity(sig_intens)
                     pk.setBinCount(pk_vol_fract)
+                    pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
                     self.iws.addPeak(pk)
 
                     pk = self.cws.createPeakQSample(V3D(Qx,Qy,Qz))
@@ -2947,6 +3025,7 @@ class PeakDictionary:
                     pk.setIntensity(intens)
                     pk.setSigmaIntensity(sig_intens)
                     pk.setBinCount(pk_vol_fract)
+                    pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
                     pk.setRunNumber(run)
                     self.cws.addPeak(pk)
 
@@ -3601,7 +3680,7 @@ class PeakStatistics:
     def __init__(self, filename, space_group):
 
         self.filename = filename
-        self.data = np.loadtxt(filename)
+        self.data = np.genfromtxt(filename, delimiter=(4,4,4,8,8,8))
 
         self.sg = SpaceGroupFactory.createSpaceGroup(space_group)
         self.pg = PointGroupFactory.createPointGroupFromSpaceGroup(self.sg)
