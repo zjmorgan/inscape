@@ -168,6 +168,8 @@ if __name__ == '__main__':
                 os.remove(os.path.join(outdir, item))
             elif item.endswith('.jpg'):
                 os.remove(os.path.join(outdir, item))
+            elif item.endswith('.pdf'):
+                os.remove(os.path.join(outdir, item))
             elif item.endswith('.txt'):
                 os.remove(os.path.join(outdir, item))
 

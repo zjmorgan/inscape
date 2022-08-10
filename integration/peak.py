@@ -568,6 +568,9 @@ class PeakEnvelope:
             if self.__show_plots: self.fig.show()
 
     def plot_projection(self, z, z0, x_extents, y_extents, mu, sigma, rho, chi_sq):
+        
+        z[z <= 0] = np.nan
+        z0[z0 <= 0] = np.nan
 
         if np.any(z > 0) and np.any(z0 > 0) and np.diff(x_extents) > 0 and np.diff(y_extents) > 0 and np.all(sigma):
 
@@ -630,27 +633,33 @@ class PeakEnvelope:
 
     def plot_integration(self, signal, u_extents, v_extents, Q_extents, centers, radii, scales):
 
-        if np.any(signal > 0) and np.diff(u_extents[0::2]) > 0 and np.diff(v_extents[0::2]) > 0 and np.diff(Q_extents[0::2]) > 0:
+        Qu = np.nansum(signal, axis=1)
+        Qv = np.nansum(signal, axis=0)
+        uv = np.nansum(signal, axis=2).T
 
-            Qu = np.nansum(signal, axis=1)
-            Qv = np.nansum(signal, axis=0)
-            uv = np.nansum(signal, axis=2).T
+        Qu[Qu <= 0] = np.nan
+        Qv[Qv <= 0] = np.nan
+        uv[uv <= 0] = np.nan
 
-            self.im_Qu.set_array(Qu)
-            self.im_Qv.set_array(Qv)
-            self.im_uv.set_array(uv)
+        if np.any(Qu > 0) and np.any(Qv > 0) and np.any(uv > 0) and np.diff(u_extents[0::2]) > 0 and np.diff(v_extents[0::2]) > 0 and np.diff(Q_extents[0::2]) > 0:
 
-            self.im_Qu.autoscale()
-            self.im_Qv.autoscale()
-            self.im_uv.autoscale()
+            if np.nanmax(Qu)-np.nanmin(Qu) > 0 and np.nanmax(Qv)-np.nanmin(Qv) > 0 and np.nanmax(uv)-np.nanmin(uv) > 0:
 
-            clim_Qu = self.im_Qu.get_clim()
-            clim_Qv = self.im_Qv.get_clim()
-            clim_uv = self.im_uv.get_clim()
+                self.im_Qu.set_array(Qu)
+                self.im_Qv.set_array(Qv)
+                self.im_uv.set_array(uv)
 
-            self.im_Qu_fit.set_clim(*clim_Qu)
-            self.im_Qv_fit.set_clim(*clim_Qv)
-            self.im_uv_fit.set_clim(*clim_uv)
+                self.im_Qu.autoscale()
+                self.im_Qv.autoscale()
+                self.im_uv.autoscale()
+
+                clim_Qu = self.im_Qu.get_clim()
+                clim_Qv = self.im_Qv.get_clim()
+                clim_uv = self.im_uv.get_clim()
+
+                self.im_Qu_fit.set_clim(*clim_Qu)
+                self.im_Qv_fit.set_clim(*clim_Qv)
+                self.im_uv_fit.set_clim(*clim_uv)
 
             Qu_extents = [Q_extents[0],Q_extents[2],u_extents[0],u_extents[2]]
             Qv_extents = [Q_extents[0],Q_extents[2],v_extents[0],v_extents[2]]
@@ -796,15 +805,21 @@ class PeakEnvelope:
 
     def plot_fitting(self, signal, I, sig, chi_sq):
 
-        if np.any(signal > 0):
+        Qu = np.nansum(signal, axis=1)
+        Qv = np.nansum(signal, axis=0)
+        uv = np.nansum(signal, axis=2).T
 
-            Qu = np.nansum(signal, axis=1)
-            Qv = np.nansum(signal, axis=0)
-            uv = np.nansum(signal, axis=2).T
+        Qu[Qu <= 0] = np.nan
+        Qv[Qv <= 0] = np.nan
+        uv[uv <= 0] = np.nan
 
-            self.im_Qu_fit.set_array(Qu)
-            self.im_Qv_fit.set_array(Qv)
-            self.im_uv_fit.set_array(uv)
+        if np.any(Qu > 0) and np.any(Qv > 0) and np.any(uv > 0) and (np.array(I) > 0).all():
+
+            if np.nanmax(Qu)-np.nanmin(Qu) > 0 and np.nanmax(Qv)-np.nanmin(Qv) > 0 and np.nanmax(uv)-np.nanmin(uv) > 0:
+
+                self.im_Qu_fit.set_array(Qu)
+                self.im_Qv_fit.set_array(Qv)
+                self.im_uv_fit.set_array(uv)
 
             self.ax_uv.set_title('I = {:.2e} \u00B1 {:.2e} [arb. unit]'.format(I[0], sig[0]))
             self.ax_uv_fit.set_title('I = {:.2e} \u00B1 {:.2e} [arb. unit]'.format(I[1], sig[1]))
@@ -936,17 +951,6 @@ class PeakInformation:
 
         return self.__bin_size
 
-    def set_ext_constant(self, c):
-
-        self.__ext_constant = c
-
-    def get_ext_constant(self):
-
-        if not hasattr(self, '_PeakInformation__ext_constant'):
-           self.__ext_constant = 0
-
-        return self.__ext_constant
-
     def set_data_scale(self, corr_scale):
 
         self.__data_scale = np.array(corr_scale)
@@ -987,6 +991,17 @@ class PeakInformation:
     def get_norm_scale(self):
 
         return self.__norm_scale
+
+    def set_ext_scale(self, corr_scale):
+
+        self.__ext_constants = np.array(corr_scale)
+
+    def get_ext_scale(self):
+
+        if self.__ext_constants is not None:
+            return self.__ext_constants
+        else:
+            return np.ones_like(self.__norm_scale)
 
     def set_bank_scale(self, bank_scale):
 
@@ -1084,13 +1099,13 @@ class PeakInformation:
 
         return self.__bkg_vol_fract()
 
-    def get_intensity(self, normalize=True):
+    def get_intensity(self):
 
-        return self.__intensity(normalize=normalize)
+        return self.__intensity()
 
-    def get_intensity_error(self, normalize=True):
+    def get_intensity_error(self):
 
-        return self.__intensity_error(normalize=normalize)
+        return self.__intensity_error()
 
     def get_goniometers(self):
 
@@ -1250,11 +1265,11 @@ class PeakInformation:
               'VolumeRatio': self.__round(self.__pk_bkg_ratio(),2),
               'PeakVolumeFraction': self.__round(self.__pk_vol_fract(),2),
               'BackgroundVolumeFraction': self.__round(self.__bkg_vol_fract(),2),
+              'ExtinctionConstants': self.__round(self.__ext_constants,3),
+              'DataScale': self.__round(self.__data_scale,3),
               'NormalizationScale': self.__round(self.__norm_scale,2),
-              'ExctinctionScale': self.get_ext_constant(),
               'PeakScaleConstant': self.__round(self.get_peak_constant(),2),
               'Wavelength': self.__round(self.__wl,2),
-              'CorrectionFactor': self.__round(self.__data_scale,3),
               'ScatteringAngle': self.__round(np.rad2deg(self.__two_theta),2),
               'AzimuthalAngle': self.__round(np.rad2deg(self.__az_phi),2),
               'GoniometerPhiAngle': self.__round(self.__phi,2),
@@ -1437,25 +1452,6 @@ class PeakInformation:
 
             return pk_vol/bkg_vol
 
-    def __partial_merge_pk_bkg_ratio(self, indices):
-
-        if not self.__is_peak_integrated() or len(indices) == 0:
-
-            return 0.0
-
-        else:
-
-            data = self.__get_partial_merged_peak_data_arrays(indices)
-            norm = self.__get_partial_merged_peak_norm_arrays(indices)
-
-            bkg_data = self.__get_partial_merged_background_data_arrays(indices)
-            bkg_norm = self.__get_partial_merged_background_norm_arrays(indices)
-
-            pk_vol = np.sum(np.isfinite(np.nansum(data, axis=0)/np.nansum(norm, axis=0)))
-            bkg_vol = np.sum(np.isfinite(np.nansum(bkg_data, axis=0)/np.nansum(bkg_norm, axis=0)))
-
-            return pk_vol/bkg_vol
-
     def __partial_merge_intensity(self, indices):
 
         if not self.__is_peak_integrated() or len(indices) == 0:
@@ -1570,7 +1566,7 @@ class PeakInformation:
 
             return bkg_vol_fract
 
-    def __pk_bkg_ratio(self, normalize=True):
+    def __pk_bkg_ratio(self):
 
         if not self.__is_peak_integrated():
 
@@ -1584,56 +1580,12 @@ class PeakInformation:
             bkg_data = self.__get_background_data_arrays()
             bkg_norm = self.__get_background_norm_arrays()
 
-            if normalize:
-                pk_vol = np.sum(np.isfinite([data,norm]).any(axis=0),axis=1)
-                bkg_vol = np.sum(np.isfinite([bkg_data,bkg_norm]).any(axis=0),axis=1)
-            else:
-                pk_vol = np.sum(np.isfinite([data]).any(axis=0),axis=1)
-                bkg_vol = np.sum(np.isfinite([bkg_data]).any(axis=0),axis=1)
+            pk_vol = np.sum(np.isfinite([data,norm]).any(axis=0),axis=1)
+            bkg_vol = np.sum(np.isfinite([bkg_data,bkg_norm]).any(axis=0),axis=1)
 
             return pk_vol/bkg_vol
 
-    def __intensity(self, normalize=True):
-
-        if not self.__is_peak_integrated():
-
-            return np.array([])
-
-        else:
-
-            data = self.__get_peak_data_arrays()
-            norm = self.__get_peak_norm_arrays()
-
-            bkg_data = self.__get_background_data_arrays()
-            bkg_norm = self.__get_background_norm_arrays()
-
-            scale_data = self.__data_scale[:,np.newaxis]
-            scale_norm = self.__norm_scale[:,np.newaxis]
-
-            volume_ratio = self.__pk_bkg_ratio(normalize=normalize)
-
-            if normalize:
-
-                constant = self.get_peak_constant()*np.prod(self.get_bin_size())
-
-                data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
-                bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
-
-                intens = np.nansum(data_scale/norm_scale, axis=1)
-                bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale, axis=1)
-
-            else:
-
-                constant = self.get_peak_constant()
-
-                intens = np.nansum(data, axis=1)
-                bkg_intens = np.nansum(bkg_data, axis=1)
-
-            intensity = (intens-np.multiply(bkg_intens,volume_ratio))*constant
-
-            return intensity
-
-    def __intensity_error(self, normalize=True):
+    def __intensity(self):
 
         if not self.__is_peak_integrated():
 
@@ -1650,80 +1602,80 @@ class PeakInformation:
             scale_data = self.get_data_scale()[:,np.newaxis]
             scale_norm = self.get_norm_scale()[:,np.newaxis]
 
-            volume_ratio = self.__pk_bkg_ratio(normalize=normalize)
+            volume_ratio = self.__pk_bkg_ratio()
 
-            if normalize:
+            constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
-                constant = self.get_peak_constant()*np.prod(self.get_bin_size())
+            data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
+            bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
 
-                data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
-                bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
+            intens = np.nansum(data_scale/norm_scale, axis=1)
+            bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale, axis=1)
 
-                intens = np.nansum(data_scale/norm_scale**2, axis=1)
-                bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale**2, axis=1)
+            intensity = (intens-np.multiply(bkg_intens,volume_ratio))*constant
 
-            else:
+            return intensity
 
-                constant = self.get_peak_constant()
+    def __intensity_error(self):
 
-                intens = np.nansum(data, axis=1)
-                bkg_intens = np.nansum(bkg_data, axis=1)
+        if not self.__is_peak_integrated():
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_peak_data_arrays()
+            norm = self.__get_peak_norm_arrays()
+
+            bkg_data = self.__get_background_data_arrays()
+            bkg_norm = self.__get_background_norm_arrays()
+
+            scale_data = self.get_data_scale()[:,np.newaxis]
+            scale_norm = self.get_norm_scale()[:,np.newaxis]
+
+            volume_ratio = self.__pk_bkg_ratio()
+
+            constant = self.get_peak_constant()*np.prod(self.get_bin_size())
+
+            data_scale, norm_scale = np.multiply(data, scale_data), np.multiply(norm, scale_norm)
+            bkg_data_scale, bkg_norm_scale = np.multiply(bkg_data, scale_data), np.multiply(bkg_norm, scale_norm)
+
+            intens = np.nansum(data_scale/norm_scale**2, axis=1)
+            bkg_intens = np.nansum(bkg_data_scale/bkg_norm_scale**2, axis=1)
 
             intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio**2))*constant
 
             return intensity
 
-#     def __get_extinction_scale(self, indices, laue=True):
-# 
-#         L = self.get_lorentz_factors(laue=laue)
-#         Tbar = 1#self.get_weighted_mean_path_length()
-# 
-#         c = self.get_ext_constant()
-#         constant = self.get_peak_constant()
-# 
-#         clusters = self.get_peak_clusters()
-# 
-#         X = L*Tbar
-# 
-#         intensity = np.zeros(len(X))
-#         factors = np.zeros(len(X))
-# 
-#         for cluster in clusters:
-# 
-#             intensity[cluster] = self.__partial_merge_intensity(cluster, ext_corr=False)/constant
-#             factors[cluster] = np.mean(X[cluster])
-# 
-#         scale = 0.5*(c*factors*intensity+np.sqrt(4+(c*factors*intensity)**2))
-# 
-#         return np.array([scale[ind] for ind in indices])
-# 
-#     def get_peak_clusters(self, laue=True, quantile=0.25):
-# 
-#         L = self.get_lorentz_factors(laue=laue)
-#         Tbar = 1#self.get_weighted_mean_path_length()
-# 
-#         X = L*Tbar
-# 
-#         n_orient = len(X)
-# 
-#         data = np.column_stack((X,np.zeros(n_orient)))
-# 
-#         bandwidth = estimate_bandwidth(data, quantile=quantile)
-# 
-#         if bandwidth > 0:
-# 
-#             clustering = MeanShift(bandwidth=bandwidth, bin_seeding=True).fit(data)
-# 
-#             labels = clustering.labels_
-#             n_cluster = len(set(labels))
-# 
-#             clusters = [np.argwhere(label == labels).flatten().tolist() for label in range(n_cluster)]
-# 
-#         else:
-# 
-#             clusters = [np.arange(n_orient)]
-# 
-#         return clusters
+    def get_peak_clusters(self, quantile=0.0):
+
+        # L = self.get_lorentz_factors(laue=laue)
+        # Tbar = self.get_weighted_mean_path_length()
+
+        # X = L*Tbar
+
+        X = self.get_wavelengths()
+
+        n_orient = len(X)
+
+        data = np.column_stack((X,np.zeros(n_orient)))
+
+        bandwidth = estimate_bandwidth(data, quantile=quantile)
+
+        if bandwidth > 0:
+
+            clustering = MeanShift(bandwidth=bandwidth, bin_seeding=True).fit(data)
+
+            labels = clustering.labels_
+            n_cluster = len(set(labels))
+
+            clusters = [np.argwhere(label == labels).flatten().tolist() for label in range(n_cluster)]
+
+        else:
+
+            clusters = [np.arange(n_orient)]
+
+        return clusters
 
     def is_peak_integrated(self):
 
@@ -1753,6 +1705,8 @@ class PeakInformation:
             if self.__chi_sq < 0.02 or self.__chi_sq > 200:
 
                 good = False
+
+            # if self.__peak_bkg_ratio < 100:
 
             if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02 or self.__peak_fit > 200 or self.__peak_fit2d > 200:
 
@@ -1838,43 +1792,43 @@ class PeakInformation:
 
         pk_data = self.__get_peak_data_arrays()
 
-        return [pk_data[ind] for ind in indices]
+        return np.array([pk_data[ind] for ind in indices])
 
     def __get_partial_merged_peak_norm_arrays(self, indices):
 
         pk_norm = self.__get_peak_norm_arrays()
 
-        return [pk_norm[ind] for ind in indices]
+        return np.array([pk_norm[ind] for ind in indices])
 
     def __get_partial_merged_background_data_arrays(self, indices):
 
         bkg_data = self.__get_background_data_arrays()
 
-        return [bkg_data[ind] for ind in indices]
+        return np.array([bkg_data[ind] for ind in indices])
 
     def __get_partial_merged_background_norm_arrays(self, indices):
 
         bkg_norm = self.__get_background_norm_arrays()
 
-        return [bkg_norm[ind] for ind in indices]
+        return np.array([bkg_norm[ind] for ind in indices])
 
     # ---
 
     def __get_peak_data_arrays(self):
 
-        return self.__pk_data
+        return np.array(self.__pk_data)
 
     def __get_peak_norm_arrays(self):
 
-        return self.__pk_norm
+        return np.array(self.__pk_norm)
 
     def __get_background_data_arrays(self):
 
-        return self.__bkg_data
+        return np.array(self.__bkg_data)
 
     def __get_background_norm_arrays(self):
 
-        return self.__bkg_norm
+        return np.array(self.__bkg_norm)
 
     def __get_peak_bin_centers(self):
 
@@ -2444,7 +2398,8 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5, adaptive_scale=False, scale=1, cross_terms=False):
+    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5,
+                       adaptive_scale=False, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
@@ -2454,7 +2409,7 @@ class PeakDictionary:
         if adaptive_scale:
             if self.iws.getNumberPeaks() > 0:
                 I = self.iws.getPeak(0).getIntensity()
-                scale = 9999.99/I
+                scale = 5000/I
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='DSpacing',
@@ -2525,7 +2480,7 @@ class PeakDictionary:
 
         return scale
 
-    def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, scale=1, normalize=True):
+    def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, scale=1):
 
         # SortPeaksWorkspace(InputWorkspace=self.iws,
         #                    ColumnNameToSortBy='Intens',
@@ -2582,8 +2537,8 @@ class PeakDictionary:
 
                 if peak.is_peak_integrated():
 
-                    intens = peak.get_intensity(normalize=normalize)
-                    sig_intens = peak.get_intensity_error(normalize=normalize)
+                    intens = peak.get_intensity()
+                    sig_intens = peak.get_intensity_error()
 
                     pk_vol_fract = peak.get_peak_volume_fraction()
                     bkg_vol_fract = peak.get_background_volume_fraction()
@@ -2812,7 +2767,7 @@ class PeakDictionary:
 
             DeleteWorkspace('cal')
 
-    def recalculate_hkl(self, tol=0.08):
+    def recalculate_hkl(self, tol=0.08, fname=None):
 
         if mtd.doesExist('cal'):
 
@@ -2821,6 +2776,18 @@ class PeakDictionary:
             SetUB(Workspace='out', UB=mtd['cal'].sample().getOrientedLattice().getUB())
 
             CalculatePeaksHKL(PeaksWorkspace='out', OverWrite=True)
+            
+            # if fname is not None:
+            #     
+            #     hdr_hkl = ['#      h', 
+            #                '       k', 
+            #                '       l', 
+            #                '    d-sp',
+            #                '      Qx',
+            #                '      Qy',
+            #                '      Qz']
+            #     
+            #     hkl_file = open(fname, 'w')
 
             for pn in range(self.iws.getNumberPeaks()-1,-1,-1):
                 ipk, opk = self.iws.getPeak(pn), mtd['out'].getPeak(pn)
@@ -3009,6 +2976,7 @@ class PeakDictionary:
                     pk.setGoniometerMatrix(R)
                     pk.setIntHKL(V3D(h,k,l))
                     pk.setIntMNP(V3D(m,n,p))
+                    # pk.setQSampleFrame(V3D(Qx,Qy,Qz))
                     pk.setPeakNumber(peak_num)
                     pk.setIntensity(intens)
                     pk.setSigmaIntensity(sig_intens)
@@ -3032,7 +3000,7 @@ class PeakDictionary:
         SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)
         SortPeaksWorkspace(self.cws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.cws)
 
-    def __spherical_aborption(self):
+    def __spherical_absorption(self):
 
         filename = os.path.join(os.path.dirname(__file__), 'absorption_sphere.csv')
 
@@ -3050,7 +3018,7 @@ class PeakDictionary:
         if fname is not None:
             absorption_file = open(fname, 'w')
 
-        f = self.__spherical_aborption()
+        f = self.__spherical_absorption()
 
         mat = mtd['iws'].sample().getMaterial()
 
@@ -3160,7 +3128,7 @@ class PeakDictionary:
                     Tbar.append(length)
 
                     # --- 
-                    
+
                     van_mu = van_n*(van_sigma_s+(van_sigma_a/1.8)*wl)
                     van_muR = van_mu*van_R
 
@@ -3178,35 +3146,97 @@ class PeakDictionary:
         self.clear_peaks()
         self.repopulate_workspaces()
 
+    def __spherical_extinction(self, model):
+
+        if model == 'secondary, gaussian':
+            fname = 'secondary_extinction_gaussian_sphere.csv'
+        elif model == 'secondary, lorentzian':
+            fname = 'secondary_extinction_lorentzian_sphere.csv'
+        else:
+            fname = 'primary_extinction_sphere.csv'
+
+        filename = os.path.join(os.path.dirname(__file__), fname)
+
+        data = np.loadtxt(filename, skiprows=1, delimiter=',', usecols=np.arange(91))
+        theta = np.loadtxt(filename, delimiter=',', max_rows=1)
+
+        f1 = scipy.interpolate.interp1d(2*np.deg2rad(theta), data[0], kind='cubic')
+        f2 = scipy.interpolate.interp1d(2*np.deg2rad(theta), data[1], kind='cubic')
+
+        return f1, f2
+
+    def __extinction_factor(self, r, g, two_theta, lamda, tbar, R, a, V, model):
+
+        rho = r/lamda
+
+        if model == 'primary':
+
+            xi = 1.5*a**2/V**2*lamda**4*rho**2
+
+        elif model == 'secondary, gaussian':
+
+            xi = a**2/V**2*lamda**3*rho/np.sqrt(1+rho**2*np.sin(two_theta)**2/g**2)*tbar*R
+
+        elif model == 'secondary, lorentzian':
+
+            xi = a**2/V**2*lamda**3*rho/(1+rho*np.sin(two_theta)/g)*tbar*R
+
+        return xi
+
+    def apply_extinction_correction(self, r, g, s, model='secondary, gaussian'):
+
+        f1, f2 = self.__spherical_extinction(model)
+
+        mat = mtd['iws'].sample().getMaterial()
+
+        a = 1e-4 # Ang
+        V = mtd['iws'].sample().getOrientedLattice().volume()
+
+        m = self.mass # g
+        M = mat.relativeMolecularMass()
+        n = mat.numberDensityEffective # A^-3
+        N = mat.totalAtoms 
+
+        rho = (n/N)/0.6022*M
+
+        R = (0.75/np.pi*m/rho)**(1/3)*1e+8 # Ang
+
+        for key in self.peak_dict.keys():
+
+            peaks = self.peak_dict.get(key)
+
+            h, k, l, m, n, p = key
+
+            for peak in peaks:
+
+                if peak.get_merged_intensity() > 0:
+
+                    scale = peak.get_data_scale()
+                    intens = peak.get_intensity()
+                    two_theta = peak.get_scattering_angles()
+                    lamda = peak.get_wavelengths()
+                    tbar = peak.get_weighted_mean_path_length()
+
+                    xi = self.__extinction_factor(r, g, two_theta, lamda, tbar, R, a, V, model=model)
+
+                    c1, c2 = f1(two_theta), f2(two_theta)
+
+                    ext_scale = 0.5*(c1*xi*intens+np.sqrt((c1*xi*intens)**2+4*(1-c2*(xi*intens)**2)))/(1-c2*(xi*intens)**2)
+
+                    ext_scale[~np.isfinite(ext_scale)] = 1
+
+                    scale *= ext_scale
+
+                    peak.set_data_scale(scale)
+
+        self.clear_peaks()
+        self.repopulate_workspaces()
+
     def clear_peaks(self):
 
         for pws in [self.iws, self.cws]:
             for pn in range(pws.getNumberPeaks()-1,-1,-1):
                 pws.removePeak(pn)
-
-#     def apply_extinction_correction(self, constants):
-# 
-#         for key in self.peak_dict.keys():
-# 
-#             peaks = self.peak_dict.get(key)
-# 
-#             h, k, l, m, n, p = key
-# 
-#             for peak in peaks:
-# 
-#                 if type(constants) is list:
-#                     c = constants[0]*abs(h*h)+constants[1]*abs(k*k)+constants[2]*abs(l*l)+\
-#                         constants[3]*abs(h*k)+constants[4]*abs(k*l)+constants[5]*abs(l*h)
-#                 else:
-#                     c = constants
-# 
-#                 peak.set_ext_constant(c)
-# 
-#         for pws in [self.iws, self.cws]:
-#             for pn in range(pws.getNumberPeaks()-1,-1,-1):
-#                 pws.removePeak(pn)
-# 
-#         self.__repopulate_workspaces()
 
 class GaussianFit3D:
 
@@ -3408,8 +3438,6 @@ class GaussianFit3D:
         Uprime_theta = np.array([[2*ux**2*(1-np.cos(omega)), 2*ux*uy*(1-np.cos(omega))+uz*np.sin(omega)*np.tan(theta)**2, ux*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)+uy*np.sin(omega)],
                                  [2*uy*ux*(1-np.cos(omega))-uz*np.sin(omega)*np.tan(theta)**2, 2*uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))*(1-np.tan(theta)**2)-ux*np.sin(omega)],
                                  [uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)-uy*np.sin(omega), uz*uy*(1-np.cos(omega))*(1-np.tan(theta)**2)+ux*np.sin(omega), -2*uz**2*(1-np.cos(omega))*np.tan(theta)**2]])/np.tan(theta)
-
-        print(np.linalg.det(Uprime_theta))
 
         yprime_mu0 = yfit*(2*a*x0+  f*x1+  e*x2)
         yprime_mu1 = yfit*(  f*x0+2*b*x1+  d*x2)

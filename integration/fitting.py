@@ -187,8 +187,8 @@ class Ellipsoid:
 
         if radius > 0.75*size:
             radius = 0.75*size
-        elif radius < 0.05:
-            radius = 0.05
+        elif radius < 0.075:
+            radius = 0.075
 
         mu_x, mu_y, sigma_x, sigma_y, rho = self.mu_x, self.mu_y, self.sigma_x, self.sigma_y, self.rho
 
@@ -230,6 +230,8 @@ class Ellipsoid:
 
         if radius > 0.75*size:
             radius = 0.75*size
+        elif radius < 0.075:
+            radius = 0.075
 
         mu_x, mu_y, sigma_x, sigma_y, rho = self.mu_x, self.mu_y, self.sigma_x, self.sigma_y, self.rho
 

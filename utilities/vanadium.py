@@ -71,8 +71,14 @@ sample_mass = dictionary['mass']
 file_directory = '/SNS/{}/IPTS-{}/nexus/'
 file_name = '{}_{}.nxs.h5'
 
-LoadEmptyInstrument(InstrumentName=instrument,
-                    OutputWorkspace=instrument)
+instrument_filename = dictionary.get('filename')
+
+if instrument_filename is not None:
+    LoadEmptyInstrument(Filename=instrument_filename,
+                        OutputWorkspace=instrument)
+else:
+    LoadEmptyInstrument(InstrumentName=instrument,
+                        OutputWorkspace=instrument)
 
 CreateGroupingWorkspace(InputWorkspace=instrument,
                         GroupDetectorsBy='bank',
@@ -172,6 +178,7 @@ if detector_calibration is not None:
     else:
         LoadIsawDetCal(InputWorkspace='van',
                        Filename=os.path.join(calibration_directory, detector_calibration))
+
 CopyInstrumentParameters(InputWorkspace='van',
                          OutputWorkspace=instrument)
 
@@ -184,6 +191,7 @@ LoadInstrument(Workspace='van',
 
 LoadMask(Instrument=instrument,
          InputFile=os.path.join(vanadium_directory, 'mask.xml'),
+         RefWorkspace='van',
          OutputWorkspace='mask')
 
 MaskDetectors(Workspace='van', MaskedWorkspace='mask')

@@ -15,7 +15,7 @@ from scipy.stats import kstwobign
 import peak
 from peak import PeakEnvelope, PeakDictionary, GaussianFit3D
 
-import img2pdf
+from PyPDF2 import PdfFileMerger
 
 import fitting
 from fitting import Ellipsoid, Profile, Projection
@@ -185,8 +185,8 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
     return pk, bkg
 
 def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoid=1.1,
-                    inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5):
-
+                    inner_bkg_ellipsoid=1.3, outer_bkg_ellipsoid=1.5, bins=[11,11,27]):
+                        
     QXaxis = mtd['normDataMD'].getXDimension()
     QYaxis = mtd['normDataMD'].getYDimension()
     QZaxis = mtd['normDataMD'].getZDimension()
@@ -205,9 +205,9 @@ def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoi
 
     Q_min, Q_max = Q_rot-dQ, Q_rot+dQ
 
-    _, Q0_bin_size = np.linspace(Q_min[0], Q_max[0], 11, retstep=True)
-    _, Q1_bin_size = np.linspace(Q_min[1], Q_max[1], 11, retstep=True)
-    _, Q2_bin_size = np.linspace(Q_min[2], Q_max[2], 27, retstep=True)
+    _, Q0_bin_size = np.linspace(Q_min[0], Q_max[0], bins[0], retstep=True)
+    _, Q1_bin_size = np.linspace(Q_min[1], Q_max[1], bins[1], retstep=True)
+    _, Q2_bin_size = np.linspace(Q_min[2], Q_max[2], bins[2], retstep=True)
 
     if not np.isclose(Q0_bin_size, 0):
         dQp[0] = np.min([Q0_bin_size,bin_size])
@@ -319,7 +319,7 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
     if instrument == 'CORELLI':
         k_min, k_max = 2.5, 10
     elif instrument == 'TOPAZ':
-        k_min, k_max = 1.8, 12.5
+        k_min, k_max = 1.8, 18
     elif instrument == 'MANDI':
         k_min, k_max = 1.5, 6.3
     elif instrument == 'SNAP':
@@ -442,8 +442,17 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                             load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                                            tube_calibration, detector_calibration)
 
-                    CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+                    # CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+                    if mtd.doesExist('tube_table'):
+                        ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
 
+                    if detector_calibration is not None:
+                        ext = os.path.splitext(detector_calibration)[1]
+                        if ext == '.xml':
+                            LoadParameterFile(Workspace=ows, Filename=detector_calibration)
+                        else:
+                            LoadIsawDetCal(InputWorkspace=ows, Filename=detector_calibration)
+  
                 if instrument == 'CORELLI':
                     gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
                     possible_axes = ['BL9:Mot:Sample:Axis1', 'BL9:Mot:Sample:Axis2', 'BL9:Mot:Sample:Axis3', 
@@ -1077,7 +1086,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
     SaveIsawUB(InputWorkspace='tmp', Filename=os.path.join(outdir, outname+'.mat'))
 
 def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, norm_scale,
-                 directory, ipts, outname, exp=None, tmp=None):
+                 directory, ipts, outname, detector_calibration, exp=None, tmp=None):
 
     for r, b, i, p, c, o in zip(runs, banks, indices, phi, chi, omega):
 
@@ -1143,7 +1152,16 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
 
                 if mtd.doesExist('sa'):
 
-                    CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+                    # CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
+                    if mtd.doesExist('tube_table'):
+                        ApplyCalibration(Workspace=ows, CalibrationTable='tube_table')
+
+                    if detector_calibration is not None:
+                        ext = os.path.splitext(detector_calibration)[1]
+                        if ext == '.xml':
+                            LoadParameterFile(Workspace=ows, Filename=detector_calibration)
+                        else:
+                            LoadIsawDetCal(InputWorkspace=ows, Filename=detector_calibration)
 
                 SetGoniometer(Workspace=ows, Goniometers='Universal')
 
@@ -1508,8 +1526,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
         for j, peak in enumerate(peaks):
 
-            pk_env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
-            ex_env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+            pk_env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
+            ex_env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
 
             summary_list = [H, K, L, d]
             stats_list = [H, K, L, d]
@@ -1651,7 +1669,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 partial_load(facility, instrument, runs, banks, indices,
                              phi, chi, omega, norm_scale,
-                             directory, ipts, outname, experiment, tmp)
+                             directory, ipts, outname, detector_calibration, experiment, tmp)
 
                 Q, Qx, Qy, Qz, data, norm = box_integrator(facility, instrument, runs, banks, indices, Q0, key,
                                                            binsize=binsize, D=D, W=W, exp=experiment)
@@ -1659,6 +1677,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 weights = data/norm
 
                 rot = True if facility == 'HFIR' else False
+
+                bins = [27,27,11] if rot else [11,11,27]
 
                 ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=radius, rotation=rot)
 
@@ -1830,7 +1850,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 if np.isclose(np.abs(np.linalg.det(W)),1) and not np.isclose(radii, 0).any() and (radii > 0).all() and (radii < np.inf).all() and not remove:
 
-                    Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pkg_bk = norm_integrator(runs, Q0, D, W)
+                    Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pkg_bk = norm_integrator(runs, Q0, D, W, bins=bins)
 
                     dQ1_extents, dQ2_extents, Qp_extents = Q_bin
 
@@ -1971,64 +1991,62 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     if mtd.doesExist('van'):
         DeleteWorkspace('van')
 
-#     merger = PdfFileMerger()
-# 
-#     for i, key in enumerate(keys[:]):
-#         env = os.path.join(outdir, '{}_{}.pdf'.format(outname,i))
-#         if os.path.exists(env):
-#             merger.append(env)
-# 
-#     merger.write(os.path.join(outdir, '{}.pdf'.format(outname)))       
-#     merger.close()
-# 
-#     merger = PdfFileMerger()
-# 
-#     for i, key in enumerate(keys[:]):
-#         env = os.path.join(outdir, 'rej_{}_{}.pdf'.format(outname,i))
-#         if os.path.exists(env):
-#             merger.append(env)
-# 
-#     merger.write(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))       
-#     merger.close()
+    merger = PdfFileMerger()
 
-    with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
-        merger = []
-        for i, key in enumerate(keys[:]):
-            peaks = peak_dict[tuple(key)]
-            for j, peak in enumerate(peaks):
-                env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
-                if os.path.exists(env):
-                    img = plt.imread(env)
-                    plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
-                    merger.append(env.replace('.png', '.jpg'))
-        if len(merger) > 0:
-            f.write(img2pdf.convert(merger))
-        else:
-            os.remove(os.path.join(outdir, '{}.pdf'.format(outname)))
+    for i, key in enumerate(keys[:]):
+        peaks = peak_dict[tuple(key)]
+        for j, peak in enumerate(peaks):  
+            env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
+            if os.path.exists(env):
+                merger.append(env)
 
-    with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
-        merger = []
-        for i, key in enumerate(keys[:]):
-            peaks = peak_dict[tuple(key)]
-            for j, peak in enumerate(peaks):
-                env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
-                if os.path.exists(env):
-                    img = plt.imread(env)
-                    plt.imsave(env.replace('.png', '.jpg'), img[:,:,:3])
-                    merger.append(env.replace('.png', '.jpg'))
-        if len(merger) > 0:
-            f.write(img2pdf.convert(merger))
-        else:
-            os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
+    merger.write(os.path.join(outdir, '{}.pdf'.format(outname)))       
+    merger.close()
+
+    merger = PdfFileMerger()
+
+    for i, key in enumerate(keys[:]):
+        peaks = peak_dict[tuple(key)]
+        for j, peak in enumerate(peaks):  
+            env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
+            if os.path.exists(env):
+                merger.append(env)
+
+    merger.write(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))       
+    merger.close()
+
+#     with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
+#         merger = []
+#         for i, key in enumerate(keys[:]):
+#             peaks = peak_dict[tuple(key)]
+#             for j, peak in enumerate(peaks):
+#                 env = os.path.join(outdir, '{}_{}_{}.jpg'.format(outname,i,j))
+#                 if os.path.exists(env):
+#                     merger.append(env)
+#         if len(merger) > 0:
+#             f.write(img2pdf.convert(merger))
+#         else:
+#             os.remove(os.path.join(outdir, '{}.pdf'.format(outname)))
+# 
+#     with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
+#         merger = []
+#         for i, key in enumerate(keys[:]):
+#             peaks = peak_dict[tuple(key)]
+#             for j, peak in enumerate(peaks):
+#                 env = os.path.join(outdir, 'rej_{}_{}_{}.jpg'.format(outname,i,j))
+#                 if os.path.exists(env):
+#                     merger.append(env)
+#         if len(merger) > 0:
+#             f.write(img2pdf.convert(merger))
+#         else:
+#             os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
 
     for i, key in enumerate(keys[:]):
         peaks = peak_dict[tuple(key)]
         for j, peak in enumerate(peaks):   
-            env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+            env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
             if os.path.exists(env):
                 os.remove(env)
-                os.remove(env.replace('.png', '.jpg'))
-            env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+            env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
             if os.path.exists(env):
                 os.remove(env)            
-                os.remove(env.replace('.png', '.jpg'))
