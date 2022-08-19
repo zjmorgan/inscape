@@ -47,9 +47,6 @@ scale_constant = 1e+4
 
 if __name__ == '__main__':
 
-    multiprocessing.set_start_method('spawn', force=True)
-    multiprocessing.freeze_support()
-
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
 
     CreateSampleWorkspace(OutputWorkspace='sample')
@@ -64,9 +61,6 @@ if __name__ == '__main__':
     gamma = dictionary['gamma']
 
     min_d = dictionary.get('minimum-d-spacing')
-
-    if min_d is None:
-        min_d = 0.7
 
     adaptive_scale = dictionary.get('adaptive-scale')
     scale_factor = dictionary.get('scale-factor')
@@ -263,7 +257,8 @@ if __name__ == '__main__':
         join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
 
         # merge.pre_integration(*join_args)
-
+        
+        multiprocessing.set_start_method('spawn', force=True)
         with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
             pool.starmap(merge.pre_integration, join_args)
             pool.close()
@@ -340,8 +335,14 @@ if __name__ == '__main__':
         ref_peak_dictionary.load(os.path.join(directory, ref_dict))
     else:
         ref_peak_dictionary = None
+        
+    cif_file = dictionary.get('cif-file')
 
     peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+
+    if cif_file is not None:
+        peak_dictionary.load_cif(os.path.join(directory, cif_file))
+        
     peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
     peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
     peak_dictionary.set_scale_constant(scale_constant)
@@ -425,7 +426,9 @@ if __name__ == '__main__':
     # ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True)
 
     keys = list(peak_dict.keys())
-    keys = [key for key in keys if peak_dictionary.get_d(*key) > min_d]
+
+    if min_d is not None:
+        keys = [key for key in keys if peak_dictionary.get_d(*key) > min_d]
 
     split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
 
@@ -444,6 +447,7 @@ if __name__ == '__main__':
 
     # merge.integration_loop(*join_args[0])
 
+    multiprocessing.set_start_method('spawn', force=True)
     with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
         pool.starmap(merge.integration_loop, join_args)
         pool.close()
@@ -550,6 +554,7 @@ if __name__ == '__main__':
 
         join_args = [(split, outname+'_weak_p{}'.format(i), *args) for i, split in enumerate(split_keys)]
 
+        multiprocessing.set_start_method('spawn', force=True)
         with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
             pool.starmap(merge.integration_loop, join_args)
             pool.close()
@@ -617,7 +622,7 @@ if __name__ == '__main__':
     LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, tmp+'.mat'))
 
     peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
-    peak_dictionary.recalculate_hkl()
+    peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
     peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
 
     if sg is not None:

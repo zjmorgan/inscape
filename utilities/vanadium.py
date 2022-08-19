@@ -8,8 +8,8 @@ import sys
 
 import multiprocessing
 
-filename = sys.argv[1]
-    
+filename = syst.argv[0], sys.argv[1]
+
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
@@ -80,6 +80,8 @@ else:
     LoadEmptyInstrument(InstrumentName=instrument,
                         OutputWorkspace=instrument)
 
+ExtractMonitors(InputWorkspace=instrument, DetectorWorkspace=instrument, MonitorWorkspace='monitors')
+
 CreateGroupingWorkspace(InputWorkspace=instrument,
                         GroupDetectorsBy='bank',
                         OutputWorkspace='group')
@@ -133,11 +135,16 @@ rebin_param = '{},{},{}'.format(k_min,k_max,k_max)
 if tof_min is not None and tof_max is not None:
     Load(Filename=files_to_load,
          OutputWorkspace='van',
+         LoadMonitors=False,
          FilterByTofMin=tof_min,
          FilterByTofMax=tof_max)
 else:
     Load(Filename=files_to_load,
+         LoadMonitors=False,
          OutputWorkspace='van')
+
+if instrument_filename is not None:
+    LoadInstrument(Workspace='van', Filename=instrument_filename, RewriteSpectraMap=True)
 
 AddSampleLog(Workspace='van', 
              LogName='vanadium-mass', 
@@ -155,7 +162,10 @@ if tof_min is not None and tof_max is not None:
 else:
     Load(Filename=bkg_files_to_load,
          OutputWorkspace='bkg')
-         
+
+if instrument_filename is not None:
+    LoadInstrument(Workspace='bkg', Filename=instrument_filename, RewriteSpectraMap=True)
+
 NormaliseByCurrent(InputWorkspace='bkg',
                    OutputWorkspace='bkg')
 
@@ -187,7 +197,7 @@ SaveNexusGeometry(InputWorkspace=instrument,
 
 LoadInstrument(Workspace='van',
                Filename=os.path.join(vanadium_directory, 'calibration.nxs'),
-               RewriteSpectraMap=False)
+               RewriteSpectraMap=True)
 
 LoadMask(Instrument=instrument,
          InputFile=os.path.join(vanadium_directory, 'mask.xml'),

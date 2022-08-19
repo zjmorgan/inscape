@@ -1,7 +1,9 @@
 from mantid.simpleapi import *
 import numpy as np
 
-#import itertools
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+from itertools import cycle
 
 import sys, os, re
 
@@ -112,37 +114,120 @@ if cif_file is not None:
     peak_dictionary.load_cif(os.path.join(directory, cif_file))
         
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
-peak_dictionary.set_material_info(chemical_formula, z_parameter, 0)
+peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
 peak_dictionary.set_scale_constant(scale_constant)
 peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
-peak_dictionary.apply_spherical_correction(0)
 
-LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
+models = ['primary', 'secondary, gaussian', 'secondary, lorentzian',
+          'secondary, gaussian type I', 'secondary, gaussian type II', 
+          'secondary, lorentzian type I', 'secondary, lorentzian type II']
 
-peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
-peak_dictionary.recalculate_hkl(fname= os.path.join(outdir, 'indexing.txt'))
-peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
-peak_dictionary.save_reflections(os.path.join(directory, outname+'.hkl'), adaptive_scale=False, scale=scale)
+rs, gs, scales, chi_sqs = [], [], [], [], 
 
-if sg is not None:
-    peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
-    peak_statistics.prune_outliers()
-    peak_statistics.write_statisics()
-    peak_statistics.write_intensity()
+ext_file = open(os.path.join(outdir, 'extinction.txt'), 'w')
 
-absorption_file = os.path.join(outdir, 'absorption.txt')
+for model in models:
 
-if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
-    peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
-    peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
-    peak_dictionary.recalculate_hkl()
-    peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
-    peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+    r, g, scale, chi_sq = peak_dictionary.fit_extinction(model)
 
-    if sg is not None:
-        peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
-        peak_statistics.prune_outliers()
-        peak_statistics.write_statisics()
-        peak_statistics.write_intensity()
+    ext_file.write('model: {}\n'.format(model))
+    if r > 0:
+        ext_file.write('cystallite size: {:.4f} micron\n'.format(r/10000))
+    if g > 0:
+        if 'gaussian' in model:
+            sig = np.rad2deg(1/(2*np.sqrt(np.pi)*g))
+            ext_file.write('cystallite misorientation: {:.4f} deg \n'.format(sig))
+        if 'lorentzian' in model:
+            eta = np.rad2deg(1/(2*np.pi*g))
+            ext_file.write('cystallite misorientation: {:.4f} deg \n'.format(eta))
 
-peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
+    ext_file.write('scale: {:.4e} \n'.format(scale))
+    ext_file.write('chi^2: {:.4e} \n\n'.format(chi_sq))
+
+    rs.append(r)
+    gs.append(g)
+    scales.append(scale)
+    chi_sqs.append(chi_sq)
+
+i = np.argmin(chi_sqs)
+model = models[i]
+
+message = ''
+lamda = 1 # Ang
+
+if 'secondary' in model and 'type' not in model:
+    if g/(r/lamda) < 0.001:
+        model += ' type I'
+        message = 'r >> lambda g'
+    elif (r/lamda)/g < 0.001:
+        model += ' type II'
+        message = 'r << lambda g'
+
+ext_file.write('model: {} {}'.format(model,message))
+ext_file.close()
+
+i = models.index(model)
+
+r, g, s = rs[i], gs[i], scales[i]
+
+X, Y, I, E, HKL, d_spacing = peak_dictionary.extinction_curves(r, g, s, model)
+
+marker = ['o', 's', '<']
+markers = cycle(marker)
+
+fig, ax = plt.subplots(1, 1, num=2)
+
+for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
+
+    mark = next(markers)
+    sort = np.argsort(x)
+
+    ax.errorbar(x[sort], i[sort], yerr=e[sort]*0, linestyle='-', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+    ax.plot(x[sort], y[sort], linestyle='--', color='C{}'.format(j%9))
+
+ax.legend()
+ax.set_yscale('linear')
+ax.set_xlabel(r'$x$') #
+ax.set_ylabel(r'$I$ [arb. unit]')
+
+xlim = ax.get_xlim()
+ylim = ax.get_ylim()
+
+marker = ['o', 's', '<']
+markers = cycle(marker)
+
+with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
+
+    for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
+
+        fig, ax = plt.subplots(1, 1, num=3)
+
+        mark = next(markers)
+        sort = np.argsort(x)
+
+        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='-', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+        ax.plot(x[sort], y[sort], linestyle='--', color='C{}'.format(j%9))
+        ax.set_title('d = {:.4} \u212B'.format(d))
+
+        ax.legend()
+        ax.set_yscale('linear')
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_xlabel(r'$x$') #
+        ax.set_ylabel(r'$I$ [arb. unit]')
+
+        pdf.savefig()
+        plt.close()
+
+peak_dictionary.apply_extinction_correction(r, g, s, model=model)
+peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_ext.int'))
+
+peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), peak_dictionary.hm)
+peak_statistics.prune_outliers()
+peak_statistics.write_statisics()
+peak_statistics.write_intensity()
+
+peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_ext.int'), peak_dictionary.hm)
+peak_statistics.prune_outliers()
+peak_statistics.write_statisics()
+peak_statistics.write_intensity()

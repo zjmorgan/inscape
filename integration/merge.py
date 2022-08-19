@@ -15,7 +15,10 @@ from scipy.stats import kstwobign
 import peak
 from peak import PeakEnvelope, PeakDictionary, GaussianFit3D
 
-from PyPDF2 import PdfFileMerger
+from PIL import Image
+
+#from PyPDF2 import PdfFileMerger
+import img2pdf
 
 import fitting
 from fitting import Ellipsoid, Profile, Projection
@@ -321,7 +324,7 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
     elif instrument == 'TOPAZ':
         k_min, k_max = 1.8, 18
     elif instrument == 'MANDI':
-        k_min, k_max = 1.5, 6.3
+        k_min, k_max = 1.5, 3.0
     elif instrument == 'SNAP':
         k_min, k_max = 1.8, 12.5
 
@@ -383,19 +386,11 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, exp=None, tmp=None):
 
-    min_d_spacing = np.min([min_d, 0.7])
-    max_d_spacing= 100
-
     # peak centroid radius ---------------------------------------------------------
     centroid_radius = 0.125
 
     load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration)
-
-    if mtd.doesExist('sa'):
-        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
-    else:
-        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
 
     CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
 
@@ -427,6 +422,12 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
             if facility == 'SNS':
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
                 LoadEventNexus(Filename=filename, OutputWorkspace=ows)
+                
+                if i == 0:
+                    if mtd.doesExist('sa'):
+                        CreatePeaksWorkspace(InstrumentWorkspace=ows, NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
+                    else:
+                        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
 
                 if mtd.doesExist('sa'):
                     MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
@@ -473,14 +474,14 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 elif instrument == 'TOPAZ':
                     k_max, two_theta_max = 12.5, 160
                 elif instrument == 'MANDI':
-                    k_max, two_theta_max = 6.3, 160
+                    k_max, two_theta_max = 3.0, 160
                 elif instrument == 'SNAP':
                     k_max, two_theta_max = 12.5, 138
 
                 lamda_min = 2*np.pi/k_max  
 
-                Qmax = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
-
+                Q_max = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
+                
                 # min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
                 #                                              QDimensions='Q3D',
                 #                                              dEAnalysisMode='Elastic',
@@ -492,8 +493,8 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                             dEAnalysisMode='Elastic',
                             Q3DFrames='Q_sample',
                             LorentzCorrection=False,
-                            MinValues='{},{},{}'.format(-Qmax,-Qmax,-Qmax),
-                            MaxValues='{},{},{}'.format(Qmax,Qmax,Qmax),
+                            MinValues='{},{},{}'.format(-Q_max,-Q_max,-Q_max),
+                            MaxValues='{},{},{}'.format(Q_max,Q_max,Q_max),
                             Uproj='1,0,0',
                             Vproj='0,1,0',
                             Wproj='0,0,1')
@@ -549,12 +550,12 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 elif instrument == 'HB2C':
                     two_theta_max = 156
 
-                Qmax = 4*np.pi/lamda*np.sin(np.deg2rad(two_theta_max)/2)
+                Q_max = 4*np.pi/lamda*np.sin(np.deg2rad(two_theta_max)/2)
 
                 ConvertHFIRSCDtoMDE(InputWorkspace=ows,
                                     Wavelength=lamda,
-                                    MinValues='{},{},{}'.format(-Qmax,-Qmax,-Qmax),
-                                    MaxValues='{},{},{}'.format(Qmax,Qmax,Qmax),
+                                    MinValues='{},{},{}'.format(-Q_max,-Q_max,-Q_max),
+                                    MaxValues='{},{},{}'.format(Q_max,Q_max,Q_max),
                                     SplitInto=5,
                                     SplitThreshold=1000,
                                     MaxRecursionDepth=13,
@@ -579,11 +580,15 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 elif instrument == 'TOPAZ':
                     k_min, k_max = 1.8, 12.5
                 elif instrument == 'MANDI':
-                    k_min, k_max = 1.5, 6.3
+                    k_min, k_max = 1.5, 3.0
                 elif instrument == 'SNAP':
                     k_min, k_max = 1.8, 12.5
 
                 lamda_min, lamda_max = 2*np.pi/k_max, 2*np.pi/k_min
+
+
+                min_d_spacing = 2*np.pi/Q_max
+                max_d_spacing = np.max([mtd[omd].getExperimentInfo(0).sample().getOrientedLattice().d(*hkl) for hkl in [(1,0,0),(0,1,0),(0,0,1)]])
 
                 PredictPeaks(InputWorkspace=omd,
                              WavelengthMin=lamda_min,
@@ -637,6 +642,9 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
 
                     min_angle = run.getLogData('s1').value.min()
                     max_angle = run.getLogData('s1').value.max()
+
+                min_d_spacing = 2*np.pi/Q_max
+                max_d_spacing = np.max([mtd[omd].getExperimentInfo(0).sample().getOrientedLattice().d(*hkl) for hkl in [(1,0,0),(0,1,0),(0,0,1)]])
 
                 PredictPeaks(InputWorkspace=omd,
                              WavelengthMin=lamda_min,
@@ -1117,7 +1125,7 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                BankName=bank, 
                                SingleBankPixelsOnly=True,
                                LoadLogs=False,
-                               LoadNexusInstrumentXML=True,
+                               LoadNexusInstrumentXML=False,
                                OutputWorkspace=ows)
 
                 pc = norm_scale[r]
@@ -1526,8 +1534,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
         for j, peak in enumerate(peaks):
 
-            pk_env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
-            ex_env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
+            pk_env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+            ex_env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
 
             summary_list = [H, K, L, d]
             stats_list = [H, K, L, d]
@@ -1991,62 +1999,76 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     if mtd.doesExist('van'):
         DeleteWorkspace('van')
 
-    merger = PdfFileMerger()
+    # merger = PdfFileMerger()
+    # 
+    # for i, key in enumerate(keys[:]):
+    #     peaks = peak_dict[tuple(key)]
+    #     for j, peak in enumerate(peaks):  
+    #         env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
+    #         if os.path.exists(env):
+    #             merger.append(env)
+    # 
+    # merger.write(os.path.join(outdir, '{}.pdf'.format(outname)))       
+    # merger.close()
+    # 
+    # merger = PdfFileMerger()
+    # 
+    # for i, key in enumerate(keys[:]):
+    #     peaks = peak_dict[tuple(key)]
+    #     for j, peak in enumerate(peaks):  
+    #         env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
+    #         if os.path.exists(env):
+    #             merger.append(env)
+    # 
+    # merger.write(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))       
+    # merger.close()
 
-    for i, key in enumerate(keys[:]):
-        peaks = peak_dict[tuple(key)]
-        for j, peak in enumerate(peaks):  
-            env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
-            if os.path.exists(env):
-                merger.append(env)
+    with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        for i, key in enumerate(keys[:]):
+            peaks = peak_dict[tuple(key)]
+            for j, peak in enumerate(peaks):
+                env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
+                if os.path.exists(env):
+                    with Image.open(env) as im:
+                        fig = env.replace('png','jpg')
+                        im = im.convert('RGB')
+                        im.save(fig, 'JPEG')
+                    merger.append(fig)
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(outdir, '{}.pdf'.format(outname)))
 
-    merger.write(os.path.join(outdir, '{}.pdf'.format(outname)))       
-    merger.close()
-
-    merger = PdfFileMerger()
-
-    for i, key in enumerate(keys[:]):
-        peaks = peak_dict[tuple(key)]
-        for j, peak in enumerate(peaks):  
-            env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
-            if os.path.exists(env):
-                merger.append(env)
-
-    merger.write(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))       
-    merger.close()
-
-#     with open(os.path.join(outdir, '{}.pdf'.format(outname)), 'wb') as f:
-#         merger = []
-#         for i, key in enumerate(keys[:]):
-#             peaks = peak_dict[tuple(key)]
-#             for j, peak in enumerate(peaks):
-#                 env = os.path.join(outdir, '{}_{}_{}.jpg'.format(outname,i,j))
-#                 if os.path.exists(env):
-#                     merger.append(env)
-#         if len(merger) > 0:
-#             f.write(img2pdf.convert(merger))
-#         else:
-#             os.remove(os.path.join(outdir, '{}.pdf'.format(outname)))
-# 
-#     with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
-#         merger = []
-#         for i, key in enumerate(keys[:]):
-#             peaks = peak_dict[tuple(key)]
-#             for j, peak in enumerate(peaks):
-#                 env = os.path.join(outdir, 'rej_{}_{}_{}.jpg'.format(outname,i,j))
-#                 if os.path.exists(env):
-#                     merger.append(env)
-#         if len(merger) > 0:
-#             f.write(img2pdf.convert(merger))
-#         else:
-#             os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
+    with open(os.path.join(outdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        for i, key in enumerate(keys[:]):
+            peaks = peak_dict[tuple(key)]
+            for j, peak in enumerate(peaks):
+                env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
+                if os.path.exists(env):
+                    with Image.open(env) as im:
+                        fig = env.replace('png','jpg')
+                        im = im.convert('RGB')
+                        im.save(fig, 'JPEG')
+                    merger.append(fig)
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(outdir, 'rej_{}.pdf'.format(outname)))
 
     for i, key in enumerate(keys[:]):
         peaks = peak_dict[tuple(key)]
         for j, peak in enumerate(peaks):   
-            env = os.path.join(outdir, '{}_{}_{}.pdf'.format(outname,i,j))
+            env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
             if os.path.exists(env):
                 os.remove(env)
-            env = os.path.join(outdir, 'rej_{}_{}_{}.pdf'.format(outname,i,j))
+            env = os.path.join(outdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
             if os.path.exists(env):
                 os.remove(env)            
+            env = os.path.join(outdir, '{}_{}_{}.jpg'.format(outname,i,j))
+            if os.path.exists(env):
+                os.remove(env)
+            env = os.path.join(outdir, 'rej_{}_{}_{}.jpg'.format(outname,i,j))
+            if os.path.exists(env):
+                os.remove(env)

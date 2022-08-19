@@ -3,10 +3,12 @@ from mantid.simpleapi import CloneWorkspace, DeleteWorkspace
 from mantid.simpleapi import SortPeaksWorkspace, FilterPeaks
 from mantid.simpleapi import SetUB, SaveIsawUB, CalculatePeaksHKL
 from mantid.simpleapi import SetSampleMaterial, SaveNexus
+from mantid.simpleapi import CreateSampleWorkspace, LoadCIF
 from mantid.simpleapi import mtd
 
 from mantid.kernel import V3D
 from mantid.geometry import PointGroupFactory, SpaceGroupFactory
+from mantid.geometry import CrystalStructure, ReflectionGenerator
 from mantid import config
 
 import matplotlib as mpl
@@ -1685,7 +1687,7 @@ class PeakInformation:
 
         return not (self.__peak_num == 0 or self.__pk_norm is None)
 
-    def __good_intensities(self, min_vol_fract=0.5):
+    def __good_intensities(self, min_vol_fract=0.25):
 
         pk_vol_fract = np.array(self.__pk_vol_fract())
 
@@ -1706,9 +1708,13 @@ class PeakInformation:
 
                 good = False
 
-            # if self.__peak_bkg_ratio < 100:
+            if self.__peak_bkg_ratio < 100:
+                
+                if self.__peak_fit > 200 or self.__peak_fit2d > 200:
+                    
+                    good = False
 
-            if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02 or self.__peak_fit > 200 or self.__peak_fit2d > 200:
+            if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02:
 
                 good = False
 
@@ -1840,11 +1846,11 @@ class PeakInformation:
 
 class PeakDictionary:
 
-    def __init__(self, a, b, c, alpha, beta, gamma):
+    def __init__(self, a=5, b=5, c=5, alpha=90, beta=90, gamma=90):
 
         self.peak_dict = { }
 
-        self.scale_constant = 1e+8
+        self.scale_constant = 1e+4
 
         self.mass = 0
 
@@ -1871,6 +1877,26 @@ class PeakDictionary:
                           ZParameter=z_parameter,
                           UnitCellVolume=unit_cell_volume,
                           SampleMass=0)
+
+    def load_cif(self, filename):
+
+        sws = CreateSampleWorkspace()
+
+        LoadCIF(sws, filename)
+
+        cs = sws.sample().getCrystalStructure()
+
+        self.hm = cs.getSpaceGroup().getHMSymbol()
+        atoms = '; '.join(list(cs.getScatterers()))
+
+        uc = cs.getUnitCell()
+        a, b, c, alpha, beta, gamma = uc.a(), uc.b(), uc.c(), uc.alpha(), uc.beta(), uc.gamma()
+
+        constants = '{} {} {} {} {} {}'.format(a,b,c,alpha,beta,gamma)
+
+        self.cs = CrystalStructure(constants, self.hm, atoms)
+
+        self.set_constants(a, b, c, alpha, beta, gamma)
 
     def __call_peak(self, h, k, l, m=0, n=0, p=0):
 
@@ -1912,7 +1938,7 @@ class PeakDictionary:
         dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
 
         return h+dh, k+dk, l+dl
-        
+
     def set_UB(self, UB):
 
         self.UB = UB
@@ -2398,7 +2424,8 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5,
+    def save_hkl(self, filename, min_signal_noise_ratio=3,
+                       min_pk_vol_fract=0.7, min_bkg_vol_fract=0.35,
                        adaptive_scale=False, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
@@ -2480,7 +2507,7 @@ class PeakDictionary:
 
         return scale
 
-    def save_reflections(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.5, adaptive_scale=True, scale=1):
+    def save_reflections(self, filename, min_sig_noise_ratio=3, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.35, adaptive_scale=True, scale=1):
 
         # SortPeaksWorkspace(InputWorkspace=self.iws,
         #                    ColumnNameToSortBy='Intens',
@@ -2562,7 +2589,7 @@ class PeakDictionary:
 
                     for i in range(len(intens)):
 
-                        if (intens[i] > 0 and sig_intens[i] > 0 and intens[i]/sig_intens[i] > min_sig_noise_ratio and pk_vol_fract[i] > min_vol_fract):
+                        if (intens[i] > 0 and sig_intens[i] > 0 and intens[i]/sig_intens[i] > min_sig_noise_ratio and pk_vol_fract[i] > min_pk_vol_fract and bkg_vol_fract[i] > min_bkg_vol_fract):
 
                             if intens[i] > I_max: 
                                 I_max = intens[i].copy()
@@ -2611,7 +2638,7 @@ class PeakDictionary:
                             j += 1
 
         if adaptive_scale:
-            scale = 9999.99/I_max
+            scale = 5000/I_max
 
         filename, ext = os.path.splitext(filename)
 
@@ -2669,7 +2696,7 @@ class PeakDictionary:
 
         return scale
 
-    def save_calibration(self, filename, min_sig_noise_ratio=3, min_vol_fract=0.9):
+    def save_calibration(self, filename, min_sig_noise_ratio=3):
 
         CloneWorkspace(self.cws, OutputWorkspace='cal')
 
@@ -2681,12 +2708,12 @@ class PeakDictionary:
 
         cal = mtd['cal']
 
-        n = cal.getNumberPeaks()
-        for pn in range(n-1,-1,-1):
-            pk = cal.getPeak(pn)
-            sig_noise = pk.getIntensityOverSigma()
-            if sig_noise < 10:
-                cal.removePeak(pn)
+        # n = cal.getNumberPeaks()
+        # for pn in range(n-1,-1,-1):
+        #     pk = cal.getPeak(pn)
+        #     sig_noise = pk.getIntensityOverSigma()
+        #     if sig_noise < min_sig_noise_ratio:
+        #         cal.removePeak(pn)
 
         n = cal.getNumberPeaks()
 
@@ -2763,7 +2790,7 @@ class PeakDictionary:
 
         SaveNexus(InputWorkspace='cal', Filename=filename)
 
-        if n > 20:
+        if n <= 20:
 
             DeleteWorkspace('cal')
 
@@ -2771,30 +2798,64 @@ class PeakDictionary:
 
         if mtd.doesExist('cal'):
 
-            CloneWorkspace(InputWorkspace=self.iws, OutputWorkspace='out')
+            SortPeaksWorkspace(InputWorkspace=self.iws,
+                               ColumnNameToSortBy='Intens',
+                               SortAscending=True,
+                               OutputWorkspace=self.iws)
+
+            SortPeaksWorkspace(InputWorkspace=self.iws, 
+                               ColumnNameToSortBy='DSpacing',
+                               SortAscending=True,
+                               OutputWorkspace=self.iws)
+
+            SortPeaksWorkspace(InputWorkspace=self.cws,
+                               ColumnNameToSortBy='Intens',
+                               SortAscending=True,
+                               OutputWorkspace=self.cws)
+
+            SortPeaksWorkspace(InputWorkspace=self.cws, 
+                               ColumnNameToSortBy='DSpacing',
+                               SortAscending=True,
+                               OutputWorkspace=self.cws)
+
+            CloneWorkspace(InputWorkspace=self.cws, OutputWorkspace='out')
 
             SetUB(Workspace='out', UB=mtd['cal'].sample().getOrientedLattice().getUB())
 
             CalculatePeaksHKL(PeaksWorkspace='out', OverWrite=True)
-            
-            # if fname is not None:
-            #     
-            #     hdr_hkl = ['#      h', 
-            #                '       k', 
-            #                '       l', 
-            #                '    d-sp',
-            #                '      Qx',
-            #                '      Qy',
-            #                '      Qz']
-            #     
-            #     hkl_file = open(fname, 'w')
 
-            for pn in range(self.iws.getNumberPeaks()-1,-1,-1):
-                ipk, opk = self.iws.getPeak(pn), mtd['out'].getPeak(pn)
+            if fname is not None:
+
+                hdr_hkl = ['#        h', '         k', '         l',
+                           '        Qx', '        Qy', '        Qz',
+                           '      d-sp', '   pk-vol%', '  bkg-vol%']
+                fmt_khl = 9*'{:10}'+'\n'
+
+                hkl_file = open(fname, 'w')
+                hkl_file.write(fmt_khl.format(*hdr_hkl))
+
+            for pn in range(mtd['out'].getNumberPeaks()-1,-1,-1):
+                ipk, opk = self.cws.getPeak(pn), mtd['out'].getPeak(pn)
                 dHKL = np.abs(ipk.getHKL()-opk.getHKL())
+
+                hkl = np.round(opk.getHKL(), 3)
+                Q = np.round(opk.getQSampleFrame(), 3)
+                d = np.round(opk.getDSpacing(), 4)
+                pk_vol_perc = np.round(100*opk.getBinCount(),2)
+                bkg_vol_perc = np.round(100*opk.getAbsorptionWeightedPathLength(),2)
+
+                line_hkl = [*hkl, *Q, d, pk_vol_perc, bkg_vol_perc]
+
+                if fname is not None:
+                    hkl_file.write(fmt_khl.format(*line_hkl))
+
                 if np.any(dHKL > tol):
                     self.iws.removePeak(pn)
+                    self.cws.removePeak(pn)
 
+            if fname is not None:
+                hkl_file.close()
+                    
             # SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
 
     def __U_matrix(self, phi, theta, omega):
@@ -2982,6 +3043,7 @@ class PeakDictionary:
                     pk.setSigmaIntensity(sig_intens)
                     pk.setBinCount(pk_vol_fract)
                     pk.setAbsorptionWeightedPathLength(bkg_vol_fract)
+                    pk.setRunNumber(run)
                     self.iws.addPeak(pk)
 
                     pk = self.cws.createPeakQSample(V3D(Qx,Qy,Qz))
@@ -2999,6 +3061,32 @@ class PeakDictionary:
 
         SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)
         SortPeaksWorkspace(self.cws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.cws)
+
+    def clear_peaks(self):
+
+        for pws in [self.iws, self.cws]:
+            for pn in range(pws.getNumberPeaks()-1,-1,-1):
+                pws.removePeak(pn)
+                
+    def __equivalent_sphere(self):
+
+        mat = mtd['iws'].sample().getMaterial()
+
+        #V = mtd['iws'].sample().getOrientedLattice().volume()
+
+        m = self.mass # g
+        M = mat.relativeMolecularMass()
+        n = mat.numberDensityEffective # A^-3
+        N = mat.totalAtoms 
+
+        if N > 0:
+            rho = (n/N)/0.6022*M
+            V = m/rho
+            R = (0.75/np.pi*m/rho)**(1/3) # cm
+        else:
+            rho, V, R = 0, 0, 0
+
+        return m, M, n, N, rho, V, R 
 
     def __spherical_absorption(self):
 
@@ -3025,21 +3113,9 @@ class PeakDictionary:
         sigma_a = mat.absorbXSection()
         sigma_s = mat.totalScatterXSection()
 
-        m = self.mass # g
-        M = mat.relativeMolecularMass()
-        n = mat.numberDensityEffective # A^-3
-        N = mat.totalAtoms 
-
         chemical_formula = '-'.join([atm.symbol+str(no) for atm, no in zip(*mat.chemicalFormula())])
 
-        if chemical_formula == '':
-            rho, V, R = 0, 0, 0
-
-        else:
-            rho = (n/N)/0.6022*M
-            V = m/rho
-
-            R = (0.75/np.pi*V)**(1/3)
+        m, M, n, N, rho, V, R = self.__equivalent_sphere()
 
         if fname is not None:
 
@@ -3148,9 +3224,9 @@ class PeakDictionary:
 
     def __spherical_extinction(self, model):
 
-        if model == 'secondary, gaussian':
+        if 'gaussian' in model:
             fname = 'secondary_extinction_gaussian_sphere.csv'
-        elif model == 'secondary, lorentzian':
+        elif 'lorentzian' in model:
             fname = 'secondary_extinction_lorentzian_sphere.csv'
         else:
             fname = 'primary_extinction_sphere.csv'
@@ -3164,42 +3240,17 @@ class PeakDictionary:
         f2 = scipy.interpolate.interp1d(2*np.deg2rad(theta), data[1], kind='cubic')
 
         return f1, f2
-
-    def __extinction_factor(self, r, g, two_theta, lamda, tbar, R, a, V, model):
-
-        rho = r/lamda
-
-        if model == 'primary':
-
-            xi = 1.5*a**2/V**2*lamda**4*rho**2
-
-        elif model == 'secondary, gaussian':
-
-            xi = a**2/V**2*lamda**3*rho/np.sqrt(1+rho**2*np.sin(two_theta)**2/g**2)*tbar*R
-
-        elif model == 'secondary, lorentzian':
-
-            xi = a**2/V**2*lamda**3*rho/(1+rho*np.sin(two_theta)/g)*tbar*R
-
-        return xi
-
+        
     def apply_extinction_correction(self, r, g, s, model='secondary, gaussian'):
+
+        generator = ReflectionGenerator(self.cs)
 
         f1, f2 = self.__spherical_extinction(model)
 
-        mat = mtd['iws'].sample().getMaterial()
+        m, M, n, N, rho, V, R = self.__equivalent_sphere()
 
-        a = 1e-4 # Ang
-        V = mtd['iws'].sample().getOrientedLattice().volume()
-
-        m = self.mass # g
-        M = mat.relativeMolecularMass()
-        n = mat.numberDensityEffective # A^-3
-        N = mat.totalAtoms 
-
-        rho = (n/N)/0.6022*M
-
-        R = (0.75/np.pi*m/rho)**(1/3)*1e+8 # Ang
+        V = mtd['iws'].sample().getOrientedLattice().volume() # Ang^3
+        R *= 1e+8 # Ang
 
         for key in self.peak_dict.keys():
 
@@ -3215,28 +3266,339 @@ class PeakDictionary:
                     intens = peak.get_intensity()
                     two_theta = peak.get_scattering_angles()
                     lamda = peak.get_wavelengths()
-                    tbar = peak.get_weighted_mean_path_length()
+                    Tbar = peak.get_weighted_mean_path_length()
 
-                    xi = self.__extinction_factor(r, g, two_theta, lamda, tbar, R, a, V, model=model)
+                    F2 = generator.getFsSquared([V3D(h,k,l)])[0]
 
                     c1, c2 = f1(two_theta), f2(two_theta)
+                    
+                    x = self.__extinction_x(r, g, F2, two_theta, lamda, Tbar, R, V, model)
+                    y = self.__extinction_correction(r, g, F2, c1, c2, two_theta, lamda, Tbar, R, V, model)
 
-                    ext_scale = 0.5*(c1*xi*intens+np.sqrt((c1*xi*intens)**2+4*(1-c2*(xi*intens)**2)))/(1-c2*(xi*intens)**2)
+                    y[~np.isfinite(y)] = 1
+                    y[x > 30] = np.inf
 
-                    ext_scale[~np.isfinite(ext_scale)] = 1
-
-                    scale *= ext_scale
+                    scale /= y
 
                     peak.set_data_scale(scale)
 
         self.clear_peaks()
         self.repopulate_workspaces()
 
-    def clear_peaks(self):
+    # ---
 
-        for pws in [self.iws, self.cws]:
-            for pn in range(pws.getNumberPeaks()-1,-1,-1):
-                pws.removePeak(pn)
+    def peak_families(self, wavelength_band=0.8, top_fraction=0.1, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5):
+
+        generator = ReflectionGenerator(self.cs)
+
+        sg = SpaceGroupFactory.createSpaceGroup(self.hm)
+        pg = PointGroupFactory.createPointGroupFromSpaceGroup(sg)
+
+        SortPeaksWorkspace(InputWorkspace=self.iws,
+                           ColumnNameToSortBy='Intens',
+                           SortAscending=False,
+                           OutputWorkspace=self.iws)
+
+        num_peaks = self.iws.getNumberPeaks()
+
+        i_max, i_min = self.iws.getPeak(0).getIntensity(), self.iws.getPeak(num_peaks-1).getIntensity()
+
+        i_thresh = i_max-(i_max-i_min)*top_fraction
+
+        I, E = [], []
+        two_theta, lamda, Tbar = [], [], []
+        hkl, F2, d_spacing = [], [], []
+
+        key_set = set()
+
+        for pn in range(self.iws.getNumberPeaks()):
+
+            pk = self.iws.getPeak(pn)
+
+            if pk.getIntensity() > i_thresh:
+
+                h, k, l = pk.getIntHKL()
+                m, n, p = pk.getIntMNP()
+
+                h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
+
+                key = (h, k, l, m, n, p)
+
+                key_set.add(key)
+
+        min_no = int(self.iws.getNumberPeaks()*top_fraction)
+
+        if len(key_set) < min_no:
+
+            for pn in range(min_no):
+
+                pk = self.iws.getPeak(pn)
+
+                h, k, l = pk.getIntHKL()
+                m, n, p = pk.getIntMNP()
+
+                h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
+
+                key = (h, k, l, m, n, p)
+
+                key_set.add(key)
+
+        SortPeaksWorkspace(self.iws, 
+                           ColumnNameToSortBy='DSpacing',
+                           SortAscending=False,
+                           OutputWorkspace=self.iws)
+
+        key_set = list(key_set)
+
+        keys = self.peak_dict.keys()
+
+        for key in key_set:
+
+            i, e = [], []
+            tt, wl, wpl = [], [], []
+
+            h, k, l, m, n, p = key
+
+            equivalents = pg.getEquivalents(V3D(h,k,l))[::-1]
+
+            for equivalent in equivalents:
+
+                h, k, l = equivalent
+
+                h, k, l = int(h), int(k), int(l)
+
+                key = h, k, l, m, n, p
+
+                if key in keys:
+
+                    h, k, l, m, n, p = key
+
+                    if key in key_set:
+                        key_set.remove(key)
+
+                    peaks = self.peak_dict.get(key)
+
+                    d = self.get_d(h,k,l,m,n,p)
+
+                    for peak in peaks:
+
+                        intensities = peak.get_intensity()
+                        sig_intensities = peak.get_intensity_error()
+
+                        two_thetas = peak.get_scattering_angles()
+                        lamdas = peak.get_wavelengths()
+                        wpls = peak.get_weighted_mean_path_length()
+
+                        pk_vol_fracts = peak.get_peak_volume_fraction()
+                        bkg_vol_fracts = peak.get_background_volume_fraction()
+
+                        for j, (intens, sig_intens) in enumerate(zip(intensities, sig_intensities)):
+
+                            if pk_vol_fracts[j] > min_pk_vol_fract and bkg_vol_fracts[j] > min_bkg_vol_fract:
+
+                                if intens/sig_intens > 3:
+
+                                    i.append(intens)
+                                    e.append(sig_intens)
+
+                                    tt.append(two_thetas[j])
+                                    wl.append(lamdas[j])
+                                    wpl.append(wpls[j])
+
+            if len(wl) > 3:
+
+                if np.max(wl)-np.min(wl) > wavelength_band:
+
+                    I.append(np.array(i))
+                    E.append(np.array(e))
+
+                    two_theta.append(np.array(tt))
+                    lamda.append(np.array(wl))
+                    Tbar.append(np.array(wpl))
+
+                    hkl.append([h,k,l])
+                    F2.append(generator.getFsSquared([V3D(h,k,l)])[0])
+                    d_spacing.append(d)
+
+        return I, E, two_theta, lamda, Tbar, hkl, F2, d_spacing
+
+    def __extinction_factor(self, r, g, two_theta, lamda, Tbar, R, V, model):
+
+        a = 1e-4 # Ang
+
+        rho = r/lamda
+
+        if model == 'primary':
+
+            xi = 1.5*a**2/V**2*lamda**4*rho**2
+
+        elif model == 'secondary, gaussian':
+
+            xi = a**2/V**2*lamda**3*rho/np.sqrt(1+rho**2*np.sin(two_theta)**2/g**2)*Tbar*R
+
+        elif model == 'secondary, lorentzian':
+
+            xi = a**2/V**2*lamda**3*rho/(1+rho*np.sin(two_theta)/g)*Tbar*R
+
+        elif 'type II' in model:
+
+            xi = a**2/V**2*lamda**3*rho*Tbar*R
+
+        elif 'type I' in model:
+
+            xi = a**2/V**2*lamda**3*g/np.sin(two_theta)*Tbar*R
+
+        return xi
+
+    def __extinction_x(self, r, g, F2, two_theta, lamda, Tbar, R, V, model):
+
+        xi = self.__extinction_factor(r, g, two_theta, lamda, Tbar, R, V, model)
+
+        return xi*F2
+
+    def __extinction_correction(self, r, g, F2, c1, c2, two_theta, lamda, Tbar, R, V, model):
+
+        x = self.__extinction_x(r, g, F2, two_theta, lamda, Tbar, R, V, model)
+
+        return 1/np.sqrt(1+c1*x+c2*x**2)
+
+    def __extinction_model(self, r, g, s, F2, c1, c2, two_theta, lamda, Tbar, R, V, model):
+
+        y = self.__extinction_correction(r, g, F2, c1, c2, two_theta, lamda, Tbar, R, V, model)
+
+        return s*F2*y
+
+    def __extinction_residual(self, params, I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model):
+
+        r, g, s = params['r'], params['g'], params['s']
+
+        diff_I = np.array([])
+        err_I = np.array([])
+
+        for j, (i, e, sf, tt, wl, wpl) in enumerate(zip(I, E, F2, two_theta, lamda, Tbar)):
+
+            c1, c2 = f1(tt), f2(tt)
+
+            intens = self.__extinction_model(r, g, s, sf, c1, c2, tt, wl, wpl, R, V, model)
+
+            dI = sf*(i-intens)
+
+            diff_I = np.concatenate((diff_I,dI))
+            err_I = np.concatenate((err_I,e))
+
+        return diff_I/err_I
+
+    def extinction_curves(self, r, g, s, model):
+
+        f1, f2 = self.__spherical_extinction(model)
+
+        m, M, n, N, rho, V, R = self.__equivalent_sphere()
+
+        V = mtd['iws'].sample().getOrientedLattice().volume() # Ang^3
+        R *= 1e+8 # Ang
+
+        I, E, two_theta, lamda, Tbar, hkl, F2, d_spacing = self.peak_families()
+
+        X, Y = [], []
+
+        for j, (i, e, sf, tt, wl, wpl) in enumerate(zip(I, E, F2, two_theta, lamda, Tbar)):
+
+            c1, c2 = f1(tt), f2(tt)
+
+            x = self.__extinction_x(r, g, sf, tt, wl, wpl, R, V, model)
+            y = self.__extinction_model(r, g, s, sf, c1, c2, tt, wl, wpl, R, V, model)
+
+            mask = x > 30
+
+            if np.any(mask):
+
+                x = x[~mask]
+                y = y[~mask]
+
+                I[j] = i[~mask]
+                E[j] = e[~mask]
+
+                two_theta[j] = tt[~mask]
+                lamda[j] = wl[~mask]
+                Tbar[j] = wpl[~mask]
+
+            X.append(x)
+            Y.append(y)
+
+        indices = np.argsort(d_spacing)[::-1]
+
+        X = [X[i] for i in indices]
+        Y = [Y[i] for i in indices]
+        I = [I[i] for i in indices]
+        E = [E[i] for i in indices]
+
+        hkl = [hkl[i] for i in indices]
+        d_spacing = [d_spacing[i] for i in indices]
+
+        return X, Y, I, E, hkl, d_spacing
+
+    def fit_extinction(self, model):
+
+        f1, f2 = self.__spherical_extinction(model)
+
+        m, M, n, N, rho, V, R = self.__equivalent_sphere()
+
+        V = mtd['iws'].sample().getOrientedLattice().volume() # Ang^3
+        R *= 1e+8 # Ang
+
+        I, E, two_theta, lamda, Tbar, hkl, F2, d_spacing = self.peak_families()
+
+        params = Parameters()
+
+        params.add('s', value=1, min=0)
+
+        if 'type II' in model:
+            params.add('r', value=1000, min=0, max=1e7)
+            params.add('g', value=0, vary=False)
+        elif 'type I' in model:
+            params.add('r', value=0, vary=False)
+            params.add('g', value=500, min=0)
+        elif 'secondary' in model:
+            params.add('r', value=1000, min=0, max=1e7)
+            params.add('g', value=500, min=0)
+        else:
+            params.add('r', value=1000, min=0, max=1e7)
+            params.add('g', value=0, vary=False)
+
+        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model))
+        result = out.minimize(method='least_squares')
+
+        r = result.params['r'].value
+        g = result.params['g'].value
+        s = result.params['s'].value
+
+        for j, (i, e, sf, tt, wl, wpl) in enumerate(zip(I, E, F2, two_theta, lamda, Tbar)):
+
+            c1, c2 = f1(tt), f2(tt)
+
+            x = self.__extinction_x(r, g, sf, tt, wl, wpl, R, V, model)
+
+            mask = x > 30
+
+            if np.any(mask):
+
+                I[j] = i[~mask]
+                E[j] = e[~mask]
+
+                two_theta[j] = tt[~mask]
+                lamda[j] = wl[~mask]
+                Tbar[j] = wpl[~mask]
+
+        params['r'].set(value=r)
+        params['g'].set(value=g)
+        params['s'].set(value=s)
+
+        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model))
+        result = out.minimize(method='least_squares')
+
+        report_fit(result)
+
+        return result.params['r'].value, result.params['g'].value, result.params['s'].value, result.redchi
 
 class GaussianFit3D:
 

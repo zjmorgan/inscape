@@ -29,6 +29,11 @@ dictionary = parameters.load_input_file(filename)
 
 run_nos = dictionary['runs'] if type(dictionary['runs']) is list else [dictionary['runs']]
 
+run_labels = '_'.join([str(r[0])+'-'+str(r[-1]) if type(r) is list else str(r) for r in run_nos if any([type(item) is list for item in run_nos])])
+
+if run_labels == '':
+    run_labels = str(run_nos[0])+'-'+str(run_nos[-1])
+        
 if len(run_nos) < n_proc:
     n_proc = len(run_nos)
 
@@ -44,6 +49,10 @@ outname = dictionary['name']
 outdir = os.path.join(directory, outname)
 if not os.path.exists(outdir):
     os.mkdir(outdir)
+
+rundir = os.path.join(directory,'{}_{}'.format(instrument,run_labels))
+if not os.path.exists(rundir):
+    os.mkdir(rundir)
 
 parameters.output_input_file(filename, directory, outname+'_opt')
 
@@ -113,12 +122,15 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
 
         LoadEventNexus(Filename='/{}/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(facility,instrument,ipts,instrument,r), 
                        OutputWorkspace='data')
-                       
+
         if tube_calibration is not None:
             ApplyCalibration(Workspace='data', CalibrationTable='tube_table')
 
         if detector_calibration is not None:
-            LoadParameterFile(Workspace='data', Filename=detector_calibration)
+            if os.path.splitext(detector_calibration)[-1] == '.xml':
+                LoadParameterFile(Workspace='data', Filename=detector_calibration)
+            else:
+                LoadIsawDetCal(InputWorkspace='data', Filename=detector_calibration)
 
         if instrument == 'CORELLI':
             SetGoniometer('data', Axis0=str(gon_axis)+',0,1,0,1') 
@@ -185,7 +197,7 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                                          beta=beta,
                                          gamma=gamma)
         else:
-            FindUBUsingFFT(PeaksWorkspace='pk', MinD=2, MaxD=30)
+            FindUBUsingFFT(PeaksWorkspace='pk', MinD=3, MaxD=25, Iterations=15)
             IndexPeaks(PeaksWorkspace='pk', Tolerance=0.125, RoundHKLs=True)
             SelectCellOfType(PeaksWorkspace='pk', 
                              CellType=cell_type,
@@ -234,25 +246,56 @@ if __name__ == '__main__':
     SaveNexus(Inputworkspace='peaks', Filename=os.path.join(outdir,'peaks.nxs'))
 
     if np.array([a,b,c,alpha,beta,gamma]).all():
-            FindUBUsingLatticeParameters(PeaksWorkspace='peaks',
-                                         a=a,
-                                         b=b,
-                                         c=c,
-                                         alpha=alpha,
-                                         beta=beta,
-                                         gamma=gamma)
+        FindUBUsingLatticeParameters(PeaksWorkspace='peaks',
+                                     a=a,
+                                     b=b,
+                                     c=c,
+                                     alpha=alpha,
+                                     beta=beta,
+                                     gamma=gamma)
     else:
         FindUBUsingFFT(PeaksWorkspace='peaks', MinD=3, MaxD=20)
-        IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True)
+        IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True, CommonUBForAll=False)
         SelectCellOfType(PeaksWorkspace='peaks', 
                          CellType=cell_type,
                          Centering=centering,
                          Apply=True)
 
-    OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, Apply=True)
-    SaveIsawUB(InputWorkspace='peaks', Filename=os.path.join(directory, outname+'_opt.mat'))
+    IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True, CommonUBForAll=False)
+    OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=True, Apply=True, OutputDirectory=rundir)
+    IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=False, CommonUBForAll=False)
+    SaveIsawUB(InputWorkspace='peaks', Filename=os.path.join(outdir, 'UB_opt.mat'))
 
     for p in range(n_proc):
         partfile = os.path.join(outdir,'peaks_p{}.nxs'.format(p))
         if os.path.exists(partfile):
-            os.remove(partfile)            
+            os.remove(partfile)      
+
+    ol = mtd['peaks'].sample().getOrientedLattice()
+    a, b, c, alpha, beta, gamma = ol.a(), ol.b(), ol.c(), ol.alpha(), ol.beta(), ol.gamma()
+
+    for r in run_nos:
+
+        FilterPeaks(InputWorkspace='peaks',
+                    FilterVariable='RunNumber',
+                    FilterValue=r,
+                    Operator='=',
+                    OutputWorkspace='tmp')
+
+        R = mtd['tmp'].getPeak(0).getGoniometerMatrix().copy()
+        for pn in range(mtd['tmp'].getNumberPeaks()):
+            pk = mtd['tmp'].getPeak(pn)
+            pk.setGoniometerMatrix(np.eye(3))
+
+        CalculateUMatrix(PeaksWorkspace='tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
+
+        U = mtd['tmp'].sample().getOrientedLattice().getU().copy()
+        B = mtd['tmp'].sample().getOrientedLattice().getB().copy()
+        Up = np.dot(R.T,U)
+
+        UBp = np.dot(Up,B)
+
+        SetUB(Workspace='tmp', UB=UBp)
+
+        SaveIsawUB(InputWorkspace='tmp', 
+                   Filename=os.path.join(rundir,'{}_{}_UB.mat'.format(instrument,r)))
