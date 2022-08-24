@@ -2824,27 +2824,34 @@ class PeakDictionary:
 
             CalculatePeaksHKL(PeaksWorkspace='out', OverWrite=True)
 
+            ol = mtd['out'].sample().getOrientedLattice()
+
             if fname is not None:
 
-                hdr_hkl = ['#        h', '         k', '         l',
-                           '        Qx', '        Qy', '        Qz',
-                           '      d-sp', '   pk-vol%', '  bkg-vol%']
-                fmt_khl = 9*'{:10}'+'\n'
+                hdr_hkl = ['#      h', '       k', '       l', '    d-sp',
+                           '       h', '       k', '       l', '    d-sp',
+                           '      Qx', '      Qy', '      Qz', '  pk-vol%', ' bkg-vol%']
+                fmt_khl = 11*'{:8}'+2*'{:9}'+'\n'
 
                 hkl_file = open(fname, 'w')
                 hkl_file.write(fmt_khl.format(*hdr_hkl))
+
+                fmt_khl = 3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+2*'{:9.2f}'+'\n'
 
             for pn in range(mtd['out'].getNumberPeaks()-1,-1,-1):
                 ipk, opk = self.cws.getPeak(pn), mtd['out'].getPeak(pn)
                 dHKL = np.abs(ipk.getHKL()-opk.getHKL())
 
-                hkl = np.round(opk.getHKL(), 3)
-                Q = np.round(opk.getQSampleFrame(), 3)
-                d = np.round(opk.getDSpacing(), 4)
+                HKL = ipk.getHKL()
+                D = ol.d(V3D(*HKL))
+
+                hkl = opk.getHKL()
+                Q = opk.getQSampleFrame()
+                d = opk.getDSpacing()
                 pk_vol_perc = np.round(100*opk.getBinCount(),2)
                 bkg_vol_perc = np.round(100*opk.getAbsorptionWeightedPathLength(),2)
 
-                line_hkl = [*hkl, *Q, d, pk_vol_perc, bkg_vol_perc]
+                line_hkl = [*HKL, D, *hkl, d, *Q, pk_vol_perc, bkg_vol_perc]
 
                 if fname is not None:
                     hkl_file.write(fmt_khl.format(*line_hkl))
@@ -3271,7 +3278,7 @@ class PeakDictionary:
                     F2 = generator.getFsSquared([V3D(h,k,l)])[0]
 
                     c1, c2 = f1(two_theta), f2(two_theta)
-                    
+
                     x = self.__extinction_x(r, g, F2, two_theta, lamda, Tbar, R, V, model)
                     y = self.__extinction_correction(r, g, F2, c1, c2, two_theta, lamda, Tbar, R, V, model)
 
@@ -3287,72 +3294,21 @@ class PeakDictionary:
 
     # ---
 
-    def peak_families(self, wavelength_band=0.8, top_fraction=0.1, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5):
+    def peak_families(self, top_fraction=0.2, min_pk_vol_fract=0.7, min_bkg_vol_fract=0.5):
 
         generator = ReflectionGenerator(self.cs)
 
         sg = SpaceGroupFactory.createSpaceGroup(self.hm)
         pg = PointGroupFactory.createPointGroupFromSpaceGroup(sg)
 
-        SortPeaksWorkspace(InputWorkspace=self.iws,
-                           ColumnNameToSortBy='Intens',
-                           SortAscending=False,
-                           OutputWorkspace=self.iws)
-
-        num_peaks = self.iws.getNumberPeaks()
-
-        i_max, i_min = self.iws.getPeak(0).getIntensity(), self.iws.getPeak(num_peaks-1).getIntensity()
-
-        i_thresh = i_max-(i_max-i_min)*top_fraction
-
         I, E = [], []
         two_theta, lamda, Tbar = [], [], []
         hkl, F2, d_spacing = [], [], []
+        band = []
 
-        key_set = set()
+        keys = list(self.peak_dict.keys())
 
-        for pn in range(self.iws.getNumberPeaks()):
-
-            pk = self.iws.getPeak(pn)
-
-            if pk.getIntensity() > i_thresh:
-
-                h, k, l = pk.getIntHKL()
-                m, n, p = pk.getIntMNP()
-
-                h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
-
-                key = (h, k, l, m, n, p)
-
-                key_set.add(key)
-
-        min_no = int(self.iws.getNumberPeaks()*top_fraction)
-
-        if len(key_set) < min_no:
-
-            for pn in range(min_no):
-
-                pk = self.iws.getPeak(pn)
-
-                h, k, l = pk.getIntHKL()
-                m, n, p = pk.getIntMNP()
-
-                h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
-
-                key = (h, k, l, m, n, p)
-
-                key_set.add(key)
-
-        SortPeaksWorkspace(self.iws, 
-                           ColumnNameToSortBy='DSpacing',
-                           SortAscending=False,
-                           OutputWorkspace=self.iws)
-
-        key_set = list(key_set)
-
-        keys = self.peak_dict.keys()
-
-        for key in key_set:
+        for key in keys:
 
             i, e = [], []
             tt, wl, wpl = [], [], []
@@ -3373,8 +3329,7 @@ class PeakDictionary:
 
                     h, k, l, m, n, p = key
 
-                    if key in key_set:
-                        key_set.remove(key)
+                    keys.remove(key)
 
                     peaks = self.peak_dict.get(key)
 
@@ -3407,7 +3362,12 @@ class PeakDictionary:
 
             if len(wl) > 3:
 
-                if np.max(wl)-np.min(wl) > wavelength_band:
+                b = np.max(wl)-np.min(wl)
+
+                if b > 0.5:
+
+                    sf = generator.getFsSquared([V3D(h,k,l)])[0]
+                    band.append(b*sf)
 
                     I.append(np.array(i))
                     E.append(np.array(e))
@@ -3417,8 +3377,25 @@ class PeakDictionary:
                     Tbar.append(np.array(wpl))
 
                     hkl.append([h,k,l])
-                    F2.append(generator.getFsSquared([V3D(h,k,l)])[0])
+                    F2.append(sf)
                     d_spacing.append(d)
+
+        no_fam = len(F2)
+
+        min_no = int(no_fam*top_fraction)
+
+        sort = np.argsort(band)[::-1][:min_no]
+
+        I = [I[i] for i in sort]
+        E = [E[i] for i in sort]
+
+        two_theta = [two_theta[i] for i in sort]
+        lamda = [lamda[i] for i in sort]
+        Tbar = [Tbar[i] for i in sort]
+
+        hkl = [hkl[i] for i in sort]
+        F2 = [F2[i] for i in sort]
+        d_spacing = [d_spacing[i] for i in sort]
 
         return I, E, two_theta, lamda, Tbar, hkl, F2, d_spacing
 
@@ -3468,20 +3445,43 @@ class PeakDictionary:
 
         return s*F2*y
 
-    def __extinction_residual(self, params, I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model):
+    def __extinction_residual(self, params, I, E, HKL, two_theta, lamda, Tbar, R, V, f1, f2, model):
+
+        uc = self.cs.getUnitCell()
+        a, b, c, alpha, beta, gamma = uc.a(), uc.b(), uc.c(), uc.alpha(), uc.beta(), uc.gamma()
+
+        constants = '{} {} {} {} {} {}'.format(a,b,c,alpha,beta,gamma)
+
+        scatterers = self.cs.getScatterers()
+
+        U = str(params['U'].value)
+
+        atoms = []
+        for j, scatterer in enumerate(scatterers):
+            elm, x, y, z, occ, _ = scatterer.split(' ')
+            atoms.append(' '.join([elm,x,y,z,occ,U]))
+
+        atoms = '; '.join(atoms)
+
+        cs = CrystalStructure(constants, self.hm, atoms)
+        generator = ReflectionGenerator(cs)
 
         r, g, s = params['r'], params['g'], params['s']
 
         diff_I = np.array([])
         err_I = np.array([])
 
-        for j, (i, e, sf, tt, wl, wpl) in enumerate(zip(I, E, F2, two_theta, lamda, Tbar)):
+        for j, (i, e, hkl, tt, wl, wpl) in enumerate(zip(I, E, HKL, two_theta, lamda, Tbar)):
 
             c1, c2 = f1(tt), f2(tt)
 
+            h, k, l = hkl
+
+            sf = generator.getFsSquared([V3D(h,k,l)])[0]
+
             intens = self.__extinction_model(r, g, s, sf, c1, c2, tt, wl, wpl, R, V, model)
 
-            dI = sf*(i-intens)
+            dI = (i-intens)
 
             diff_I = np.concatenate((diff_I,dI))
             err_I = np.concatenate((err_I,e))
@@ -3565,12 +3565,15 @@ class PeakDictionary:
             params.add('r', value=1000, min=0, max=1e7)
             params.add('g', value=0, vary=False)
 
-        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model))
+        params.add('U', min=0, max=1, value=0.001)
+
+        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, hkl, two_theta, lamda, Tbar, R, V, f1, f2, model))
         result = out.minimize(method='least_squares')
 
         r = result.params['r'].value
         g = result.params['g'].value
         s = result.params['s'].value
+        U = result.params['U'].value
 
         for j, (i, e, sf, tt, wl, wpl) in enumerate(zip(I, E, F2, two_theta, lamda, Tbar)):
 
@@ -3592,13 +3595,14 @@ class PeakDictionary:
         params['r'].set(value=r)
         params['g'].set(value=g)
         params['s'].set(value=s)
+        params['U'].set(value=U)
 
-        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, F2, two_theta, lamda, Tbar, R, V, f1, f2, model))
+        out = Minimizer(self.__extinction_residual, params, fcn_args=(I, E, hkl, two_theta, lamda, Tbar, R, V, f1, f2, model))
         result = out.minimize(method='least_squares')
 
         report_fit(result)
 
-        return result.params['r'].value, result.params['g'].value, result.params['s'].value, result.redchi
+        return result.params['r'].value, result.params['g'].value, result.params['s'].value, result.params['U'].value, result.redchi
 
 class GaussianFit3D:
 

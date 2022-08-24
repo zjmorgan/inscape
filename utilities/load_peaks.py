@@ -3,8 +3,9 @@ from mantid.simpleapi import *
 import matplotlib.pyplot as plt
 import numpy as np
 
-directory = '/home/zgf/Documents/data/Mn3Si2Te6'
-sys.path.append('/home/zgf/.git/inscape/integration/')
+shared = '/SNS/CORELLI/IPTS-28994/shared/'
+directory = shared+'ErFeO3_300K_CCR_202208_V0725_2p5_8'
+sys.path.append('/SNS/software/scd/dev/inscape_dev/integration/')
 
 import peak
 
@@ -13,9 +14,10 @@ imp.reload(peak)
 
 from peak import PeakDictionary
 
-outname = 'Mn3Si2Te6_1T_005K.pkl'
+outname = 'ErFeO3_300K_28mg_full_202208.pkl'
 
-peak_dictionary = PeakDictionary(7.0555, 7.0555, 14.1447, 90, 90, 120)
+peak_dictionary = PeakDictionary()
+peak_dictionary.load_cif(os.path.join(shared, 'ErFeO3.cif'))
 peak_dictionary.load(os.path.join(directory, outname))
 
-peak_dictionary(0,1,0)
+peak_dictionary(1,3,0)

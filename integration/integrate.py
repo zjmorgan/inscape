@@ -332,7 +332,7 @@ if __name__ == '__main__':
 
     if ref_dict is not None:
         ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
-        ref_peak_dictionary.load(os.path.join(directory, ref_dict))
+        ref_peak_dictionary.load(os.path.join(working_directory, ref_dict))
     else:
         ref_peak_dictionary = None
         
@@ -341,7 +341,7 @@ if __name__ == '__main__':
     peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
     if cif_file is not None:
-        peak_dictionary.load_cif(os.path.join(directory, cif_file))
+        peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
         
     peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
     peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
@@ -663,6 +663,7 @@ if __name__ == '__main__':
 
     fmt_summary = 3*'{:8}'+'{:8}'+6*'{:8}'+'{:4}'+6*'{:8}'+'\n'
     fmt_stats = 3*'{:8}'+'{:8}'+9*'{:10}'+'\n'
+    fmt_params = 3*'{:8}'+'{:8}'+2*'{:10}'+6*'{:8}'+3*'{:8}'+'{:6}'+2*'{:6}'+'\n'
 
     hdr_summary = ['#      h', '       k', '       l', '    d-sp', '  wl-min', '  wl-max', \
                    '  2t-min', '  2t-max', '  az-min', '  az-max', '   n', \
@@ -672,6 +673,10 @@ if __name__ == '__main__':
                  ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d', 
                  ' chi2-2d', ' pk/bkg-2d', ' I/sig-2d',  
                  ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d']
+
+    hdr_params = ['#      h', '       k', '       l', '    d-sp', '         A', '         B', 
+                  '    mu_0', '    mu_1', '    mu_2', ' sigma_0', ' sigma_1', ' sigma_2',
+                  '  rho_12', '  rho_02', '  rho_01', '   pts', '  type', ' bound']
 
     peak_file = open(os.path.join(directory, outname+'_summary.txt'), 'w')
     excl_file = open(os.path.join(outdir, 'rejected_summary.txt'), 'w')
@@ -720,6 +725,35 @@ if __name__ == '__main__':
 
     for i in range(n_proc):
         partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_stats.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                excl_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    peak_file.close()
+    excl_file.close()
+
+    peak_file = open(os.path.join(directory, outname+'_params.txt'), 'w')
+    excl_file = open(os.path.join(outdir, 'rejected_params.txt'), 'w')
+
+    peak_file.write(fmt_params.format(*hdr_params))
+    excl_file.write(fmt_params.format(*hdr_params))
+
+    for i in range(n_proc):
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_params.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                peak_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    for i in range(n_proc):
+        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_params.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -782,6 +816,35 @@ if __name__ == '__main__':
 
         for i in range(n_proc):
             partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_stats.txt')
+            if os.path.exists(partfile):
+                tmp_file = open(partfile, 'r')
+                tmp_lines = tmp_file.readlines()
+                for tmp_line in tmp_lines:
+                    excl_file.write(tmp_line)
+                tmp_file.close()
+                os.remove(partfile)
+
+        peak_file.close()
+        excl_file.close()
+
+        peak_file = open(os.path.join(directory, outname+'_weak_params.txt'), 'w')
+        excl_file = open(os.path.join(outdir, 'rejected_weak_params.txt'), 'w')
+
+        peak_file.write(fmt_params.format(*hdr_params))
+        excl_file.write(fmt_params.format(*hdr_params))
+
+        for i in range(n_proc):
+            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_params.txt')
+            if os.path.exists(partfile):
+                tmp_file = open(partfile, 'r')
+                tmp_lines = tmp_file.readlines()
+                for tmp_line in tmp_lines:
+                    peak_file.write(tmp_line)
+                tmp_file.close()
+                os.remove(partfile)
+
+        for i in range(n_proc):
+            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_params.txt')
             if os.path.exists(partfile):
                 tmp_file = open(partfile, 'r')
                 tmp_lines = tmp_file.readlines()

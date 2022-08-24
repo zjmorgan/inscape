@@ -1507,8 +1507,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     peak_stats = open(os.path.join(outdir, '{}_stats.txt'.format(outname)), 'w')
     excl_stats = open(os.path.join(outdir, 'rej_{}_stats.txt'.format(outname)), 'w')
 
+    peak_params = open(os.path.join(outdir, '{}_params.txt'.format(outname)), 'w')
+    excl_params = open(os.path.join(outdir, 'rej_{}_params.txt'.format(outname)), 'w')
+
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
     fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+9*'{:10.2f}'+'\n'
+    fmt_params = 3*'{:8.2f}'+'{:8.4f}'+2*'{:10.2e}'+6*'{:8.3f}'+3*'{:8.2f}'+'{:6.0f}'+2*'{:6}'+'\n'
 
     for i, key in enumerate(keys[:]):
 
@@ -1531,7 +1535,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
         d = peak_dictionary.get_d(h, k, l, m, n, p)
 
         min_sig_noise_ratio = 3 if facility == 'SNS' else 1
-
+       
         for j, peak in enumerate(peaks):
 
             pk_env = os.path.join(outdir, '{}_{}_{}.png'.format(outname,i,j))
@@ -1539,6 +1543,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
             summary_list = [H, K, L, d]
             stats_list = [H, K, L, d]
+            params_list = [H, K, L, d]
 
             runs = peak.get_run_numbers().tolist()
             banks = peak.get_bank_numbers().tolist()
@@ -1855,6 +1860,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 fit_2d = [ellip.mu_x, ellip.mu_y, ellip.sigma_x, ellip.sigma_y, ellip.rho]
 
                 #print('\tPeak-radii: {}'.format(radii))
+                
+                bound_str, fit_est_str = '  none', '  none'
+                A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
                 if np.isclose(np.abs(np.linalg.det(W)),1) and not np.isclose(radii, 0).any() and (radii > 0).all() and (radii < np.inf).all() and not remove:
 
@@ -1869,14 +1877,12 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     sigs = ellip.sig()
                     dQ1, dQ2, Qp, _, _ = data_norm
 
-                    mask = (signal > 0) & (error > 0)
+                    mask = (signal > 0) & (error > 0) & (signal < np.inf) & (error < np.inf) 
                     N = signal[mask].size
 
                     try_fit = False
                     if N > 50:
-                        signal_range = signal[mask].max()-signal[mask].min()
-                        if not np.isclose(2*signal_range, 0.5*signal_range, rtol=1e-13, atol=1e-13):
-                            try_fit = True
+                        try_fit = True
 
                     if try_fit:
 
@@ -1889,10 +1895,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         if peak_bkg_ratio > 2 and sig_noise_ratio > 20 and peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20:
                             A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+                            fit_est_str = '   est'
                             if boundary:
                                 A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                                fit_est_str = '   fit'
                         else:
                             A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                            fit_est_str = '   fit'
+
+                        bound_str = ' false' if boundary else '  true'
 
                         intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -1955,12 +1966,15 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     remove = True
 
+                params_list.extend([A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N, bound_str, fit_est_str])
+
                 if remove:
 
                     peak_envelope.write_figure(ex_env)
 
                     excl_summary.write(fmt_summary.format(*summary_list))
                     excl_stats.write(fmt_stats.format(*stats_list))
+                    excl_params.write(fmt_params.format(*params_list))
 
                 else:
 
@@ -1968,6 +1982,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                     peak_summary.write(fmt_summary.format(*summary_list))
                     peak_stats.write(fmt_stats.format(*stats_list))
+                    peak_params.write(fmt_params.format(*params_list))
 
                 runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, 
                                                         runs_banks, bank_keys, bank_group, key, exp=experiment)
@@ -1980,6 +1995,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
             peak_stats.flush()
             excl_stats.flush()
 
+            peak_params.flush()
+            excl_params.flush()
+
             peak_dictionary.save_hkl(os.path.join(outdir, '{}.hkl'.format(outname)), min_signal_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
             peak_dictionary.save(os.path.join(outdir, '{}.pkl'.format(outname)))
 
@@ -1991,6 +2009,9 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
     peak_stats.close()
     excl_stats.close()
+
+    peak_params.close()
+    excl_params.close()
 
     if mtd.doesExist('sa'):
         DeleteWorkspace('sa')

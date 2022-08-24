@@ -17,7 +17,7 @@ import parameters
 
 from peak import PeakDictionary, PeakStatistics
 
-from mantid.geometry import PointGroupFactory, SpaceGroupFactory
+from mantid.geometry import PointGroupFactory, SpaceGroupFactory, CrystalStructure
 
 filename = sys.argv[1]
 
@@ -111,7 +111,7 @@ cif_file = dictionary.get('cif-file')
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
 if cif_file is not None:
-    peak_dictionary.load_cif(os.path.join(directory, cif_file))
+    peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
         
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
@@ -122,35 +122,40 @@ models = ['primary', 'secondary, gaussian', 'secondary, lorentzian',
           'secondary, gaussian type I', 'secondary, gaussian type II', 
           'secondary, lorentzian type I', 'secondary, lorentzian type II']
 
-rs, gs, scales, chi_sqs = [], [], [], [], 
+rs, gs, Us, scales, chi_sqs = [], [], [], [], []
 
 ext_file = open(os.path.join(outdir, 'extinction.txt'), 'w')
 
 for model in models:
 
-    r, g, scale, chi_sq = peak_dictionary.fit_extinction(model)
+    r, g, scale, U, chi_sq = peak_dictionary.fit_extinction(model)
 
     ext_file.write('model: {}\n'.format(model))
     if r > 0:
-        ext_file.write('cystallite size: {:.4f} micron\n'.format(r/10000))
+        ext_file.write('crystallite size r: {:.4f} micron\n'.format(r/10000))
     if g > 0:
+        ext_file.write('crystallite parameter g: {:.4f} \n'.format(g))
         if 'gaussian' in model:
             sig = np.rad2deg(1/(2*np.sqrt(np.pi)*g))
-            ext_file.write('cystallite misorientation: {:.4f} deg \n'.format(sig))
+            ext_file.write('crystallite misorientation: {:.4f} deg \n'.format(sig))
         if 'lorentzian' in model:
             eta = np.rad2deg(1/(2*np.pi*g))
-            ext_file.write('cystallite misorientation: {:.4f} deg \n'.format(eta))
+            ext_file.write('crystallite misorientation: {:.4f} deg \n'.format(eta))
 
+    ext_file.write('Uiso: {:.4e} \n'.format(U))
     ext_file.write('scale: {:.4e} \n'.format(scale))
     ext_file.write('chi^2: {:.4e} \n\n'.format(chi_sq))
 
     rs.append(r)
     gs.append(g)
+    Us.append(U)
     scales.append(scale)
     chi_sqs.append(chi_sq)
 
 i = np.argmin(chi_sqs)
 model = models[i]
+
+r, g = rs[i], gs[i]
 
 message = ''
 lamda = 1 # Ang
@@ -168,7 +173,24 @@ ext_file.close()
 
 i = models.index(model)
 
-r, g, s = rs[i], gs[i], scales[i]
+r, g, s, U = rs[i], gs[i], scales[i], Us[i]
+
+uc = peak_dictionary.cs.getUnitCell()
+
+a, b, c, alpha, beta, gamma = uc.a(), uc.b(), uc.c(), uc.alpha(), uc.beta(), uc.gamma()
+
+constants = '{} {} {} {} {} {}'.format(a,b,c,alpha,beta,gamma)
+
+scatterers = peak_dictionary.cs.getScatterers()
+
+atoms = []
+for j, scatterer in enumerate(scatterers):
+    elm, x, y, z, occ, _ = scatterer.split(' ')
+    atoms.append(' '.join([elm,x,y,z,occ,str(U)]))
+
+atoms = '; '.join(atoms)
+
+peak_dictionary.cs = CrystalStructure(constants, peak_dictionary.hm, atoms)
 
 X, Y, I, E, HKL, d_spacing = peak_dictionary.extinction_curves(r, g, s, model)
 
@@ -182,8 +204,8 @@ for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
     mark = next(markers)
     sort = np.argsort(x)
 
-    ax.errorbar(x[sort], i[sort], yerr=e[sort]*0, linestyle='-', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
-    ax.plot(x[sort], y[sort], linestyle='--', color='C{}'.format(j%9))
+    ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+    ax.plot(x[sort], y[sort], linestyle='--', color='k', zorder=100)
 
 ax.legend()
 ax.set_yscale('linear')
@@ -205,8 +227,8 @@ with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
         mark = next(markers)
         sort = np.argsort(x)
 
-        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='-', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
-        ax.plot(x[sort], y[sort], linestyle='--', color='C{}'.format(j%9))
+        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+        ax.plot(x[sort], y[sort], linestyle='--', color='k', zorder=100)
         ax.set_title('d = {:.4} \u212B'.format(d))
 
         ax.legend()
