@@ -109,7 +109,7 @@ cif_file = dictionary.get('cif-file')
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
 if cif_file is not None:
-    peak_dictionary.load_cif(os.path.join(directory, cif_file))
+    peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
         
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 peak_dictionary.set_material_info(chemical_formula, z_parameter, 0)

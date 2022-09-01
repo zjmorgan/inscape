@@ -26,6 +26,7 @@ plt.rcParams['font.size'] = 8
 import numpy as np
 import scipy.interpolate
 import scipy.optimize
+import scipy.spatial
 
 #np.seterr(divide='ignore', invalid='ignore')
 #np.seterr(**settings)
@@ -1697,6 +1698,7 @@ class PeakInformation:
 
     def __has_good_fit(self):
 
+        #                      chi-sq             std(pk)/med(bk)          I/sig
         statistics = np.array([self.__peak_fit,   self.__peak_bkg_ratio,   self.__peak_score,
                                self.__peak_fit2d, self.__peak_bkg_ratio2d, self.__peak_score2d])
 
@@ -1704,37 +1706,37 @@ class PeakInformation:
 
             good = True
 
-            if self.__chi_sq < 0.02 or self.__chi_sq > 200:
+            if self.__peak_bkg_ratio < 100 or self.__peak_bkg_ratio2d < 100:
 
-                good = False
+                if self.__chi_sq < 0.02 or self.__chi_sq > 200:
 
-            if self.__peak_bkg_ratio < 100:
-                
+                    good = False 
+
                 if self.__peak_fit > 200 or self.__peak_fit2d > 200:
-                    
+
                     good = False
 
-            if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02:
+                if self.__peak_fit < 0.02 or self.__peak_fit2d < 0.02:
 
-                good = False
+                    good = False
 
-            if self.__peak_bkg_ratio < 0.5:
+                if self.__peak_bkg_ratio < 0.5:
 
-                good = False
+                    good = False
 
-            if self.__peak_score < 3 or self.__peak_score2d < 3:
+                if self.__peak_score < 3 or self.__peak_score2d < 3:
 
-                good = False
+                    good = False
 
-            # powder line in profile
-            if self.__peak_score/self.__peak_score2d > 2:
+                # powder line in profile
+                if self.__peak_score/self.__peak_score2d > 2:
 
-                good = False
+                    good = False
 
-            # powder line in projection
-            if self.__peak_score/self.__peak_score2d > 2:
+                # powder line in projection
+                if self.__peak_score/self.__peak_score2d > 2:
 
-                good = False
+                    good = False
 
         else:
 
@@ -2023,6 +2025,9 @@ class PeakDictionary:
        ol.setModUB(mod_UB)
 
     def __reset_peaks(self):
+
+        for pn in range(self.pws.getNumberPeaks()-1,-1,-1):
+            self.pws.removePeak(pn)
 
         ol = self.pws.sample().getOrientedLattice()
 
@@ -2319,6 +2324,42 @@ class PeakDictionary:
 
         return peak_dict
 
+    def construct_tree(self):
+
+        keys = self.peak_dict.keys()
+
+        Q_points = []
+
+        for key in keys:
+
+            peaks = self.peak_dict.get(key)
+
+            Q_point = []
+
+            for peak in peaks:
+
+                Q0 = peak.get_Q()
+                Q_point.append(Q0)
+
+            if len(Q_point) > 0:
+
+                Q_points.append(np.mean(Q_point, axis=0))
+
+        Q_points = np.stack(Q_points)
+
+        self.peak_tree = scipy.spatial.KDTree(Q_points)
+
+    def query_planes(self, Q0, radius):
+
+        indices = self.peak_tree.query_ball_point(Q0, radius)
+
+        indices = [ind for ind in indices if not np.allclose(self.peak_tree.data[ind], Q0)]
+
+        midpoints = [(Q0+self.peak_tree.data[ind])/2 for ind in indices]
+        normals = [(self.peak_tree.data[ind]-Q0) for ind in indices]
+
+        return midpoints, normals
+
     def integrated_result(self, key, Q, D, W, statistics, data_norm, pkg_bk, index=0):
 
         peaks = self.peak_dict[key]
@@ -2345,7 +2386,6 @@ class PeakDictionary:
             h, k, l, m, n, p = key
             Qx, Qy, Qz = peak.get_Q()
 
-            peak_num = self.iws.getNumberPeaks()+1
             intens = peak.get_merged_intensity()
             sig_intens = peak.get_merged_intensity_error()
             pk_vol_fract = peak.get_merged_peak_volume_fraction()
@@ -2364,6 +2404,8 @@ class PeakDictionary:
             mod_vec_3 = ol.getModVec(2)
 
             dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
+
+            peak_num = self.iws.getNumberPeaks()+1
 
             pk = self.iws.createPeakHKL(V3D(h+dh,k+dk,l+dl))
             pk.setGoniometerMatrix(R)
@@ -2426,7 +2468,7 @@ class PeakDictionary:
 
     def save_hkl(self, filename, min_signal_noise_ratio=3,
                        min_pk_vol_fract=0.7, min_bkg_vol_fract=0.35,
-                       adaptive_scale=False, scale=1, cross_terms=False):
+                       adaptive_scale=True, scale=1, cross_terms=False):
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='Intens',
@@ -2436,7 +2478,7 @@ class PeakDictionary:
         if adaptive_scale:
             if self.iws.getNumberPeaks() > 0:
                 I = self.iws.getPeak(0).getIntensity()
-                scale = 5000/I
+                scale = 1000/I
 
         SortPeaksWorkspace(InputWorkspace=self.iws,
                            ColumnNameToSortBy='DSpacing',
@@ -2638,7 +2680,7 @@ class PeakDictionary:
                             j += 1
 
         if adaptive_scale:
-            scale = 5000/I_max
+            scale = 1000/I_max
 
         filename, ext = os.path.splitext(filename)
 
@@ -2792,37 +2834,26 @@ class PeakDictionary:
 
         if n <= 20:
 
-            DeleteWorkspace('cal')
+            if mtd.doesExist('cal'):
+                DeleteWorkspace('cal')
 
-    def recalculate_hkl(self, tol=0.08, fname=None):
+    def recalculate_hkl(self, tol=0.15, fname=None):
 
         if mtd.doesExist('cal'):
 
-            SortPeaksWorkspace(InputWorkspace=self.iws,
-                               ColumnNameToSortBy='Intens',
-                               SortAscending=True,
-                               OutputWorkspace=self.iws)
-
-            SortPeaksWorkspace(InputWorkspace=self.iws, 
-                               ColumnNameToSortBy='DSpacing',
-                               SortAscending=True,
-                               OutputWorkspace=self.iws)
-
-            SortPeaksWorkspace(InputWorkspace=self.cws,
-                               ColumnNameToSortBy='Intens',
-                               SortAscending=True,
-                               OutputWorkspace=self.cws)
-
-            SortPeaksWorkspace(InputWorkspace=self.cws, 
-                               ColumnNameToSortBy='DSpacing',
-                               SortAscending=True,
-                               OutputWorkspace=self.cws)
-
             CloneWorkspace(InputWorkspace=self.cws, OutputWorkspace='out')
+            CloneWorkspace(InputWorkspace=self.cws, OutputWorkspace='in')
 
             SetUB(Workspace='out', UB=mtd['cal'].sample().getOrientedLattice().getUB())
 
             CalculatePeaksHKL(PeaksWorkspace='out', OverWrite=True)
+
+            for ws in [self.iws, self.cws, 'out', 'in']:
+
+                SortPeaksWorkspace(InputWorkspace=ws,
+                                   ColumnNameToSortBy='PeakNumber',
+                                   SortAscending=True,
+                                   OutputWorkspace=ws)
 
             ol = mtd['out'].sample().getOrientedLattice()
 
@@ -2830,16 +2861,18 @@ class PeakDictionary:
 
                 hdr_hkl = ['#      h', '       k', '       l', '    d-sp',
                            '       h', '       k', '       l', '    d-sp',
-                           '      Qx', '      Qy', '      Qz', '  pk-vol%', ' bkg-vol%']
-                fmt_khl = 11*'{:8}'+2*'{:9}'+'\n'
+                           '      dh', '      dk', '      dl', '   d-sp%', 
+                           'pk-vol%', ' bkg-vol%']
+                fmt_khl = 12*'{:8}'+2*'{:9}'+'\n'
 
                 hkl_file = open(fname, 'w')
                 hkl_file.write(fmt_khl.format(*hdr_hkl))
 
-                fmt_khl = 3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+2*'{:9.2f}'+'\n'
+                fmt_khl = 3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+'{:8.4f}'+3*'{:8.3f}'+'{:8.4f}'+2*'{:9.2f}'+'\n'
 
+            lines_hkl = []
             for pn in range(mtd['out'].getNumberPeaks()-1,-1,-1):
-                ipk, opk = self.cws.getPeak(pn), mtd['out'].getPeak(pn)
+                ipk, opk = mtd['in'].getPeak(pn), mtd['out'].getPeak(pn)
                 dHKL = np.abs(ipk.getHKL()-opk.getHKL())
 
                 HKL = ipk.getHKL()
@@ -2850,20 +2883,29 @@ class PeakDictionary:
                 d = opk.getDSpacing()
                 pk_vol_perc = np.round(100*opk.getBinCount(),2)
                 bkg_vol_perc = np.round(100*opk.getAbsorptionWeightedPathLength(),2)
+                
+                dDp = np.abs(d-D)/D*100
 
-                line_hkl = [*HKL, D, *hkl, d, *Q, pk_vol_perc, bkg_vol_perc]
-
-                if fname is not None:
-                    hkl_file.write(fmt_khl.format(*line_hkl))
+                line_hkl = [*HKL, D, *hkl, d, *dHKL, dDp, pk_vol_perc, bkg_vol_perc]
+                lines_hkl.append(line_hkl)
 
                 if np.any(dHKL > tol):
                     self.iws.removePeak(pn)
                     self.cws.removePeak(pn)
 
             if fname is not None:
+
+                sort = np.argsort([line_hkl[3] for line_hkl in lines_hkl])[::-1]
+
+                for i in sort:
+                    hkl_file.write(fmt_khl.format(*lines_hkl[i]))
+
                 hkl_file.close()
-                    
-            # SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
+
+            #SaveNexus(InputWorkspace='out', Filename='/tmp/out.nxs')
+            #SaveNexus(InputWorkspace='in', Filename='/tmp/in.nxs')
+            #SaveNexus(InputWorkspace='cws', Filename='/tmp/cws.nxs')
+            #SaveNexus(InputWorkspace='iws', Filename='/tmp/iws.nxs')
 
     def __U_matrix(self, phi, theta, omega):
 
@@ -2958,7 +3000,9 @@ class PeakDictionary:
 
         self.__reset_peaks()
 
-        self.__repopulate_workspaces()
+        self.clear_peaks()
+
+        self.repopulate_workspaces()
 
     def load_dictionary(self, filename):
 
@@ -3480,6 +3524,7 @@ class PeakDictionary:
             sf = generator.getFsSquared([V3D(h,k,l)])[0]
 
             intens = self.__extinction_model(r, g, s, sf, c1, c2, tt, wl, wpl, R, V, model)
+            intens[~np.isfinite(intens)] = 3*i[~np.isfinite(intens)]
 
             dI = (i-intens)
 
@@ -3617,13 +3662,13 @@ class GaussianFit3D:
         params.add('A', value=y_range, min=0.001*y_range, max=1000*y_range)
         params.add('B', value=y_min, min=y_min-10*y_range, max=y_max+10*y_range)
 
-        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
-        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
-        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
+        params.add('mu0', value=mu[0], min=mu[0]-0.075, max=mu[0]+0.075)
+        params.add('mu1', value=mu[1], min=mu[1]-0.075, max=mu[1]+0.075)
+        params.add('mu2', value=mu[2], min=mu[2]-0.075, max=mu[2]+0.075)
 
-        params.add('sigma0', value=sigma[0], min=0.1*sigma[0], max=2*sigma[0])
-        params.add('sigma1', value=sigma[1], min=0.1*sigma[1], max=2*sigma[1])
-        params.add('sigma2', value=sigma[2], min=0.1*sigma[2], max=2*sigma[2])
+        params.add('sigma0', value=sigma[0], min=0.5*sigma[0], max=2*sigma[0])
+        params.add('sigma1', value=sigma[1], min=0.5*sigma[1], max=2*sigma[1])
+        params.add('sigma2', value=sigma[2], min=0.5*sigma[2], max=2*sigma[2])
 
         params.add('phi', value=0, min=-np.pi, max=np.pi)
         params.add('theta', value=np.pi/2, min=0, max=np.pi)

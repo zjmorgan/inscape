@@ -669,14 +669,14 @@ if __name__ == '__main__':
                    '  2t-min', '  2t-max', '  az-min', '  az-max', '   n', \
                    '  om-min', '  om-max', '  ch-min', '  ch-max', '  ph-min', '  ph-max']
 
-    hdr_stats = ['#      h', '       k', '       l', '    d-sp', 
-                 ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d', 
-                 ' chi2-2d', ' pk/bkg-2d', ' I/sig-2d',  
+    hdr_stats = ['#      h', '       k', '       l', '    d-sp',
+                 ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d',
+                 ' chi2-2d', ' pk/bkg-2d', ' I/sig-2d',
                  ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d']
 
     hdr_params = ['#      h', '       k', '       l', '    d-sp', '         A', '         B', 
                   '    mu_0', '    mu_1', '    mu_2', ' sigma_0', ' sigma_1', ' sigma_2',
-                  '  rho_12', '  rho_02', '  rho_01', '   pts', '  type', ' bound']
+                  '  rho_12', '  rho_02', '  rho_01', '   pts', ' bound', '  type']
 
     peak_file = open(os.path.join(directory, outname+'_summary.txt'), 'w')
     excl_file = open(os.path.join(outdir, 'rejected_summary.txt'), 'w')

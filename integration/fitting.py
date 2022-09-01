@@ -362,7 +362,7 @@ class Profile:
         mask = (np.cumsum(~mask) == 1) | (np.cumsum(~mask[::-1]) == 1)[::-1]
 
         bin_data_norm_sub = bin_data/bin_norm
-        bin_err_sub = np.sqrt(bin_data/bin_norm**2)
+        bin_err_sub = np.sqrt(bin_data+bin_bkg*bin_norm)/bin_norm
 
         bin_data_norm[~bin_int_mask] = bin_data_norm_sub[~bin_int_mask]
         bin_data_norm[bin_int_mask] = np.nan
@@ -409,7 +409,7 @@ class Profile:
 
         peak_bkg_ratio = np.std(y[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
 
-        sig_noise_ratio = np.sum(y[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
+        sig_noise_ratio = np.sum(np.abs(y[pk]))/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
 
         return chi_sq, peak_bkg_ratio, sig_noise_ratio
 
@@ -694,7 +694,7 @@ class Projection:
         bin_norm[mask] = np.nan
 
         bin_data_norm_sub = bin_data/bin_norm
-        bin_err_sub = np.sqrt(bin_data/bin_norm**2)
+        bin_err_sub = np.sqrt(bin_data+bin_bkg*bin_norm)/bin_norm
 
         bin_data_norm[~bin_int_mask] = bin_data_norm_sub[~bin_int_mask]
         bin_data_norm[bin_int_mask] = np.nan
@@ -718,7 +718,7 @@ class Projection:
 
         return tuple(coeff)
 
-    def statistics(self, x, y, z, e, z_fit, mu_x, mu_y, sigma_x, sigma_y, rho, scale=4):
+    def statistics(self, x, y, z, e, z_fit, mu_x, mu_y, sigma_x, sigma_y, rho, scale=3):
 
         cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                         [rho*sigma_x*sigma_y, sigma_y**2]])
@@ -747,7 +747,7 @@ class Projection:
 
             peak_bkg_ratio = np.std(z[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
 
-            sig_noise_ratio = np.sum(z[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
+            sig_noise_ratio = np.sum(np.abs(z[pk]))/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
 
         else:
 

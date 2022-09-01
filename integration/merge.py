@@ -89,12 +89,14 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
 
             lamda = 1.486 if instrument == 'HB2C' else float(mtd[ows].getExperimentInfo(0).run().getProperty('wavelength').value)
 
+            ReplicateMD(ShapeWorkspace=ows, DataWorkspace='van_'+ows, OutputWorkspace=ows+'_norm')
+
             ConvertWANDSCDtoQ(InputWorkspace=ows,
-                              NormalisationWorkspace='van_'+ows,
+                              NormalisationWorkspace=None,
                               UBWorkspace=ows,
                               OutputWorkspace='tmp',
                               Wavelength=lamda,
-                              NormaliseBy='Monitor',
+                              NormaliseBy=None,
                               Frame='HKL', # not actually HKL,
                               KeepTemporaryWorkspaces=True,
                               Uproj='{},{},{}'.format(*W[:,0]),
@@ -105,14 +107,32 @@ def box_integrator(facility, instrument, runs, banks, indices, Q0, key, binsize=
                               BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
 
             DeleteWorkspace('tmp')
-
-            scale = float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('monitor_count').value) if instrument == 'HB2C' else float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('monitor').value)
-
-            mtd['tmp_data'] /= scale 
-            mtd['tmp_normalization'] /= scale
+            DeleteWorkspace('tmp_normalization')
 
             RenameWorkspace(InputWorkspace='tmp_data', OutputWorkspace='tmpDataMD_{}'.format(j))
-            RenameWorkspace(InputWorkspace='tmp_normalization', OutputWorkspace='tmpNormMD_{}'.format(j))
+
+            ConvertWANDSCDtoQ(InputWorkspace=ows+'_norm',
+                              NormalisationWorkspace=None,
+                              UBWorkspace=ows,
+                              OutputWorkspace='tmp',
+                              Wavelength=lamda,
+                              NormaliseBy=None,
+                              Frame='HKL', # not actually HKL,
+                              KeepTemporaryWorkspaces=True,
+                              Uproj='{},{},{}'.format(*W[:,0]),
+                              Vproj='{},{},{}'.format(*W[:,1]),
+                              Wproj='{},{},{}'.format(*W[:,2]),
+                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],bins[0]),
+                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],bins[1]),
+                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
+
+            DeleteWorkspace('tmp')
+            DeleteWorkspace('tmp_normalization')
+
+            RenameWorkspace(InputWorkspace='tmp_data', OutputWorkspace='tmpNormMD_{}'.format(j))
+
+            scale = float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('Sum of Counts').value)
+            mtd['tmpNormMD_{}'.format(j)] /= scale
 
         if j == 0:
             CloneMDWorkspace(InputWorkspace='tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
@@ -404,6 +424,11 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
     elif instrument == 'HB2C':
         LoadEmptyInstrument(InstrumentName='WAND', OutputWorkspace='rws')
 
+    if mtd.doesExist('sa'):
+        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
+    else:
+        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
+
     for i, r in enumerate(runs):
         #print('\tProcessing run : {}'.format(r))
         if facility == 'SNS' or instrument == 'HB2C':
@@ -422,13 +447,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
             if facility == 'SNS':
                 filename = '/SNS/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(instrument,ipts,instrument,r)
                 LoadEventNexus(Filename=filename, OutputWorkspace=ows)
-                
-                if i == 0:
-                    if mtd.doesExist('sa'):
-                        CreatePeaksWorkspace(InstrumentWorkspace=ows, NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
-                    else:
-                        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
-
+                  
                 if mtd.doesExist('sa'):
                     MaskDetectors(Workspace=ows, MaskedWorkspace='sa')
 
@@ -1283,22 +1302,6 @@ def projection_axes(n):
 
     return u, v
 
-def cdf(signal, fit):
-
-    signal, fit = np.sort(signal), np.sort(fit)
-
-    n = fit.size
-
-    cumdistfun = []
-
-    for val in signal:
-
-      fraction = fit[fit <= val].size/n
-
-      cumdistfun.append(fraction)
-
-    return np.array(cumdistfun)
-
 def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                      spectrum_file, counts_file, tube_calibration, detector_calibration,
                      outdir, directory, facility, instrument, ipts, runs,
@@ -1426,6 +1429,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
     runs_banks = {}
     bank_keys = {}
+
+    # peak_dictionary.construct_tree()
 
     for key in keys:
 
@@ -1687,6 +1692,14 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                 Q, Qx, Qy, Qz, data, norm = box_integrator(facility, instrument, runs, banks, indices, Q0, key,
                                                            binsize=binsize, D=D, W=W, exp=experiment)
 
+#                 midpoints, normals = peak_dictionary.query_planes(Q0, radius)
+# 
+#                 for midpoint, normal in zip(midpoints, normals):
+#                     mask = normal[0]*(Qx-midpoint[0])\
+#                          + normal[1]*(Qy-midpoint[1])\
+#                          + normal[2]*(Qz-midpoint[2]) > 0
+#                     data[mask] = np.nan
+
                 weights = data/norm
 
                 rot = True if facility == 'HFIR' else False
@@ -1918,32 +1931,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
 
-                        # cdf_data_high = np.arange(1,N+1)/N
-                        # cdf_data_low  = np.arange(N)/N
-                        # 
-                        # CDF = cdf(signal[mask], fit[mask])
-                        # 
-                        # D = cdf_data_high-CDF
-                        # 
-                        # Dip = D.argmax()
-                        # Dplus = D[Dip]
-                        # 
-                        # D = CDF-cdf_data_low
-                        # 
-                        # Dim = D.argmax()
-                        # Dmin = D[Dim]
-                        # 
-                        # # if Dplus >= Dmin:
-                        # #    Di = Dip
-                        # # else:
-                        # #    Di = Dim
-                        # 
-                        # Dmax = np.max([Dplus, Dmin])
-                        # 
-                        # dist = kstwobign()
-                        # Dn_crit = dist.ppf(0.95)/np.sqrt(N)
-
-                        if intens <= sig or np.isclose(I_est, 0) or boundary:
+                        if I_est <= sig_est or I_fit <= sig_fit or np.isclose(I_est, 0) or np.isclose(I_fit, 0) or boundary:
 
                             remove = True
 
