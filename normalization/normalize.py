@@ -165,7 +165,7 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
             else:
                 LoadIsawDetCal(InputWorkspace='bkg', Filename=detector_calibration)
         MaskDetectors(Workspace='bkg', MaskedWorkspace='mask')
-        
+
         ConvertUnits(InputWorkspace='bkg', OutputWorkspace='bkg', EMode='Elastic', Target='Momentum')
 
         CropWorkspaceForMDNorm(InputWorkspace='bkg',

@@ -110,10 +110,33 @@ elif centering == 'Rrev':
 elif centering == 'H':
      reflection_condition = 'Hexagonally centred, reverse'
 
+mod_vector_1 = dictionary.get('modulation-vector-1')
+mod_vector_2 = dictionary.get('modulation-vector-2')
+mod_vector_3 = dictionary.get('modulation-vector-3')
+max_order = dictionary.get('max-order')
+cross_terms = dictionary.get('cross-terms')
+
+if mod_vector_1 is None:
+    mod_vector_1 = [0,0,0]
+if mod_vector_2 is None:
+    mod_vector_2 = [0,0,0]
+if mod_vector_3 is None:
+    mod_vector_3 = [0,0,0]
+if max_order is None:
+    max_order = 0
+if cross_terms is None:
+    cross_terms = False
+    
+if dictionary.get('ub-file') is not None:
+    ub_file = os.path.join(working_directory, dictionary['ub-file'])
+else:
+    ub_file = None
+
 gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
 
 def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, tube_calibration, gon_axis, directory,
-                     a, b, c, alpha, beta, gamma, cell_type, centering, reflection_condition):
+                     ub_file, a, b, c, alpha, beta, gamma, cell_type, centering, reflection_condition,
+                     mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms):
 
     if tube_calibration is not None and not mtd.doesExist('tube_table'):
         LoadNexus(Filename=tube_calibration, OutputWorkspace='tube_table')
@@ -156,17 +179,49 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
 
         if not mtd.doesExist('peaks'):
 
-            CreatePeaksWorkspace(InstrumentWorkspace='data', 
-                                 NumberOfPeaks=0, 
-                                 OutputType='Peak', 
+            CreatePeaksWorkspace(NumberOfPeaks=0,
+                                 OutputType='LeanElasticPeak',
                                  OutputWorkspace='peaks')
 
-        FindPeaksMD(InputWorkspace='md', 
-                    PeakDistanceThreshold=0.1, 
-                    DensityThresholdFactor=10000, 
-                    MaxPeaks=400, 
-                    OutputType='Peak',
-                    OutputWorkspace='pk')
+        if ub_file is not None:
+            LoadIsawUB(InputWorkspace='md', Filename=ub_file)
+
+            if instrument == 'CORELLI':
+                k_min, k_max, two_theta_max = 2.5, 10, 148.2
+            elif instrument == 'TOPAZ':
+                k_min, k_max, two_theta_max = 1.8, 12.5, 160
+            elif instrument == 'MANDI':
+                k_min, k_max, two_theta_max = 1.5, 3.0, 160
+            elif instrument == 'SNAP':
+                k_min, k_max, two_theta_max = 1.8, 12.5, 138
+
+            lamda_min, lamda_max = 2*np.pi/k_max, 2*np.pi/k_min
+
+            Q_max = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
+
+            min_d_spacing = 2*np.pi/Q_max
+            max_d_spacing = np.max([mtd['md'].getExperimentInfo(0).sample().getOrientedLattice().d(*hkl) for hkl in [(1,0,0),(0,1,0),(0,0,1)]])
+
+            PredictPeaks(InputWorkspace='md',
+                         WavelengthMin=lamda_min,
+                         WavelengthMax=lamda_max,
+                         MinDSpacing=min_d_spacing,
+                         MaxDSpacing=max_d_spacing,
+                         OutputType='LeanElasticPeak',
+                         ReflectionCondition=reflection_condition if reflection_condition is not None else 'Primitive',
+                         OutputWorkspace='pk')
+
+            CentroidPeaksMD(InputWorkspace='md',
+                            PeakRadius=0.1,
+                            PeaksWorkspace='pk',
+                            OutputWorkspace='pk')
+        else:
+            FindPeaksMD(InputWorkspace='md', 
+                        PeakDistanceThreshold=0.2,
+                        DensityThresholdFactor=10000, 
+                        MaxPeaks=400,
+                        OutputType='Peak',
+                        OutputWorkspace='pk')
 
         IntegratePeaksMD(InputWorkspace='md',
                          PeakRadius=0.11,
@@ -188,7 +243,9 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                     FilterValue=10,
                     Operator='>')
 
-        if np.array([a,b,c,alpha,beta,gamma]).all():
+        if ub_file is not None:
+            LoadIsawUB(InputWorkspace='md', Filename=ub_file)
+        elif np.array([a,b,c,alpha,beta,gamma]).all():
             FindUBUsingLatticeParameters(PeaksWorkspace='pk',
                                          a=a,
                                          b=b,
@@ -204,13 +261,31 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                              Centering=centering,
                              Apply=True)
 
-        IndexPeaks(PeaksWorkspace='pk', Tolerance=0.125, RoundHKLs=False)
+        IndexPeaks(PeaksWorkspace='pk',
+                   Tolerance=0.125,
+                   ToleranceForSatellite=0.125,
+                   RoundHKLs=False,
+                   CommonUBForAll=False,
+                   ModVector1=mod_vector_1,
+                   ModVector2=mod_vector_2,
+                   ModVector3=mod_vector_3,
+                   MaxOrder=max_order,
+                   CrossTerms=cross_terms,
+                   SaveModulationInfo=True if max_order > 0 else False)
 
         FilterPeaks(InputWorkspace='pk', 
                     FilterVariable='h^2+k^2+l^2', 
                     FilterValue=0, 
                     Operator='>', 
                     OutputWorkspace='pk')
+
+        # FindUBUsingIndexedPeaks('pk', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForALl=False)
+
+        # FilterPeaks(InputWorkspace='pk',
+        #             FilterVariable='h^2+k^2+l^2',
+        #             FilterValue=0,
+        #             Operator='>',
+        #             OutputWorkspace='pk')
 
         CombinePeaksWorkspaces(LHSWorkspace='pk', 
                                RHSWorkspace='peaks', 
@@ -220,32 +295,36 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
         DeleteWorkspace('md')
         DeleteWorkspace('pk')
 
-    SaveNexus(Inputworkspace='peaks', Filename=os.path.join(outdir,'peaks_p{}.nxs'.format(p)))
+    SaveNexus(InputWorkspace='peaks', Filename=os.path.join(outdir, 'peaks_p{}.nxs'.format(p)))
 
 if __name__ == '__main__':
 
     args = [facility, instrument, ipts, detector_calibration, tube_calibration, gon_axis, directory,
-            a, b, c, alpha, beta, gamma, cell_type, centering, reflection_condition]
+            ub_file, a, b, c, alpha, beta, gamma, cell_type, centering, reflection_condition,
+            mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms]
 
     split_runs = [split.tolist() for split in np.array_split(run_nos, n_proc)]
 
     join_args = [(split, i, *args) for i, split in enumerate(split_runs)]
 
+    multiprocessing.set_start_method('spawn', force=True)
     with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
         pool.starmap(run_optimization, join_args)
         pool.close()
         pool.join()
 
+    CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='peaks')
+
     for p in range(n_proc):
-        LoadNexus(Filename=os.path.join(outdir, 'peaks_p{}.nxs'.format(p)), OutputWorkspace='tmp')
-        if p == 0:
-            CloneWorkspace(InputWorkspace='tmp', OutputWorkspace='peaks')
-        else:
-            CombinePeaksWorkspaces(LHSWorkspace='peaks', RHSWorkspace='tmp', OutputWorkspace='peaks')
+        LoadNexus(Filename=os.path.join(outdir, 'peaks_p{}.nxs'.format(p)), OutputWorkspace='pk')
+        CombinePeaksWorkspaces(LHSWorkspace='pk', RHSWorkspace='peaks', OutputWorkspace='peaks')
+        DeleteWorkspace('pk')
 
-    SaveNexus(Inputworkspace='peaks', Filename=os.path.join(outdir,'peaks.nxs'))
+    SaveNexus(InputWorkspace='peaks', Filename=os.path.join(outdir,'peaks.nxs'))
 
-    if np.array([a,b,c,alpha,beta,gamma]).all():
+    if ub_file is not None:
+        FindUBUsingIndexedPeaks('peaks', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForAll=False)
+    elif np.array([a,b,c,alpha,beta,gamma]).all():
         FindUBUsingLatticeParameters(PeaksWorkspace='peaks',
                                      a=a,
                                      b=b,
@@ -254,16 +333,41 @@ if __name__ == '__main__':
                                      beta=beta,
                                      gamma=gamma)
     else:
-        FindUBUsingFFT(PeaksWorkspace='peaks', MinD=3, MaxD=20)
+        FindUBUsingFFT(PeaksWorkspace='peaks', MinD=3, MaxD=25)
         IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True, CommonUBForAll=False)
         SelectCellOfType(PeaksWorkspace='peaks', 
                          CellType=cell_type,
                          Centering=centering,
                          Apply=True)
 
-    IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True, CommonUBForAll=False)
+    IndexPeaks(PeaksWorkspace='peaks',
+               Tolerance=0.125,
+               ToleranceForSatellite=0.125,
+               RoundHKLs=False,
+               CommonUBForAll=False,
+               ModVector1=mod_vector_1,
+               ModVector2=mod_vector_2,
+               ModVector3=mod_vector_3,
+               MaxOrder=max_order,
+               CrossTerms=cross_terms,
+               SaveModulationInfo=True if max_order > 0 else False)
+
+    FindUBUsingIndexedPeaks('peaks', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForAll=False)
+
     OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=True, Apply=True, OutputDirectory=rundir)
-    IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=False, CommonUBForAll=False)
+
+    IndexPeaks(PeaksWorkspace='peaks',
+               Tolerance=0.125,
+               ToleranceForSatellite=0.125,
+               RoundHKLs=False,
+               CommonUBForAll=False,
+               ModVector1=mod_vector_1,
+               ModVector2=mod_vector_2,
+               ModVector3=mod_vector_3,
+               MaxOrder=max_order,
+               CrossTerms=cross_terms,
+               SaveModulationInfo=True if max_order > 0 else False)
+
     SaveIsawUB(InputWorkspace='peaks', Filename=os.path.join(outdir, 'UB_opt.mat'))
 
     for p in range(n_proc):
@@ -282,20 +386,30 @@ if __name__ == '__main__':
                     Operator='=',
                     OutputWorkspace='tmp')
 
+        FilterPeaks(InputWorkspace='tmp', 
+                    FilterVariable='h^2+k^2+l^2', 
+                    FilterValue=0, 
+                    Operator='>', 
+                    OutputWorkspace='tmp')
+
         R = mtd['tmp'].getPeak(0).getGoniometerMatrix().copy()
-        for pn in range(mtd['tmp'].getNumberPeaks()):
+        N = mtd['tmp'].getNumberPeaks()
+
+        for pn in range(N):
             pk = mtd['tmp'].getPeak(pn)
             pk.setGoniometerMatrix(np.eye(3))
 
-        CalculateUMatrix(PeaksWorkspace='tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
+        if N > 25:
 
-        U = mtd['tmp'].sample().getOrientedLattice().getU().copy()
-        B = mtd['tmp'].sample().getOrientedLattice().getB().copy()
-        Up = np.dot(R.T,U)
+            CalculateUMatrix(PeaksWorkspace='tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
 
-        UBp = np.dot(Up,B)
+            U = mtd['tmp'].sample().getOrientedLattice().getU().copy()
+            B = mtd['tmp'].sample().getOrientedLattice().getB().copy()
+            Up = np.dot(R.T,U)
 
-        SetUB(Workspace='tmp', UB=UBp)
+            UBp = np.dot(Up,B)
+
+            SetUB(Workspace='tmp', UB=UBp)
 
         SaveIsawUB(InputWorkspace='tmp', 
                    Filename=os.path.join(rundir,'{}_{}_UB.mat'.format(instrument,r)))
