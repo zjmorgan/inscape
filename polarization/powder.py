@@ -7,7 +7,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 import os
 import sys
 
-filename = sys.argv[1]
+filename = sys.argv[1] #'/HFIR/HB3A/IPTS-20250/shared/zgf/HB3A_powder.conf' # 
+
+tutorial = '' if 'shared/examples/IPTS' not in filename else '/shared/examples' 
 
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
@@ -34,7 +36,7 @@ facility, instrument = 'HFIR', 'HB3A'
 ipts = dictionary['ipts']
 exp = dictionary['experiment']
 
-working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument,ipts)
+working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument+tutorial,ipts)
 shared_directory = '/{}/{}/shared/'.format(facility,instrument)
 
 directory = os.path.dirname(os.path.abspath(filename))
@@ -45,7 +47,7 @@ outname = dictionary['name']
 #     os.mkdir(outdir)
 
 scale = 1
-banks = 1
+banks = 3
 mask_edge_pixels = dictionary['mask-edge-pixels']
 
 bin_2d = dictionary['2d-binning']
@@ -59,8 +61,8 @@ counts_file = os.path.join(shared_directory+'Vanadium', dictionary['vanadium-fil
 
 # ---
 
-data_1d, data_2d = [], []
-err_sq_1d, err_sq_2d = [], []
+data_1d, data_2d, data_2d_viz = [], [], []
+err_sq_1d, err_sq_2d, err_sq_2d_viz = [], [], []
 
 for s, scans in enumerate([up_run_nos,down_run_nos]):
 
@@ -86,7 +88,7 @@ for s, scans in enumerate([up_run_nos,down_run_nos]):
     data, norm = [], []
 
     nu, gamma = [], []
-    sc_two_theta = []
+    sc_two_theta, sc_az_phi = [], []
 
     for ws in data_ws:
 
@@ -100,44 +102,50 @@ for s, scans in enumerate([up_run_nos,down_run_nos]):
 
         for i, (dt, tt, mn) in enumerate(zip(det_trans, _2theta, monitor)):
 
-            ws_name = 'det_{}_{}'.format(ws,i)
+            if (np.isclose(ic[i], 0) and s == 0) or (not np.isclose(ic[i], 0) and s == 1):
 
-            if not mtd.doesExist(ws_name):
+                ws_name = 'det_{}_{}'.format(ws,i)
 
-                AddSampleLog(Workspace='DEMAND', LogName='det_trans', LogText=str(dt), LogType='Number Series', NumberType='Double')
-                AddSampleLog(Workspace='DEMAND', LogName='2theta', LogText=str(tt), LogType='Number Series', NumberType='Double')
-                LoadInstrument(Workspace='DEMAND', RewriteSpectraMap=False, InstrumentName='HB3A')   
+                if not mtd.doesExist(ws_name):
 
-                PreprocessDetectorsToMD(InputWorkspace='DEMAND', OutputWorkspace=ws_name)
+                    AddSampleLog(Workspace='DEMAND', LogName='det_trans', LogText=str(dt), LogType='Number Series', NumberType='Double')
+                    AddSampleLog(Workspace='DEMAND', LogName='2theta', LogText=str(tt), LogType='Number Series', NumberType='Double')
+                    LoadInstrument(Workspace='DEMAND', RewriteSpectraMap=False, InstrumentName='HB3A')   
 
-            L2 = np.array(mtd[ws_name].column(1)).reshape(3,512,512)[0,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
-            two_theta = np.array(mtd[ws_name].column(2)).reshape(3,512,512)[0,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
-            az_phi = np.array(mtd[ws_name].column(3)).reshape(3,512,512)[0,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
+                    PreprocessDetectorsToMD(InputWorkspace='DEMAND', OutputWorkspace=ws_name)
 
-            r = L2
+                L2 = np.array(mtd[ws_name].column(1)).reshape(3,512,512)[0:banks,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
+                two_theta = np.array(mtd[ws_name].column(2)).reshape(3,512,512)[0:banks,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
+                az_phi = np.array(mtd[ws_name].column(3)).reshape(3,512,512)[0:banks,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels]
 
-            x = r*np.sin(two_theta)*np.cos(az_phi)
-            y = r*np.sin(two_theta)*np.sin(az_phi)
-            z = r*np.cos(two_theta)
+                r = L2
 
-            n = np.rad2deg(np.arcsin(y/L2)).flatten()
-            g = np.rad2deg(np.arctan(x/z)).flatten()
+                x = r*np.sin(two_theta)*np.cos(az_phi)
+                y = r*np.sin(two_theta)*np.sin(az_phi)
+                z = r*np.cos(two_theta)
 
-            tt = np.rad2deg(two_theta)
+                n = np.rad2deg(np.arcsin(y/L2)).flatten()
+                g = np.rad2deg(np.arctan(x/z)).flatten()
 
-            nu.append(n)
-            gamma.append(g)
+                tt = np.rad2deg(two_theta)
+                az = np.rad2deg(az_phi)
+                
+                az[az<0] += 360
 
-            sc_two_theta.append(tt)
+                nu.append(n)
+                gamma.append(g)
 
-            data.append(ws_data[0,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels,i].flatten())
+                sc_two_theta.append(tt)
+                sc_az_phi.append(az)
 
-            norm.append(van_data[0,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels,:].sum(axis=2).flatten()*mn)
+                data.append(ws_data[0:banks,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels,i].flatten())
+
+                norm.append(van_data[0:banks,mask_edge_pixels:512-mask_edge_pixels,mask_edge_pixels:512-mask_edge_pixels,:].sum(axis=3).flatten()*mn)
 
     data, norm = np.array(data).flatten(), np.array(norm).flatten()
 
     nu, gamma = np.array(nu).flatten(), np.array(gamma).flatten()
-    sc_two_theta = np.array(sc_two_theta).flatten()
+    sc_two_theta, sc_az_phi = np.array(sc_two_theta).flatten(), np.array(sc_az_phi).flatten()
 
     data_bin_counts2d, gamma_bin_edges, nu_bin_edges = np.histogram2d(gamma, nu, bins=bin_2d, weights=data)
     norm_bin_counts2d, _,            _,              = np.histogram2d(gamma, nu, bins=bin_2d, weights=norm)
@@ -147,6 +155,15 @@ for s, scans in enumerate([up_run_nos,down_run_nos]):
 
     data_norm2d = scale*data_bin_counts2d/norm_bin_counts2d
     err_sq_norm2d = scale**2*data_bin_counts2d/norm_bin_counts2d**2
+
+    data_bin_counts2d_viz, sc_two_theta_bin_edges, sc_az_phi_bin_edges = np.histogram2d(sc_two_theta, sc_az_phi, bins=bin_2d, weights=data)
+    norm_bin_counts2d_viz, _,                      _,                  = np.histogram2d(sc_two_theta, sc_az_phi, bins=bin_2d, weights=norm)
+
+    sc_two_theta_bin_edges, sc_az_phi_bin_edges = np.meshgrid(0.5*(sc_two_theta_bin_edges[1:]+sc_two_theta_bin_edges[:-1]),
+                                                              0.5*(sc_az_phi_bin_edges[1:]+sc_az_phi_bin_edges[:-1]))
+
+    data_norm2d_viz = scale*data_bin_counts2d_viz/norm_bin_counts2d_viz
+    err_sq_norm2d_viz = scale**2*data_bin_counts2d_viz/norm_bin_counts2d_viz**2
 
     # ---
 
@@ -160,27 +177,44 @@ for s, scans in enumerate([up_run_nos,down_run_nos]):
 
     data_1d.append(data_norm)
     data_2d.append(data_norm2d)
+    data_2d_viz.append(data_norm2d_viz)
 
     err_sq_1d.append(err_sq_norm)
     err_sq_2d.append(err_sq_norm2d)
+    err_sq_2d_viz.append(err_sq_norm2d_viz)
 
 ops = ['Up', 'Down', 'Sum', 'Difference']
 
 data_1d_ops = [data_1d[0],data_1d[1],data_1d[1]+data_1d[0],data_1d[0]-data_1d[1]]
 data_2d_ops = [data_2d[0],data_2d[1],data_2d[1]+data_2d[0],data_2d[0]-data_2d[1]]
+data_2d_viz_ops = [data_2d_viz[0],data_2d_viz[1],data_2d_viz[1]+data_2d_viz[0],data_2d_viz[0]-data_2d_viz[1]]
 
 err_sq_1d_ops = [err_sq_1d[0],err_sq_1d[1],err_sq_1d[1]+err_sq_1d[0],err_sq_1d[0]+err_sq_1d[1]]
 err_sq_2d_ops = [err_sq_2d[0],err_sq_2d[1],err_sq_2d[1]+err_sq_2d[0],err_sq_2d[0]+err_sq_2d[1]]
+err_sq_2d_viz_ops = [err_sq_2d_viz[0],err_sq_2d_viz[1],err_sq_2d_viz[1]+err_sq_2d_viz[0],err_sq_2d_viz[0]+err_sq_2d_viz[1]]
 
 with PdfPages(directory+'/{}.pdf'.format(outname)) as pdf:
 
-    for op, data_1d_op, data_2d_op, err_sq_1d_op, err_sq_2d_op in zip(ops,data_1d_ops,data_2d_ops,err_sq_1d_ops,err_sq_2d_ops):
+    for op, data_1d_op, data_2d_op, data_2d_viz_op, err_sq_1d_op, err_sq_2d_op, err_sq_2d_viz_op in zip(ops,data_1d_ops,data_2d_ops,data_2d_viz_ops,err_sq_1d_ops,err_sq_2d_ops,err_sq_2d_viz_ops):
 
         fig, ax = plt.subplots(1, 1, num='2d_{}'.format(op))
         im = ax.pcolormesh(gamma_bin_centers_grid, nu_bin_centers_grid, data_2d_op.T)
         im.set_edgecolor('face')
         ax.set_xlabel(r'$\gamma$ [deg.]') 
         ax.set_ylabel(r'$\nu$ [deg.]') 
+        cb = fig.colorbar(im)
+        cb.ax.set_ylabel(r'Intensity [arb. unit]') 
+        cb.ax.minorticks_on()
+        ax.set_title(r'{}'.format(op)) 
+        ax.minorticks_on()
+        pdf.savefig()
+        plt.close()
+
+        fig, ax = plt.subplots(1, 1, num='2d_viz_{}'.format(op))
+        im = ax.pcolormesh(sc_two_theta_bin_edges, sc_az_phi_bin_edges, data_2d_viz_op.T)
+        im.set_edgecolor('face')
+        ax.set_xlabel(r'$2\theta$ [deg.]') 
+        ax.set_ylabel(r'$\phi$ [deg.]') 
         cb = fig.colorbar(im)
         cb.ax.set_ylabel(r'Intensity [arb. unit]') 
         cb.ax.minorticks_on()
