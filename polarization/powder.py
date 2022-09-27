@@ -42,6 +42,9 @@ shared_directory = '/{}/{}/shared/'.format(facility,instrument)
 directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
+fullpath = os.path.abspath(filename)
+tutorial = '' if not 'shared/examples/IPTS' in fullpath else '/shared/examples' 
+
 # outdir = os.path.join(directory, outname)
 # if not os.path.exists(outdir):
 #     os.mkdir(outdir)
@@ -53,7 +56,7 @@ mask_edge_pixels = dictionary['mask-edge-pixels']
 bin_2d = dictionary['2d-binning']
 bin_1d = dictionary['1d-binning']
 
-dirname = '/HFIR/HB3A/IPTS-{}/shared/autoreduce/'
+dirname = '/HFIR/HB3A{}/IPTS-{}/shared/autoreduce/'.format(tutorial)
 fname = 'HB3A_exp{:04}_scan{:04}.nxs'
 filename = os.path.join(dirname,fname)
 

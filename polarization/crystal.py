@@ -7,15 +7,19 @@ from matplotlib.backends.backend_pdf import PdfPages
 import os
 import sys
 
-filename = sys.argv[1] #'/HFIR/HB3A/IPTS-18227/shared/pnd/HB3A.conf'
+from mantid import config
+config['Q.convention'] = 'Inelastic'
 
-tutorial = '' if 'shared/examples/IPTS' not in filename else '/shared/examples' 
+filename = sys.argv[1] #'/HFIR/HB3A/IPTS-18227/shared/pnd/HB3A.conf'
 
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
 directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
 sys.path.append(directory)
+
+fullpath = os.path.abspath(filename)
+tutorial = '' if not 'shared/examples/IPTS' in fullpath else '/shared/examples' 
 
 import imp
 import parameters
@@ -74,7 +78,7 @@ def gaussian(x, parameters):
     bkg, amp, mu, sigma, _ = parameters
     return bkg+amp*np.exp(-(x-mu)**2/sigma**2)
 
-rootname = '/HFIR/HB3A/IPTS-{}/'.format(ipts)
+rootname = '/HFIR/HB3A{}/IPTS-{}/'.format(tutorial,ipts)
 scanfile = 'HB3A_exp{:04}_scan{:04}'
 
 up_data = [scanfile.format(exp,s) for s in up_run_nos]
@@ -88,7 +92,7 @@ for i, pk in enumerate(['up', 'down']):
 
     for data in data_channels[i]:
 
-        filename = rootname+'shared/autoreduce/'+data+'.nxs'
+        filename = rootname+'autoreduce/'+data+'.nxs'
 
         HB3AAdjustSampleNorm(Filename=filename,
                              NormaliseBy=normalize_by,
