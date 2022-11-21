@@ -8,7 +8,7 @@ import sys
 
 import multiprocessing
 
-filename = syst.argv[0], sys.argv[1]
+filename = '/SNS/TOPAZ/shared/Vanadium/2021A_0216_AG/2021A_0216_AG.inp' #sys.argv[0]#, sys.argv[1]
 
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
@@ -56,6 +56,9 @@ pixels_to_mask = dictionary.get('rows-to-mask')
 tubes_to_mask = dictionary.get('columns-to-mask')
 bank_tube_to_mask = dictionary.get('banks-columns-to-mask')
 bank_tube_pixel_to_mask = dictionary.get('banks-columns-rows-to-mask')
+
+if type(banks_to_mask) is int:
+    banks_to_mask = [banks_to_mask]
 
 k_min, k_max = dictionary['k-range']
 

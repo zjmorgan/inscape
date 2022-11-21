@@ -8,10 +8,10 @@ import numpy as np
 
 import imp
 
-import peak
-imp.reload(peak)
+import fitting
+imp.reload(fitting)
 
-from peak import GaussianFit3D
+from fitting import GaussianFit3D
 
 np.random.seed(13)
 

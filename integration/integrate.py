@@ -8,7 +8,7 @@ import sys, os, re, imp, copy, shutil
 
 # os.environ['OPENMP_NUM_THREADS'] = '1'
 
-import multiprocessing
+import multiprocess as multiprocessing
 
 from mantid import config
 config.setLogLevel(0, quiet=True)
@@ -169,22 +169,27 @@ if __name__ == '__main__':
 
     parameters.output_input_file(filename, directory, outname)
 
-    if dictionary['flux-file'] is not None:
+    if dictionary.get('flux-file')is not None:
         spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
     else:
         spectrum_file = None
 
-    if dictionary['vanadium-file'] is not None:
+    if dictionary.get('vanadium-file') is not None:
         counts_file = os.path.join(shared_directory+'Vanadium', dictionary['vanadium-file'])
     else:
         counts_file = None
+
+    if dictionary.get('mask-file') is not None:
+        mask_file = os.path.join(shared_directory+'Vanadium', dictionary['mask-file'])
+    else:
+        mask_file = None
 
     if dictionary.get('tube-file') is not None:
         tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
     else:
         tube_calibration = None
 
-    if dictionary['detector-file'] is not None:
+    if dictionary.get('detector-file')is not None:
         detector_calibration = os.path.join(shared_directory+'calibration', dictionary['detector-file'])
     else:
         detector_calibration = None
@@ -211,7 +216,7 @@ if __name__ == '__main__':
     ref_dict = dictionary.get('peak-dictionary')
 
     merge.load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                         tube_calibration, detector_calibration)
+                                         tube_calibration, detector_calibration, mask_file)
 
     if instrument == 'HB3A':
         ows = '{}_{}'.format(instrument,experiment)+'_{}'
@@ -251,18 +256,20 @@ if __name__ == '__main__':
         split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
 
         args = [outdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
-                spectrum_file, counts_file, tube_calibration, detector_calibration,
+                spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
                 mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
 
         join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
 
         # merge.pre_integration(*join_args)
         
+        print('Spawning threads for pre-integration')
         multiprocessing.set_start_method('spawn', force=True)
         with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
             pool.starmap(merge.pre_integration, join_args)
             pool.close()
             pool.join()
+        print('Joining threads from pre-integration')
 
     if not mtd.doesExist(tmp):   
 
@@ -403,6 +410,8 @@ if __name__ == '__main__':
                         allowed = (h + l) % 2 == 0
                     elif reflection_condition == 'Body centred':
                         allowed = (h + k + l) % 2 == 0
+                    elif reflection_condition == 'All-face centred':
+                        allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
                     elif reflection_condition == 'Rhombohedrally centred, obverse':
                         allowed = (-h + k + l) % 3 == 0
                     elif reflection_condition == 'Rhombohedrally centred, reverse':
@@ -437,7 +446,7 @@ if __name__ == '__main__':
     int_list, peak_tree = None, None
 
     args = [ref_dict, peak_tree, int_list, filename,
-            spectrum_file, counts_file, tube_calibration, detector_calibration,
+            spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
             outdir, directory, facility, instrument, ipts, runs,
             split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
             mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
@@ -447,11 +456,13 @@ if __name__ == '__main__':
 
     # merge.integration_loop(*join_args[0])
 
+    print('Spawning threads for integration')
     multiprocessing.set_start_method('spawn', force=True)
     with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
         pool.starmap(merge.integration_loop, join_args)
         pool.close()
         pool.join()
+    print('Joining threads from integration')
 
     merger = PdfFileMerger()
 
@@ -625,11 +636,10 @@ if __name__ == '__main__':
     peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
     peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
 
-    if sg is not None:
-        peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
-        peak_statistics.prune_outliers()
-        peak_statistics.write_statisics()
-        peak_statistics.write_intensity()
+    peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
+    peak_statistics.prune_outliers()
+    peak_statistics.write_statisics()
+    peak_statistics.write_intensity()
 
     absorption_file = os.path.join(outdir, 'absorption.txt')
 
@@ -639,11 +649,10 @@ if __name__ == '__main__':
         peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
         peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
 
-        if sg is not None:
-            peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
-            peak_statistics.prune_outliers()
-            peak_statistics.write_statisics()
-            peak_statistics.write_intensity()
+        peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
+        peak_statistics.prune_outliers()
+        peak_statistics.write_statisics()
+        peak_statistics.write_intensity()
 
     peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
 
@@ -651,10 +660,16 @@ if __name__ == '__main__':
         partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
+        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.int')
+        if os.path.exists(partfile):
+            os.remove(partfile)
         partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pkl')
         if os.path.exists(partfile):
             os.remove(partfile)
         partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.hkl')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.int')
         if os.path.exists(partfile):
             os.remove(partfile)
         partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pkl')

@@ -1,7 +1,6 @@
 import os
 
 import numpy as np
-
 def load_input_file(filename):
 
     dictionary = { }
@@ -35,20 +34,20 @@ def load_input_file(filename):
                         if val.count(',') > 0 and val.count('-') == 0:
                             val = [[int(x) for x in v.split(',')] for v in val.split(';')]
                         elif val.count(',') > 0 and val.count('-') > 0:
-                            val = [[np.arange(*[int(y)+i for i, y in enumerate(x.split('-'))]).tolist() if x.count('-') > 0 and x[0] != '-' else \
+                            val = [[np.arange(*[int(y)+i%2 for i, y in enumerate(x.replace(':','-').split('-'))]).tolist() if x.count('-') > 0 and x[0] != '-' else \
                                    int(x) for x in v.split(',')] if not v.isdigit() else
                                    int(v) for v in val.split(';')]
                         else:
                             val = [int(v) for v in val.split(';')]
                     elif val.count(',') > 0 and val.count('/') == 0:
-                        val = [np.arange(*[int(x)+i for i, x in enumerate(v.split('-'))]).tolist() if v.count('-') > 0 and v[0] != '-' else \
+                        val = [np.arange(*[int(x)+i%2 for i, x in enumerate(v.replace(':','-').split('-'))]).tolist() if v.count('-') > 0 and v[0] != '-' else \
                                int(v) if v.isdigit() else \
                                float(v) if v.replace('-','',1).replace('.','',1).isdigit() else \
                                v for v in val.split(',')]
                     elif val.count('-') > 0 and val.count('/') == 0:
-                        val = [int(v)+i if v.isdigit() else \
+                        val = [int(v)+i%2 if v.isdigit() else \
                                #v+'1' if v.isalpha() else \
-                               v for i, v in enumerate(val.split('-'))]
+                               v for i, v in enumerate(val.replace(':','-').split('-'))]
                         if type(val[0]) is int:
                             val = np.arange(*val).tolist()
                         elif type(val[0]) is str:

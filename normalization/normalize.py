@@ -5,6 +5,9 @@ import numpy as np
 import os
 import sys
 
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import multiprocessing
 
 from mantid.geometry import PointGroupFactory, SpaceGroupFactory
@@ -100,9 +103,6 @@ u_bins = bins[0]
 v_bins = bins[1]
 w_bins = bins[2]
 
-# goniometer axis --------------------------------------------------------------
-gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
-
 u_bin_size = (u_lims[1]-u_lims[0])/(u_bins-1)
 v_bin_size = (v_lims[1]-v_lims[0])/(v_bins-1)
 w_bin_size = (w_lims[1]-w_lims[0])/(w_bins-1)
@@ -119,7 +119,7 @@ if group is not None:
     if type(group) is int:
         pg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.subscribedSpaceGroupSymbols(group)[0]).getPointGroup().getHMSymbol()
     elif group in pgs:
-        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getHMSymbol()
     else:
         pg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getPointGroup().getHMSymbol()
     symmetry = pg
@@ -127,7 +127,7 @@ else:
     symmetry = None
 
 def run_normalization(runs, p, facility, instrument, ipts, detector_calibration, tube_calibration, 
-                      gon_axis, directory, counts_file, spectrum_file, background_file,
+                      directory, counts_file, spectrum_file, background_file,
                       u_proj, v_proj, w_proj, u_binning, v_binning, w_binning, symmetry):
 
     if not mtd.doesExist('sa'):
@@ -175,7 +175,7 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
 
         CompressEvents(InputWorkspace='bkg', Tolerance=1e-4, OutputWorkspace='bkg')
 
-    for r in runs:
+    for i, r in enumerate(runs):
 
         LoadEventNexus(Filename='/{}/{}/IPTS-{}/nexus/{}_{}.nxs.h5'.format(facility,instrument,ipts,instrument,r), 
                        OutputWorkspace='data')
@@ -198,7 +198,15 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
         MaskDetectors(Workspace='data', MaskedWorkspace='mask')
 
         if instrument == 'CORELLI':
-            SetGoniometer('data', Axis0=str(gon_axis)+',0,1,0,1') 
+            gon_axis = 'BL9:Mot:Sample:Axis3.RBV'
+            possible_axes = ['BL9:Mot:Sample:Axis1', 'BL9:Mot:Sample:Axis2', 'BL9:Mot:Sample:Axis3', 
+                             'BL9:Mot:Sample:Axis1.RBV', 'BL9:Mot:Sample:Axis2.RBV', 'BL9:Mot:Sample:Axis3.RBV']
+            for possible_axis in possible_axes:
+                if mtd['data'].run().hasProperty(possible_axis):
+                    angle = np.mean(mtd['data'].run().getProperty(possible_axis).value)
+                    if not np.isclose(angle,0):
+                        gon_axis = possible_axis
+            SetGoniometer(Workspace='data', Axis0='{},0,1,0,1'.format(gon_axis))
         else:
             SetGoniometer('data', Goniometers='Universal') 
 
@@ -281,7 +289,7 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
 if __name__ == '__main__':
 
     args = [facility, instrument, ipts, detector_calibration, tube_calibration, 
-            gon_axis, directory, counts_file, spectrum_file, background_file,
+            directory, counts_file, spectrum_file, background_file,
             u_proj, v_proj, w_proj, u_binning, v_binning, w_binning, symmetry]
 
     split_runs = [split.tolist() for split in np.array_split(run_nos, n_proc)]

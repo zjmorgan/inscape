@@ -399,9 +399,12 @@ class Profile:
         mask = (y > -np.inf) & (e > 0) & (y_fit > -np.inf) & (y < np.inf) & (e < np.inf)
 
         n_df = y[mask].size-5
+        
+        m_std = 2*n_std
 
         pk  = (np.abs(x-mu) <= n_std*sigma) & mask
-        bkg = (np.abs(x-mu) >  n_std*sigma) & mask
+        bkg = (np.abs(x-mu) >  n_std*sigma) \
+            & (np.abs(x-mu) <= n_std*m_std) & mask
 
         n_pk, n_bkg = np.sum(pk), np.sum(bkg)
 
@@ -731,15 +734,17 @@ class Projection:
 
             W = vecs.copy()
             D = np.diag(1/radii**2)
-
             A = np.dot(np.dot(W, D), W.T)
+
+            B = A/4
 
             mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
 
             n_df = z[mask].size-10
 
             pk  = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) <= 1) & mask
-            bkg = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) >  1) & mask
+            bkg = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) >  1) \
+                & (B[0,0]*(x-mu_x)**2+B[1,1]*(y-mu_y)**2+2*B[0,1]*(x-mu_x)*(y-mu_y) <= 1) & mask
 
             n_pk, n_bkg = np.sum(pk), np.sum(bkg)
 

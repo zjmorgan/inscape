@@ -337,7 +337,7 @@ def norm_integrator(runs, Q0, D, W, bin_size=0.013, box_size=1.65, peak_ellipsoi
     return Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg_data_norm
 
 def load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                   tube_calibration, detector_calibration):
+                                   tube_calibration, detector_calibration, mask_file):
 
     if instrument == 'CORELLI':
         k_min, k_max = 2.5, 10
@@ -380,6 +380,17 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
 
     if not mtd.doesExist('flux') and spectrum_file is not None:
         LoadNexus(Filename=spectrum_file, OutputWorkspace='flux')
+        
+    if mtd.doesExist('sa') and mask_file is not None:
+        LoadMask(Instrument=instrument, InputFile=mask_file, OutputWorkspace='mask')
+        MaskDetectors(Workspace='sa', MaskedWorkspace='mask')
+        DeleteWorkspace('mask')
+
+    if mtd.doesExist('sa'):
+        if instrument != 'CORELLI':
+            SumNeighbours(InputWorkspace='sa', OutputWorkspace='sa', SumX=4, SumY=4)
+        # else:
+        #     SumNeighbours(InputWorkspace='sa', OutputWorkspace='sa', SumX=1, SumY=4)
 
     if mtd.doesExist('tube_table'):
         if mtd.doesExist('sa'):
@@ -402,7 +413,7 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
                 LoadIsawDetCal(InputWorkspace='flux', Filename=detector_calibration)
 
 def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts, all_runs, ub_file, reflection_condition, min_d,
-                    spectrum_file, counts_file, tube_calibration, detector_calibration,
+                    spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
                     mod_vector_1=[0,0,0], mod_vector_2=[0,0,0], mod_vector_3=[0,0,0],
                     max_order=0, cross_terms=False, exp=None, tmp=None):
 
@@ -410,7 +421,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
     centroid_radius = 0.125
 
     load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                   tube_calibration, detector_calibration)
+                                   tube_calibration, detector_calibration, mask_file)
 
     CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='tmp_lean')
 
@@ -460,7 +471,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                             LoadInstrument(Workspace='sa', InstrumentName='SNAP', RewriteSpectraMap=False)
 
                             load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                                           tube_calibration, detector_calibration)
+                                                           tube_calibration, detector_calibration, mask_file)
 
                     # CopyInstrumentParameters(InputWorkspace='sa', OutputWorkspace=ows)
                     if mtd.doesExist('tube_table'):
@@ -758,6 +769,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 for pn in range(mtd['sat'].getNumberPeaks()-1,-1,-1):
                     h, k, l =  mtd['sat'].getPeak(pn).getIntHKL()
                     h, k, l = int(h), int(k), int(l)
+                    allowed = False
                     if reflection_condition == 'Primitive':
                         allowed = True
                     elif reflection_condition == 'C-face centred':
@@ -766,6 +778,8 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                         allowed = (k + l) % 2 == 0
                     elif reflection_condition == 'B-face centred':
                         allowed = (h + l) % 2 == 0
+                    elif reflection_condition == 'All-face centred':
+                        allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
                     elif reflection_condition == 'Body centred':
                         allowed = (h + k + l) % 2 == 0
                     elif reflection_condition == 'Rhombohedrally centred, obverse':
@@ -970,6 +984,8 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                     prop = run.getProperty(log)
                     if type(prop.value) is np.ndarray:
                         run.addProperty(log, 0, True)
+                        
+            pks_to_remove = []
 
             for pn in range(mtd[opk].getNumberPeaks()):
 
@@ -1053,20 +1069,27 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 else:
                     tmp_outname = '{}_{}_{}.nxs'.format(instrument,r,no)
 
-                SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
-                SaveMD(InputWorkspace='crop_norm', Filename=os.path.join(tmp_directory, 'van_'+tmp_outname))
+                if mtd['crop_data'].getDimension(2).getNBins() > 3:
+                    SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
+                    SaveMD(InputWorkspace='crop_norm', Filename=os.path.join(tmp_directory, 'van_'+tmp_outname))
+                else:
+                    pks_to_remove.append(pn)
 
                 DeleteWorkspace('crop_data')
                 DeleteWorkspace('crop_norm')
+
+            for pn in np.sort(pks_to_remove)[::-1].tolist():
+                pk = mtd[opk].removePeak(pn)
 
         if mtd.doesExist(opk):
 
             ConvertPeaksWorkspace(PeakWorkspace=opk, OutputWorkspace=opk+'_lean')
 
-            CombinePeaksWorkspaces(LHSWorkspace='tmp_lean', RHSWorkspace=opk+'_lean', OutputWorkspace='tmp_lean')
-            SetUB(Workspace='tmp_lean', UB=mtd[opk+'_lean'].sample().getOrientedLattice().getUB())
+            if mtd[opk].getNumberPeaks() > 0:
+                CombinePeaksWorkspaces(LHSWorkspace='tmp_lean', RHSWorkspace=opk+'_lean', OutputWorkspace='tmp_lean')
+                CombinePeaksWorkspaces(LHSWorkspace='tmp', RHSWorkspace=opk, OutputWorkspace='tmp')
 
-            CombinePeaksWorkspaces(LHSWorkspace='tmp', RHSWorkspace=opk, OutputWorkspace='tmp')
+            SetUB(Workspace='tmp_lean', UB=mtd[opk].sample().getOrientedLattice().getUB())
             SetUB(Workspace='tmp', UB=mtd[opk].sample().getOrientedLattice().getUB())
 
             if max_order > 0:
@@ -1113,7 +1136,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
     SaveIsawUB(InputWorkspace='tmp', Filename=os.path.join(outdir, outname+'.mat'))
 
 def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, norm_scale,
-                 directory, ipts, outname, detector_calibration, exp=None, tmp=None):
+                 directory, ipts, outname, detector_calibration, exp=None, tmp=None, grouping=None):
 
     for r, b, i, p, c, o in zip(runs, banks, indices, phi, chi, omega):
 
@@ -1192,6 +1215,10 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
 
                 SetGoniometer(Workspace=ows, Goniometers='Universal')
 
+                if grouping is not None:
+
+                    GroupDetectors(InputWorkspace=ows, OutputWorkspace=ows, GroupingPattern=grouping)
+
                 if mtd.doesExist('flux'):
 
                     ConvertUnits(InputWorkspace=ows, OutputWorkspace=ows, EMode='Elastic', Target='Momentum')
@@ -1201,10 +1228,35 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                            XMax=mtd['flux'].dataX(0).max(),
                                            OutputWorkspace=ows)
 
-                # min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
-                #                                              QDimensions='Q3D',
-                #                                              dEAnalysisMode='Elastic',
-                #                                              Q3DFrames='Q')
+                    CompressEvents(InputWorkspace=ows, Tolerance=1e-2, OutputWorkspace=ows)
+
+                # if instrument != 'CORELLI':
+
+                PreprocessDetectorsToMD(InputWorkspace=ows, OutputWorkspace='det')
+
+                det_dict = mtd['det'].toDict()
+
+                EditInstrumentGeometry(Workspace=ows,
+                                       PrimaryFlightPath=mtd[ows].getInstrument().getSource().getPos().norm(),
+                                       SpectrumIDs=mtd[ows].getSpectrumNumbers(),
+                                       L2=det_dict['L2'],
+                                       Polar=np.rad2deg(det_dict['TwoTheta']).tolist(),
+                                       Azimuthal=np.rad2deg(det_dict['Azimuthal']).tolist(),
+                                       DetectorIDs=det_dict['DetectorID'],
+                                       InstrumentName=instrument)
+
+                min_vals, max_vals = ConvertToMDMinMaxLocal(InputWorkspace=ows,
+                                                            QDimensions='Q3D',
+                                                            dEAnalysisMode='Elastic',
+                                                            Q3DFrames='Q_sample',
+                                                            LorentzCorrection=False,
+                                                            PreprocDetectorsWS='det',
+                                                            Uproj='1,0,0',
+                                                            Vproj='0,1,0',
+                                                            Wproj='0,0,1')
+
+                if np.isinf(min_vals).any() or np.isinf(max_vals).any():
+                    min_vals, max_vals = [-20,-20,-20], [20,20,20]
 
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
@@ -1212,14 +1264,15 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                             dEAnalysisMode='Elastic',
                             Q3DFrames='Q_sample',
                             LorentzCorrection=False,
-                            PreprocDetectorsWS='-',
-                            MinValues='-20,-20,-20',
-                            MaxValues='20,20,20',
+                            PreprocDetectorsWS='det',
+                            MinValues=min_vals,
+                            MaxValues=max_vals,
                             Uproj='1,0,0',
                             Vproj='0,1,0',
                             Wproj='0,0,1')
 
                 DeleteWorkspace(ows)
+                DeleteWorkspace('det')
 
         else:
 
@@ -1303,7 +1356,7 @@ def projection_axes(n):
     return u, v
 
 def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
-                     spectrum_file, counts_file, tube_calibration, detector_calibration,
+                     spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
                      outdir, directory, facility, instrument, ipts, runs,
                      split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
                      mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
@@ -1312,7 +1365,17 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
     scale_constant = 1e+4
 
     load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                   tube_calibration, detector_calibration)
+                                   tube_calibration, detector_calibration, mask_file)
+
+    grouping = None
+
+    if mtd.doesExist('sa'):
+        if instrument != 'CORELLI':
+            spectra = np.arange(256*256).reshape(256,256)
+            grouping = ','.join(['+'.join(spectra[4*i:4*(i+1),4*j:4*(j+1)].astype(str).flatten().tolist()) for i, j in itertools.product(np.arange(64), np.arange(64))])
+        # else:
+        #     spectra = np.arange(3*16*256).reshape(3,16,256)
+        #     grouping = ','.join(['+'.join(spectra[:,:,4*i:4*(i+1)].astype(str).flatten().tolist()) for i in np.arange(64)])            
 
     if instrument == 'HB3A':
         ows = '{}_{}'.format(instrument,experiment)+'_{}'
@@ -1395,6 +1458,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                         allowed = (h + l) % 2 == 0
                     elif reflection_condition == 'Body centred':
                         allowed = (h + k + l) % 2 == 0
+                    elif reflection_condition == 'All-face centred':
+                        allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
                     elif reflection_condition == 'Rhombohedrally centred, obverse':
                         allowed = (-h + k + l) % 3 == 0
                     elif reflection_condition == 'Rhombohedrally centred, reverse':
@@ -1486,7 +1551,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
             LoadInstrument(Workspace='sa', InstrumentName='SNAP', RewriteSpectraMap=False)
 
             load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
-                                           tube_calibration, detector_calibration)
+                                           tube_calibration, detector_calibration, mask_file)
 
         for hn, sn in zip(range(mtd['flux'].getNumberHistograms()), mtd['flux'].getSpectrumNumbers()):
 
@@ -1523,7 +1588,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
         key = tuple(key)
 
-        # print('\tIntegrating peak : {}'.format(key))
+        print('Integrating peak : {}'.format(key))
 
         peaks = peak_dict[key]
 
@@ -1687,7 +1752,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 partial_load(facility, instrument, runs, banks, indices,
                              phi, chi, omega, norm_scale,
-                             directory, ipts, outname, detector_calibration, experiment, tmp)
+                             directory, ipts, outname,
+                             detector_calibration, experiment, tmp, grouping)
 
                 Q, Qx, Qy, Qz, data, norm = box_integrator(facility, instrument, runs, banks, indices, Q0, key,
                                                            binsize=binsize, D=D, W=W, exp=experiment)
@@ -1704,7 +1770,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                 rot = True if facility == 'HFIR' else False
 
-                bins = [27,27,11] if rot else [11,11,27]
+                bins = [11,11,11] if rot else [11,11,11]
 
                 ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=radius, rotation=rot)
 
@@ -1893,11 +1959,7 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     mask = (signal > 0) & (error > 0) & (signal < np.inf) & (error < np.inf) 
                     N = signal[mask].size
 
-                    try_fit = False
                     if N > 50:
-                        try_fit = True
-
-                    if try_fit:
 
                         peak_dictionary.integrated_result(key, Q0, D, W, fit_stats, data_norm, pkg_bk, j)
 
@@ -1906,17 +1968,17 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
 
                         peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sigs)
 
-                        if peak_bkg_ratio > 2 and sig_noise_ratio > 20 and peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20:
-                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
-                            fit_est_str = '   est'
-                            if boundary:
-                                A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
-                                fit_est_str = '   fit'
-                        else:
-                            A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
-                            fit_est_str = '   fit'
-
-                        bound_str = ' false' if boundary else '  true'
+                        # if peak_bkg_ratio > 2 and sig_noise_ratio > 20 and peak_bkg_ratio2d > 2 and sig_noise_ratio2d > 20:
+                        #     A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+                        #     fit_est_str = '   est'
+                        #     intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+                        #     I_fit, sig_fit = intens*scale, sig*scale
+                        #     if boundary or I_est > 4*I_fit or I_fit > 4*I_est:
+                        #         A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        #         fit_est_str = '   fit'
+                        # else:
+                        A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        fit_est_str = '   fit'
 
                         intens, bkg, sig = peak_fit_3d.integrated(mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -1972,8 +2034,8 @@ def integration_loop(keys, outname, ref_dict, peak_tree, int_list, filename,
                     peak_stats.write(fmt_stats.format(*stats_list))
                     peak_params.write(fmt_params.format(*params_list))
 
-                runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, 
-                                                        runs_banks, bank_keys, bank_group, key, exp=experiment)
+            runs_banks, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, 
+                                                    runs_banks, bank_keys, bank_group, key, exp=experiment)
 
         if i % 15 == 0:
 

@@ -76,7 +76,7 @@ max_chi_square = dictionary['maximum-chi-square']
 
 def gaussian(x, parameters):
     bkg, amp, mu, sigma, _ = parameters
-    return bkg+amp*np.exp(-(x-mu)**2/sigma**2)
+    return bkg+amp*np.exp(-0.5*(x-mu)**2/sigma**2)
 
 rootname = '/HFIR/HB3A{}/IPTS-{}/'.format(tutorial,ipts)
 scanfile = 'HB3A_exp{:04}_scan{:04}'
@@ -92,7 +92,7 @@ for i, pk in enumerate(['up', 'down']):
 
     for data in data_channels[i]:
 
-        filename = rootname+'autoreduce/'+data+'.nxs'
+        filename = working_directory+'autoreduce/'+data+'.nxs'
 
         HB3AAdjustSampleNorm(Filename=filename,
                              NormaliseBy=normalize_by,

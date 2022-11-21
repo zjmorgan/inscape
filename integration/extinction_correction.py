@@ -19,7 +19,9 @@ from peak import PeakDictionary, PeakStatistics
 
 from mantid.geometry import PointGroupFactory, SpaceGroupFactory, CrystalStructure
 
-filename = sys.argv[1]
+from mantid.kernel import V3D
+
+_, filename, *ub_twin_list = sys.argv
 
 CreateSampleWorkspace(OutputWorkspace='sample')
 
@@ -52,6 +54,9 @@ elif group in pgs:
     pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
 elif group in sgs:
     sg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getHMSymbol()
+
+if sg is not None:
+    pg = PointGroupFactory.createPointGroupFromSpaceGroup(SpaceGroupFactory.createSpaceGroup(sg))
 
 if dictionary.get('chemical-formula') is not None:
     chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[A-Za-z]+|\d+', dictionary['chemical-formula'])]).lstrip(' ')
@@ -116,11 +121,77 @@ if cif_file is not None:
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
 peak_dictionary.set_scale_constant(scale_constant)
+
 peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
+#peak_dictionary.load(os.path.join(directory, outname+'_corr.pkl'))
+
+LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
+
+peak_dictionary.recalculate_hkl()
+ 
+ub_twin_list = [os.path.join(directory, ub_twin) for ub_twin in ub_twin_list]
+
+for i, ub_twin in enumerate(ub_twin_list):
+    CloneWorkspace(InputWorkspace='iws', OutputWorkspace='iws{}'.format(i))
+    LoadIsawUB(InputWorkspace='iws{}'.format(i), Filename=ub_twin)
+    IndexPeaks(PeaksWorkspace='iws{}'.format(i), Tolerance=0.12)
+
+for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+    pk = mtd['iws'].getPeak(pn)
+
+    h, k, l = pk.getIntHKL()
+    m, n, p = pk.getIntMNP()
+
+    for i, ub_twin in enumerate(ub_twin_list):
+        pk_twin = mtd['iws{}'.format(i)].getPeak(pn)
+        H, K, L = pk_twin.getHKL()
+        if not np.allclose([H,K,L],0):
+            h, k, l = 0, 0, 0
+            m, n, p = 0, 0, 0
+
+    dh, dk, dl = (m*np.array(mod_vector_1)+n*np.array(mod_vector_2)+p*np.array(mod_vector_3)).astype(float)
+
+    pk.setHKL(h+dh,k+dk,l+dl)
+    pk.setIntHKL(V3D(h,k,l))
+    pk.setIntMNP(V3D(m,n,p))
+
+for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+    pk = mtd['iws'].getPeak(pn)
+
+    h, k, l = pk.getIntHKL()
+    m, n, p = pk.getIntMNP()
+
+    if (np.array([h,k,l,m,n,p]) == 0).all():
+        mtd['iws'].removePeak(pn)
+
+# peak_dictionary.clear_peaks()
+# peak_dictionary.repopulate_workspaces()
+# peak_dictionary.recalculate_hkl()
+
+for key in peak_dictionary.peak_dict.keys():
+
+    peaks = peak_dictionary.peak_dict.get(key)
+
+    h, k, l, m, n, p = key
+
+    for peak in peaks:
+
+        scale = peak.get_ext_scale()
+
+        if len(scale) > 0:
+
+            scale *= 0
+            scale += 1
+
+            peak.set_ext_scale(scale)
 
 models = ['primary', 'secondary, gaussian', 'secondary, lorentzian',
           'secondary, gaussian type I', 'secondary, gaussian type II', 
           'secondary, lorentzian type I', 'secondary, lorentzian type II']
+
+#models = ['secondary, lorentzian']
 
 rs, gs, Us, scales, chi_sqs = [], [], [], [], []
 
@@ -194,31 +265,42 @@ peak_dictionary.cs = CrystalStructure(constants, peak_dictionary.hm, atoms)
 
 X, Y, I, E, HKL, d_spacing = peak_dictionary.extinction_curves(r, g, s, model)
 
-marker = ['o', 's', '<']
-markers = cycle(marker)
-
-fig, ax = plt.subplots(1, 1, num=2)
-
-for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
-
-    mark = next(markers)
-    sort = np.argsort(x)
-
-    ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
-    ax.plot(x[sort], y[sort], linestyle='--', color='k', zorder=100)
-
-ax.legend()
-ax.set_yscale('linear')
-ax.set_xlabel(r'$x$') #
-ax.set_ylabel(r'$I$ [arb. unit]')
-
-xlim = ax.get_xlim()
-ylim = ax.get_ylim()
-
-marker = ['o', 's', '<']
-markers = cycle(marker)
-
 with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
+
+    fam_file = open(os.path.join(outdir, 'extinction_families.txt'), 'w')
+
+    marker = ['o', 's', '<']
+    markers = cycle(marker)
+
+    fig, ax = plt.subplots(1, 1, num=2)
+
+    for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
+
+        mark = next(markers)
+        sort = np.argsort(x)
+
+        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+        ax.plot(x[sort], y[sort], linestyle='--', color='k', zorder=100)
+
+        for factor, intensity, error, fit in zip(x[sort],i[sort],e[sort],y[sort]):
+
+            fam_file.write('{},{},{},{},{},{},{}\n'.format(*hkl,factor,intensity,error,fit))
+
+    fam_file.close()
+
+    ax.legend()
+    ax.set_yscale('linear')
+    ax.set_xlabel(r'$x$') #
+    ax.set_ylabel(r'$I$ [arb. unit]')
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    #pdf.savefig()
+    #plt.close()
+
+    marker = ['o', 's', '<']
+    markers = cycle(marker)
 
     for j, (x, y, i, e, hkl, d) in enumerate(zip(X, Y, I, E, HKL, d_spacing)):
 
@@ -241,15 +323,153 @@ with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
         pdf.savefig()
         plt.close()
 
+# peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
+# 
+# if cif_file is not None:
+#     peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
+# 
+# peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+# peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
+# peak_dictionary.set_scale_constant(scale_constant)
+# peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
+
 peak_dictionary.apply_extinction_correction(r, g, s, model=model)
-peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_ext.int'))
 
-peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), peak_dictionary.hm)
+m, n, p = 0, 0, 0
+
+X, I, E = [], [], []
+
+for hkl in HKL:
+
+    x, i, e = [], [], []
+
+    h, k, l = hkl
+
+    equivalents = pg.getEquivalents(V3D(h,k,l))[::-1]
+
+    for equivalent in equivalents:
+
+        h, k, l = equivalent
+
+        h, k, l = int(h), int(k), int(l)
+
+        key = h, k, l, m, n, p
+
+        peaks = peak_dictionary.peak_dict.get(key)
+
+        for peak in peaks:
+
+            lamdas = peak.get_wavelengths()
+
+            intens = peak.get_intensity()
+            sig_intens = peak.get_intensity_error()
+
+            if len(intens) > 0:
+
+                x += lamdas.tolist()
+
+                i += intens.tolist()
+                e += sig_intens.tolist()
+
+    X.append(np.array(x))
+    I.append(np.array(i))
+    E.append(np.array(e))
+
+with PdfPages(os.path.join(outdir, 'extinction_correction.pdf')) as pdf:
+
+    marker = ['o', 's', '<']
+    markers = cycle(marker)
+
+    fig, ax = plt.subplots(1, 1, num=4)
+
+    for j, (x, i, e, hkl, d) in enumerate(zip(X, I, E, HKL, d_spacing)):
+
+        mark = next(markers)
+        sort = np.argsort(x)
+
+        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+
+    ax.legend()
+    ax.set_yscale('linear')
+    ax.set_xlabel(r'$\lambda$ [$\AA$]')
+    ax.set_ylabel(r'$I$ [arb. unit]')
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    #pdf.savefig()
+    #plt.close()
+
+    marker = ['o', 's', '<']
+    markers = cycle(marker)
+
+    # ylim = ylim[0], 10000
+
+    for j, (x, i, e, hkl, d) in enumerate(zip(X, I, E, HKL, d_spacing)):
+
+        fig, ax = plt.subplots(1, 1, num=5)
+
+        mark = next(markers)
+        sort = np.argsort(x)
+
+        ax.errorbar(x[sort], i[sort], yerr=e[sort], linestyle='none', marker=mark, color='C{}'.format(j%9), label='({},{},{})'.format(*hkl))
+        ax.set_title('d = {:.4} \u212B'.format(d))
+
+        ax.legend()
+        ax.set_yscale('linear')
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_xlabel(r'$\lambda$ [$\AA$]')
+        ax.set_ylabel(r'$I$ [arb. unit]')
+
+        pdf.savefig()
+        plt.close()
+
+for i, ub_twin in enumerate(ub_twin_list):
+    CloneWorkspace(InputWorkspace='iws', OutputWorkspace='iws{}'.format(i))
+    LoadIsawUB(InputWorkspace='iws{}'.format(i), Filename=ub_twin)
+    IndexPeaks(PeaksWorkspace='iws{}'.format(i), Tolerance=0.12)
+
+for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+    pk = mtd['iws'].getPeak(pn)
+
+    h, k, l = pk.getIntHKL()
+    m, n, p = pk.getIntMNP()
+
+    for i, ub_twin in enumerate(ub_twin_list):
+        pk_twin = mtd['iws{}'.format(i)].getPeak(pn)
+        H, K, L = pk_twin.getHKL()
+        if not np.allclose([H,K,L],0):
+            h, k, l = 0, 0, 0
+            m, n, p = 0, 0, 0
+
+    dh, dk, dl = (m*np.array(mod_vector_1)+n*np.array(mod_vector_2)+p*np.array(mod_vector_3)).astype(float)
+
+    pk.setHKL(h+dh,k+dk,l+dl)
+    pk.setIntHKL(V3D(h,k,l))
+    pk.setIntMNP(V3D(m,n,p))
+
+for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+    pk = mtd['iws'].getPeak(pn)
+
+    h, k, l = pk.getIntHKL()
+    m, n, p = pk.getIntMNP()
+
+    if (np.array([h,k,l,m,n,p]) == 0).all():
+        mtd['iws'].removePeak(pn)
+
+peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_ext.hkl'))
+
+peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.hkl'), peak_dictionary.hm)
 peak_statistics.prune_outliers()
 peak_statistics.write_statisics()
 peak_statistics.write_intensity()
 
-peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_ext.int'), peak_dictionary.hm)
+peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_ext.hkl'), peak_dictionary.hm)
 peak_statistics.prune_outliers()
 peak_statistics.write_statisics()
 peak_statistics.write_intensity()
+
+peak_dictionary.save(os.path.join(directory, outname+'_corr.pkl'))

@@ -102,7 +102,7 @@ peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
 peak_dictionary.apply_spherical_correction(0)
 peak_dictionary.clear_peaks()
 peak_dictionary.repopulate_workspaces()
-    
+
 LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
 
 peak_dictionary.recalculate_hkl()
