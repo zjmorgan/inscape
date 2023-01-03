@@ -49,11 +49,11 @@ gamma = dictionary.get('gamma')
 
 T, F = True, False
 
-sample    = [T, F, T, T, T, T, T, T, T, T, T, T]
-panels    = [F, F, F, T, T, T, T, T, T, T, T, T]
-moderator = [F, T, F, F, F, F, T, T, T, T, T, T]
-size      = [F, F, F, F, F, F, F, F, F, F, F, F]
-time      = [F, F, F, F, F, F, F, F, F, F, F, F]
+sample    = [T, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T]
+panels    = [F, F, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T]
+moderator = [F, T, F, F, F, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T]
+size      = [F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F]
+time      = [F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F]
 
 directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
@@ -72,8 +72,8 @@ if os.path.splitext(peaks_workspace)[1] == '.nxs':
 else:
     LoadIsawPeaks(OutputWorkspace='peaks', 
                   Filename=os.path.join(directory,peaks_workspace))
-
-CloneWorkspace(InputWorkspace='peaks', OutputWorkspace='ref')
+    ConvertPeaksWorkspace(PeakWorkspace='peaks', 
+                          OutputWorkspace='peaks')
 
 sr_directory = '/SNS/{}/shared/SCDCalibration/'.format(instrument)
 sr_file = dictionary.get('superresolution-file') # 'CORELLI_Definition_2017-04-04_super_resolution.xml'
@@ -95,6 +95,8 @@ if mtd['peaks'].columnCount() == 14:
     ConvertPeaksWorkspace(PeakWorkspace='peaks', 
                           InstrumentWorkspace=instrument, 
                           OutputWorkspace='peaks')
+
+CloneWorkspace(InputWorkspace='peaks', OutputWorkspace='ref')
 
 ApplyInstrumentToPeaks(InputWorkspace='peaks', 
                        InstrumentWorkspace=instrument,
@@ -299,7 +301,7 @@ with PdfPages(os.path.join(outdir, outname+'.pdf')) as pdf:
             FilterPeaks('peaks', Criterion='=', BankName=bank, OutputWorkspace='tmp')
             FilterPeaks('tmp', FilterVariable='h^2+k^2+l^2', 
                         FilterValue=0, Operator='>', OutputWorkspace='tmp')
-            if mtd['tmp'].getNumberPeaks() > 10:
+            if mtd['tmp'].getNumberPeaks() > 20:
                 FindUBUsingIndexedPeaks('tmp', Tolerance=0.15)
                 #FindUBUsingLatticeParameters('tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
                 #OptimizeLatticeForCellType('tmp', CellType=cell_type, Apply=True)
@@ -384,7 +386,7 @@ for bank in banks:
     FilterPeaks('ref', Criterion='=', BankName=bank, OutputWorkspace='tmp')
     FilterPeaks('tmp', FilterVariable='h^2+k^2+l^2', 
                 FilterValue=0, Operator='>', OutputWorkspace='tmp')
-    if mtd['tmp'].getNumberPeaks() > 10:
+    if mtd['tmp'].getNumberPeaks() > 20:
         FindUBUsingIndexedPeaks('tmp', Tolerance=0.15)
         #FindUBUsingLatticeParameters('tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
         OptimizeLatticeForCellType('tmp', CellType=cell_type, Apply=True)

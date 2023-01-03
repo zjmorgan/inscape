@@ -86,8 +86,8 @@ method = dictionary['integration-method'].lower()
 
 if method == 'fitted':
     integration_method = 'Fitted'
-# elif method == 'counts':
-#     integration_method = 'Counts'
+elif method == 'counts':
+    integration_method = 'Counts'
 else:
     integration_method = 'CountsWithFitting'
 
@@ -217,6 +217,22 @@ for i, s in enumerate(run_nos[::-1]):
         else:
             row, col = peak.getRow(), peak.getCol()
 
+        if 'Fit' not in integration_method:
+            HB3AIntegrateDetectorPeaks(InputWorkspace=data,
+                                       Method='CountsWithFitting',
+                                       NumBackgroundPts=number_of_background_points,
+                                       LowerLeft=[col-x_pixels,row-y_pixels],
+                                       UpperRight=[col+x_pixels,row+y_pixels],
+                                       ChiSqMax=np.inf,
+                                       SignalNoiseMin=min_signal_noise_ratio,
+                                       ScaleFactor=scale_factor,
+                                       ApplyLorentz=apply_lorentz,
+                                       OptimizeQVector=optimize_q_vector,
+                                       OutputFitResults=True,
+                                       OutputWorkspace='peaks')
+            if mtd['peaks'].getNumberPeaks() == 0:
+                continue
+       
         HB3AIntegrateDetectorPeaks(InputWorkspace=data,
                                    Method=integration_method,
                                    NumBackgroundPts=number_of_background_points,
@@ -229,7 +245,7 @@ for i, s in enumerate(run_nos[::-1]):
                                    OptimizeQVector=optimize_q_vector,
                                    OutputFitResults=True,
                                    OutputWorkspace='peaks')
-
+       
         if mtd['peaks'].getNumberPeaks() > 0:
 
             mtd['peaks'].getPeak(0).setHKL(*hkl)

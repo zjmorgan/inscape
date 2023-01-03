@@ -374,7 +374,7 @@ class PeakEnvelope:
             self.ax_Qv.set_title('1 orientation')
 
         self.ax_Qv_fit.set_title('')
-            
+
         self.ax_uv.set_title('')
         self.ax_uv_fit.set_title('')
 
@@ -612,7 +612,7 @@ class PeakEnvelope:
             self.elli_s.set_transform(self.trans_elli_s+self.ax_s_proj.transData)
 
             if self.__show_plots: self.fig.show()
-            
+
     def update_ellipse(self, mu, sigma, rho):
 
         mu_x, mu_y = mu
@@ -623,7 +623,7 @@ class PeakEnvelope:
 
         scale_x = 3*sigma_x
         scale_y = 3*sigma_y
-        
+
         self.trans_elli_s.clear()
 
         self.elli_s.width = 2*rx

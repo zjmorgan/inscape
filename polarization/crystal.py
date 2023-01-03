@@ -10,9 +10,9 @@ import sys
 from mantid import config
 config['Q.convention'] = 'Inelastic'
 
-filename = sys.argv[1] #'/HFIR/HB3A/IPTS-18227/shared/pnd/HB3A.conf'
+filename = sys.argv[1]
 
-directory = os.path.dirname(os.path.realpath(__file__))
+directory = os.path.dirname('/SNS/software/scd/dev/inscape/polarization/')
 sys.path.append(directory)
 
 directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
@@ -49,9 +49,9 @@ outname = dictionary['name']
 # data normalization -----------------------------------------------------------
 normalization = dictionary['normalization']
 
-if normalization == 'monitor':
+if normalization.lower() == 'monitor':
     normalize_by = 'Monitor'
-elif normalization == 'time':
+elif normalization.lower() == 'time':
     normalize_by = 'Time'
 else:
     normalize_by = 'Time'
@@ -84,13 +84,12 @@ scanfile = 'HB3A_exp{:04}_scan{:04}'
 up_data = [scanfile.format(exp,s) for s in up_run_nos]
 down_data = [scanfile.format(exp,s) for s in down_run_nos]
 
-data_channels = [up_data,down_data]
+CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='up')
+CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='down')
 
-for i, pk in enumerate(['up', 'down']):
+for data_up, data_down in zip(up_data, down_data):
 
-    CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=pk)
-
-    for data in data_channels[i]:
+    for data in [data_up, data_down]:
 
         filename = working_directory+'autoreduce/'+data+'.nxs'
 
@@ -100,14 +99,26 @@ for i, pk in enumerate(['up', 'down']):
                              OutputType='Detector',
                              OutputWorkspace=data)
 
-        CreatePeaksWorkspace(data, NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='tmp')
+        pws = data+'_pk'
+
+        CreatePeaksWorkspace(InstrumentWorkspace=data, NumberOfPeaks=0, OutputType='Peak', OutputWorkspace='peaks')
+        CreatePeaksWorkspace(InstrumentWorkspace=data, NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=pws)
 
         run = mtd[data].getExperimentInfo(0).run()
         R = run.getGoniometer(run.getNumGoniometers()//2).getR()
-        mtd['tmp'].run().getGoniometer(0).setR(R)
+
+        mtd['peaks'].run().getGoniometer(0).setR(R)
+        mtd[pws].run().getGoniometer(0).setR(R)
 
         CopySample(InputWorkspace=data,
-                   OutputWorkspace='tmp',
+                   OutputWorkspace=pws,
+                   CopyName=False,
+                   CopyMaterial=False,
+                   CopyEnvironment=False,
+                   CopyShape=False)
+
+        CopySample(InputWorkspace=data,
+                   OutputWorkspace='peaks',
                    CopyName=False,
                    CopyMaterial=False,
                    CopyEnvironment=False,
@@ -116,35 +127,123 @@ for i, pk in enumerate(['up', 'down']):
         title = run['scan_title'].value
         hkl = np.array(title.split('(')[-1].split(')')[0].split(' ')).astype(float)
 
-        peak = mtd['tmp'].createPeakHKL([*hkl])
+        peak = mtd['peaks'].createPeakHKL([*hkl])
 
         row, col = peak.getRow(), peak.getCol()
 
-        HB3AIntegrateDetectorPeaks(InputWorkspace=data,
-                                   Method=integration_method,
-                                   NumBackgroundPts=number_of_backgroud_points,
-                                   LowerLeft=[col-x_pixels,row-y_pixels],
-                                   UpperRight=[col+x_pixels,row+y_pixels],
-                                   ChiSqMax=max_chi_square,
-                                   SignalNoiseMin=min_signal_noise_ratio,
-                                   ScaleFactor=scale_factor,
-                                   ApplyLorentz=apply_lorentz,
-                                   OptimizeQVector=optimize_q_vector,
-                                   OutputFitResults=True,
-                                   OutputWorkspace='peaks')
+        peak = mtd[pws].createPeakHKL([*hkl])
+        mtd[pws].addPeak(peak)
 
-        if mtd['peaks'].getNumberPeaks() > 0:
-            mtd['peaks'].getPeak(0).setHKL(*hkl)
+        iws = data+'_int'
 
-        CombinePeaksWorkspaces(LHSWorkspace='peaks', RHSWorkspace=pk, OutputWorkspace=pk)
+        IntegrateMDHistoWorkspace(InputWorkspace=data,
+                                  P1Bin='{},{}'.format(row-y_pixels,row+y_pixels),
+                                  P2Bin='{},{}'.format(col-x_pixels,col+x_pixels),
+                                  OutputWorkspace=iws,
+                                  EnableLogging=False)
 
-        DeleteWorkspace('peaks')
-        DeleteWorkspace('tmp')
+        ConvertMDHistoToMatrixWorkspace(InputWorkspace=iws, OutputWorkspace=iws, EnableLogging=False)
+        ConvertToPointData(InputWorkspace=iws, OutputWorkspace=iws, EnableLogging=False)
 
-        if mtd['peaks_fit_results'].size() > 0:
-            RenameWorkspace(InputWorkspace='peaks_fit_results', OutputWorkspace=data+'_fit_results')
-        else:
-            DeleteWorkspace('peaks_fit_results')
+        IntegrateMDHistoWorkspace(InputWorkspace=data,
+                                  P1Bin='{},0,{}'.format(row-y_pixels,row+y_pixels),
+                                  P2Bin='{},0,{}'.format(col-x_pixels,col+x_pixels),
+                                  P3Bin='0,{}'.format(mtd[data].getDimension(2).getNBins()),
+                                  OutputWorkspace=data+'_ROI', EnableLogging=False)
+
+    x0 = mtd[data_up+'_int'].extractX().flatten()
+    y0 = mtd[data_up+'_int'].extractY().flatten()
+
+    x1 = mtd[data_down+'_int'].extractX().flatten()
+    y1 = mtd[data_down+'_int'].extractY().flatten()
+
+    if (y0 > 0).sum() > 5 and (y1 > 0).sum() > 5 and y0.size == y1.size:
+
+        multi_domain_function = FunctionFactory.createInitializedMultiDomainFunction('name=CompositeFunction', 2)
+
+        flat = FunctionFactory.createInitialized('name=FlatBackground')
+        gauss = FunctionFactory.createInitialized('name=Gaussian')
+
+        composite1 = multi_domain_function.getFunction(0)
+        composite1.add(flat)
+        composite1.add(gauss)
+
+        composite2 = multi_domain_function.getFunction(1)
+        composite2.add(flat)
+        composite2.add(gauss)
+
+        mask = np.logical_and(np.isfinite(y0), np.isfinite(y1))
+
+        A0 = (np.min(y0[mask])+np.min(y1[mask]))/2
+        mu = (x0[mask][np.argmax(y0[mask])]+x1[mask][np.argmax(y1[mask])])/2
+        sigma = (np.sqrt(np.average((x0[mask]-mu)**2, weights=y0[mask]))+np.sqrt(np.average((x1[mask]-mu)**2, weights=y1[mask])))/2
+
+        h0 = np.max(y0[mask])-np.min(y0[mask])
+        h1 = np.max(y1[mask])-np.min(y1[mask])
+
+        composite1.setParameter(0, A0)
+        composite2.setParameter(0, A0)
+
+        composite1.setParameter(1, h0)
+        composite2.setParameter(1, h1)
+
+        composite1.setParameter(2, mu)
+        composite2.setParameter(2, mu)
+
+        composite1.setParameter(3, sigma)
+        composite2.setParameter(3, sigma)
+
+        function = str(multi_domain_function)
+        function += ';ties=(f1.f0.A0=f0.f0.A0,f1.f1.PeakCentre=f0.f1.PeakCentre,f1.f1.Sigma=f0.f1.Sigma)'
+
+        fit_result = ''
+        fit_result = Fit(Function=function, 
+                         InputWorkspace=data_up+'_int', 
+                         InputWorkspace_1=data_down+'_int', 
+                         Output='fit',
+                         IgnoreInvalidData=True,
+                         EnableLogging=False)
+
+        bkg, A0, mu, sigma, _, A1, _, _, _ = fit_result.OutputParameters.toDict()['Value']
+        _, errA0, _, errS, _, errA1, _, _, _ = fit_result.OutputParameters.toDict()['Error']
+
+        I0 = A0*sigma*np.sqrt(2*np.pi)
+        I1 = A1*sigma*np.sqrt(2*np.pi)
+
+        corr_A0S = np.abs(fit_result.OutputNormalisedCovarianceMatrix.cell(1, 3) / 100
+                         *fit_result.OutputParameters.cell(1, 2)
+                         *fit_result.OutputParameters.cell(3, 2))
+
+        corr_A1S = np.abs(fit_result.OutputNormalisedCovarianceMatrix.cell(3, 1) / 100
+                         *fit_result.OutputParameters.cell(1, 2)
+                         *fit_result.OutputParameters.cell(5, 2))
+
+        sig0 = np.sqrt(2*np.pi*(A0**2*errS**2+sigma**2*errA0**2+2*A0*sigma*corr_A0S))
+        sig1 = np.sqrt(2*np.pi*(A1**2*errS**2+sigma**2*errA1**2+2*A1*sigma*corr_A1S))
+
+        mtd[data_up+'_pk'].getPeak(0).setIntensity(I0)
+        mtd[data_down+'_pk'].getPeak(0).setIntensity(I1)
+
+        mtd[data_up+'_pk'].getPeak(0).setSigmaIntensity(sig0)
+        mtd[data_down+'_pk'].getPeak(0).setSigmaIntensity(sig1)
+
+        CombinePeaksWorkspaces(LHSWorkspace=data_up+'_pk', RHSWorkspace='up', OutputWorkspace='up')
+        CombinePeaksWorkspaces(LHSWorkspace=data_down+'_pk', RHSWorkspace='down', OutputWorkspace='down')
+
+        CloneWorkspace(InputWorkspace='fit_Parameters', OutputWorkspace=data_up+'_Parameters')
+        CloneWorkspace(InputWorkspace='fit_Parameters', OutputWorkspace=data_down+'_Parameters')
+
+        CloneWorkspace(InputWorkspace='fit_Workspaces', OutputWorkspace=data_up+'_Workspaces')
+        CloneWorkspace(InputWorkspace='fit_Workspaces', OutputWorkspace=data_down+'_Workspaces')
+
+        CloneWorkspace(InputWorkspace='fit_NormalisedCovarianceMatrix', OutputWorkspace=data_up+'_NormalisedCovarianceMatrix')
+        CloneWorkspace(InputWorkspace='fit_NormalisedCovarianceMatrix', OutputWorkspace=data_down+'_NormalisedCovarianceMatrix')
+
+        DeleteWorkspace('fit_Parameters')
+        DeleteWorkspace('fit_Workspaces')
+        DeleteWorkspace('fit_NormalisedCovarianceMatrix')
+
+    DeleteWorkspace('peaks')
 
 for pk in ['up', 'down']:
 
@@ -158,19 +257,19 @@ for pk in ['up', 'down']:
             fig = plt.figure(figsize=(12,6))
             ax1 = fig.add_subplot(121, projection='mantid')
             ax2 = fig.add_subplot(122, projection='mantid')
-            im = ax1.pcolormesh(mtd['peaks_'+scanfile.format(exp,scan)+'_ROI'], transpose=True)
+            im = ax1.pcolormesh(mtd[scanfile.format(exp,scan)+'_ROI'], transpose=True)
             im.set_edgecolor('face')
             ax1.set_title('({:.0f} {:.0f} {:.0f})'.format(*hkl))
             ax1.minorticks_on()
             ax1.set_aspect(1)
-            ax2.errorbar(mtd['peaks_'+scanfile.format(exp,scan)+'_Workspace'], wkspIndex=0, marker='o', linestyle='', label='data')
+            ax2.errorbar(mtd[scanfile.format(exp,scan)+'_int'], wkspIndex=0, marker='o', linestyle='', label='data')
             if 'Fit' in integration_method:
-                output = mtd['peaks_'+scanfile.format(exp,scan)+'_Parameters'].column(1)
-                xdim = mtd['peaks_'+scanfile.format(exp,scan)+'_Workspace'].getXDimension()
+                bkg, A0, mu, sigma, _, A1, _, _, _  = mtd[scanfile.format(exp,scan)+'_Parameters'].column(1)
+                xdim = mtd[scanfile.format(exp,scan)+'_int'].getXDimension()
                 x = np.linspace(xdim.getMinimum(), xdim.getMaximum(),500)
+                output = [bkg, A0 if 'up' else A1, mu, sigma, 0]
                 y = gaussian(x, output)
                 ax2.plot(x, y, label='calc')
-            ax2.plot(mtd['peaks_'+scanfile.format(exp,scan)+'_Workspace'], wkspIndex=2, marker='o', linestyle='--', label='diff')
             ax2.legend()
             ax2.set_title('Exp #{}, Scan #{}'.format(exp,scan))
             ax2.minorticks_on()
@@ -217,8 +316,8 @@ for key in data.keys():
 
     if len(HKL) == 2:
         peak = mtd['ratio'].createPeakHKL(HKL[0])
-        peak.setIntensity(I[1]/I[0])
-        peak.setSigmaIntensity(I[1]/I[0]*np.sqrt((sig[0]/I[0])**2+(sig[1]/I[1])**2))
+        peak.setIntensity(I[0]/I[1])
+        peak.setSigmaIntensity(I[0]/I[1]*np.sqrt((sig[0]/I[0])**2+(sig[1]/I[1])**2))
         mtd['ratio'].addPeak(peak)
 
 SaveHKLCW('ratio', os.path.join(directory,outname+'_ratio.hkl'), DirectionCosines=False, Header=False)

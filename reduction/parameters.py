@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+
 def load_input_file(filename):
 
     dictionary = { }
@@ -35,8 +36,8 @@ def load_input_file(filename):
                             val = [[int(x) for x in v.split(',')] for v in val.split(';')]
                         elif val.count(',') > 0 and val.count('-') > 0:
                             val = [[np.arange(*[int(y)+i%2 for i, y in enumerate(x.replace(':','-').split('-'))]).tolist() if x.count('-') > 0 and x[0] != '-' else \
-                                   int(x) for x in v.split(',')] if not v.isdigit() else
-                                   int(v) for v in val.split(';')]
+                                   float(x) for x in v.split(',')] if not v.isdigit() else
+                                   float(v) for v in val.split(';')]
                         else:
                             val = [int(v) for v in val.split(';')]
                     elif val.count(',') > 0 and val.count('/') == 0:

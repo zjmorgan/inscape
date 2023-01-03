@@ -5,7 +5,7 @@ from mantid.geometry import Goniometer
 
 import os
 import re
-import psutil
+#import psutil
 import itertools
 
 import numpy as np
@@ -344,7 +344,7 @@ def load_normalization_calibration(facility, instrument, spectrum_file, counts_f
     elif instrument == 'TOPAZ':
         k_min, k_max = 1.8, 18
     elif instrument == 'MANDI':
-        k_min, k_max = 1.5, 3.0
+        k_min, k_max = 1.5, 6.3
     elif instrument == 'SNAP':
         k_min, k_max = 1.8, 12.5
 
@@ -502,7 +502,7 @@ def pre_integration(runs, outname, outdir, directory, facility, instrument, ipts
                 if instrument == 'CORELLI':
                     k_max, two_theta_max = 10, 148.2
                 elif instrument == 'TOPAZ':
-                    k_max, two_theta_max = 12.5, 160
+                    k_max, two_theta_max = 18, 160
                 elif instrument == 'MANDI':
                     k_max, two_theta_max = 3.0, 160
                 elif instrument == 'SNAP':
@@ -1319,7 +1319,7 @@ def partial_cleanup(runs, banks, indices, facility, instrument, runs_banks, bank
             
             #print(peak_keys)
 
-            if len(peak_keys) == 0 or psutil.virtual_memory().percent > 85:
+            if len(peak_keys) == 0: #or psutil.virtual_memory().percent > 85
                 if mtd.doesExist(omd):
                     DeleteWorkspace(omd)
 

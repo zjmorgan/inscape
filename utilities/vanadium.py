@@ -3,12 +3,15 @@ from mantid.simpleapi import *
 import matplotlib.pyplot as plt
 import numpy as np
 
+from matplotlib.backends.backend_pdf import PdfPages
+
 import os
 import sys
 
 import multiprocessing
 
-filename = '/SNS/TOPAZ/shared/Vanadium/2021A_0216_AG/2021A_0216_AG.inp' #sys.argv[0]#, sys.argv[1]
+#filename = sys.argv[1] #'/SNS/CORELLI/IPTS-23019/shared/Vanadium/vanadium.config'
+filename = sys.argv[1]  #'/SNS/TOPAZ/IPTS-31189/shared/YAG/calibration/vanadium.config'
 
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
@@ -46,7 +49,7 @@ if dictionary.get('tube-file') is not None:
 else:
     tube_calibration = None
 
-if dictionary['detector-file'] is not None:
+if dictionary.get('detector-file') is not None:
     detector_calibration = os.path.join(calibration_directory, dictionary['detector-file'])
 else:
     detector_calibration = None
@@ -69,7 +72,7 @@ if dictionary.get('tof-range') is not None:
 else:
     tof_min, tof_max = None, None
 
-sample_mass = dictionary['mass']
+#sample_mass = dictionary['mass']
 
 file_directory = '/SNS/{}/IPTS-{}/nexus/'
 file_name = '{}_{}.nxs.h5'
@@ -115,7 +118,7 @@ if bank_tube_pixel_to_mask is not None:
                                 str(tubes[0])+'-'+str(tubes[-1]) if type(tubes) is list else str(tubes),\
                                 str(pixels[0])+'-'+str(pixels[-1]) if type(pixels) is list else str(pixels)] for banks, tubes, pixels in bank_tube_pixel_to_mask]
     for bank_to_mask, tube_to_mask, pixel_to_mask in bank_tube_pixel_to_mask:
-        MaskBTP(Workspace=instrument, Bank=bank_to_mask, Tube=tube_to_mask, Pixel=pixel_to_mask)
+        MaskBTP(Workspace=instrument, Bank=int(float(bank_to_mask)), Tube=tube_to_mask, Pixel=pixel_to_mask)
 
 ExtractMask(InputWorkspace=instrument,
             OutputWorkspace='mask')
@@ -146,12 +149,14 @@ else:
          LoadMonitors=False,
          OutputWorkspace='van')
 
+FilterBadPulses(InputWorkspace='van', LowerCutoff=95, OutputWorkspace='van')
+
 if instrument_filename is not None:
     LoadInstrument(Workspace='van', Filename=instrument_filename, RewriteSpectraMap=True)
 
 AddSampleLog(Workspace='van', 
              LogName='vanadium-mass', 
-             LogText=str(sample_mass),
+             LogText=str(0),
              LogType='Number Series')
 
 NormaliseByCurrent(InputWorkspace='van',
@@ -166,15 +171,19 @@ else:
     Load(Filename=bkg_files_to_load,
          OutputWorkspace='bkg')
 
+FilterBadPulses(InputWorkspace='bkg', LowerCutoff=95, OutputWorkspace='bkg')
+
 if instrument_filename is not None:
     LoadInstrument(Workspace='bkg', Filename=instrument_filename, RewriteSpectraMap=True)
 
 NormaliseByCurrent(InputWorkspace='bkg',
-                   OutputWorkspace='bkg')
+                   OutputWorkspace='normbkg')
 
-mtd['bkg'] *= bkg_scale
+mtd['normbkg'] *= bkg_scale
 
-Minus(LHSWorkspace='van', RHSWorkspace='bkg', OutputWorkspace='van')
+Minus(LHSWorkspace='van', RHSWorkspace='normbkg', OutputWorkspace='van')
+
+mtd['normbkg'] /= bkg_scale
 
 if tube_calibration is not None:
 
@@ -213,7 +222,14 @@ ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Momentum')
 Rebin(InputWorkspace='van', OutputWorkspace='van', Params=rebin_param)
 CropWorkspace(InputWorkspace='van', OutputWorkspace='van', XMin=k_min, XMax=k_max)
 
-# CloneWorkspace(InputWorkspace='van', OutputWorkspace='test')
+if instrument == 'TOPAZ':
+    AnvredCorrection(InputWorkspace='van',
+                     OutputWorkspace='van',
+                     LinearScatteringCoef=0.367,
+                     LinearAbsorptionCoef=0.366,
+                     Radius=0.2,
+                     PowerLambda=0,
+                     OnlySphericalAbsorption=True)
 
 Rebin(InputWorkspace='van',
       OutputWorkspace='sa',
@@ -231,15 +247,20 @@ data = mtd['van']
 for i in range(data.getNumberHistograms()):
     el = data.getSpectrum(i)
     if data.readY(i)[0] > 0:
+        print(data.readY(i)[0], el.getSpectrumNo())
         el.divide(data.readY(i)[0], data.readE(i)[0])
-
+ 
 SortEvents(InputWorkspace='van', SortBy='X Value')
 
-IntegrateFlux(InputWorkspace='van', OutputWorkspace='flux', NPoints=10000)
+IntegrateFlux(InputWorkspace='van', OutputWorkspace='flux', NPoints=1000)
 
-#FFTDerivative(InputWorkspace='flux', Order=1, OutputWorkspace='spectrum')
-#FFTSmooth(InputWorkspace='spectrum', OutputWorkspace='spectrum', Filter='Zeroing', Params='1000', AllSpectra=True)
-#ConvertUnits(InputWorkspace='spectrum', Target='Wavelength', OutputWorkspace='spectrum')
+#FFTDerivative(InputWorkspace='spectrum', Order=1, OutputWorkspace='spectrum')
+
+Rebin(InputWorkspace='van', OutputWorkspace='spectrum', Params='{},{},{}'.format(k_min,(k_max-k_min)/1000,k_max), PreserveEvents=False)
+mtd['spectrum'] /= (k_max-k_min)/1000
+
+ConvertToPointData(InputWorkspace='spectrum', OutputWorkspace='spectrum')
+SmoothData(InputWorkspace='spectrum', OutputWorkspace='spectrum', NPoints=10)
 
 #FFTSmooth(InputWorkspace='flux', OutputWorkspace='flux', Filter='Zeroing', Params='1000', AllSpectra=True)
 
@@ -250,3 +271,38 @@ bkg_name = '_'.join(['background', append_name])
 SaveNexus(InputWorkspace='sa', Filename=os.path.join(vanadium_directory, sa_name+'.nxs'))
 SaveNexus(InputWorkspace='flux', Filename=os.path.join(vanadium_directory, flux_name+'.nxs'))
 SaveNexus(InputWorkspace='bkg', Filename=os.path.join(background_directory, bkg_name+'.nxs'))
+
+with PdfPages(os.path.join(vanadium_directory, flux_name+'.pdf')) as pdf:
+
+    for i in range(mtd['spectrum'].getNumberHistograms()):
+
+        sp = mtd['spectrum'].getSpectrum(i)
+        fl = mtd['flux'].getSpectrum(i)
+
+        sp_no = sp.getSpectrumNo()
+        fl_no = fl.getSpectrumNo()
+
+        k, spy, spe = mtd['spectrum'].readX(i), mtd['spectrum'].readY(i), mtd['spectrum'].readE(i)
+        k, fly, fle = mtd['flux'].readX(i), mtd['flux'].readY(i), mtd['flux'].readE(i)
+
+        wl = 2*np.pi/k
+
+        fig, ax = plt.subplots(1, 2, sharex='col', sharey='row')
+
+        ax[0].errorbar(wl, spy, linestyle='-', color='C0', rasterized=False)
+        ax[0].errorbar(wl, fly, linestyle='-', color='C1', rasterized=False)
+
+        ax[1].errorbar(k, spy, linestyle='-', color='C0', rasterized=False)
+        ax[1].errorbar(k, fly, linestyle='-', color='C1', rasterized=False)
+
+        ax[0].set_ylabel('')
+        ax[1].set_ylabel('')
+
+        ax[0].set_xlabel('Wavelength [$\AA$]')
+        ax[1].set_xlabel('Momentum [$\AA^{-1}$]')
+
+        ax[0].set_title('Bank {}'.format(sp_no))
+        ax[1].set_title('Bank {}'.format(fl_no))
+
+        pdf.savefig()
+        plt.close()

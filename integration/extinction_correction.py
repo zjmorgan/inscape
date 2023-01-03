@@ -191,15 +191,15 @@ models = ['primary', 'secondary, gaussian', 'secondary, lorentzian',
           'secondary, gaussian type I', 'secondary, gaussian type II', 
           'secondary, lorentzian type I', 'secondary, lorentzian type II']
 
-#models = ['secondary, lorentzian']
+models = ['secondary, lorentzian']
 
-rs, gs, Us, scales, chi_sqs = [], [], [], [], []
+rs, gs, Us, scales, omegas, phis, As, Bs, Cs, Es, chi_sqs = [], [], [], [], [], [], [], [], [], []
 
 ext_file = open(os.path.join(outdir, 'extinction.txt'), 'w')
 
 for model in models:
 
-    r, g, scale, U, chi_sq = peak_dictionary.fit_extinction(model)
+    r, g, scale, U, omega, phi, a, b, c, e, chi_sq = peak_dictionary.fit_extinction(model)
 
     ext_file.write('model: {}\n'.format(model))
     if r > 0:
@@ -215,12 +215,24 @@ for model in models:
 
     ext_file.write('Uiso: {:.4e} \n'.format(U))
     ext_file.write('scale: {:.4e} \n'.format(scale))
+    ext_file.write('goniometer offset: {:.4f} deg \n'.format(omega))
+    ext_file.write('sample offset: {:.4f} deg \n'.format(phi))
+    ext_file.write('wavelength sensitivity: {:.4f} \n'.format(a))
+    ext_file.write('offcentering mean parameter: {:.4f} \n'.format(b))
+    ext_file.write('offcentering effective radius: {:.4f} \n'.format(c))
+    ext_file.write('eccentricity: {:.4f} \n'.format(e))
     ext_file.write('chi^2: {:.4e} \n\n'.format(chi_sq))
 
     rs.append(r)
     gs.append(g)
     Us.append(U)
     scales.append(scale)
+    omegas.append(omega)
+    phis.append(phi)
+    As.append(a)
+    Bs.append(b)
+    Cs.append(c)
+    Es.append(e)
     chi_sqs.append(chi_sq)
 
 i = np.argmin(chi_sqs)
@@ -263,7 +275,9 @@ atoms = '; '.join(atoms)
 
 peak_dictionary.cs = CrystalStructure(constants, peak_dictionary.hm, atoms)
 
-X, Y, I, E, HKL, d_spacing = peak_dictionary.extinction_curves(r, g, s, model)
+omega, phi, a, b, c, e = omegas[i], phis[i], As[i], Bs[i], c[i], Es[i]
+
+X, Y, I, E, HKL, d_spacing = peak_dictionary.extinction_curves(r, g, s, omega, phi, a, b, c, e, model)
 
 with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
 
@@ -333,7 +347,7 @@ with PdfPages(os.path.join(outdir, 'extinction.pdf')) as pdf:
 # peak_dictionary.set_scale_constant(scale_constant)
 # peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
 
-peak_dictionary.apply_extinction_correction(r, g, s, model=model)
+peak_dictionary.apply_extinction_correction(r, g, s, omega, phi, a, b, c, e, model=model)
 
 m, n, p = 0, 0, 0
 

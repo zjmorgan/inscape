@@ -5,9 +5,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 import sys, os, re, imp, copy, shutil
-
-# os.environ['OPENMP_NUM_THREADS'] = '1'
-
+    
 import multiprocess as multiprocessing
 
 from mantid import config
@@ -262,7 +260,11 @@ if __name__ == '__main__':
         join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
 
         # merge.pre_integration(*join_args)
-        
+
+        config['MultiThreaded.MaxCores'] == 1
+        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        os.environ['OMP_NUM_THREADS'] = '1'
+
         print('Spawning threads for pre-integration')
         multiprocessing.set_start_method('spawn', force=True)
         with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
@@ -270,6 +272,10 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
         print('Joining threads from pre-integration')
+
+        config['MultiThreaded.MaxCores'] == 4
+        os.environ.pop('OPENBLAS_NUM_THREADS', None)
+        os.environ.pop('OMP_NUM_THREADS', None)
 
     if not mtd.doesExist(tmp):   
 
@@ -456,6 +462,10 @@ if __name__ == '__main__':
 
     # merge.integration_loop(*join_args[0])
 
+    config['MultiThreaded.MaxCores'] == 1
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    os.environ['OMP_NUM_THREADS'] = '1'
+
     print('Spawning threads for integration')
     multiprocessing.set_start_method('spawn', force=True)
     with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
@@ -463,6 +473,10 @@ if __name__ == '__main__':
         pool.close()
         pool.join()
     print('Joining threads from integration')
+
+    config['MultiThreaded.MaxCores'] == 4
+    os.environ.pop('OPENBLAS_NUM_THREADS', None)
+    os.environ.pop('OMP_NUM_THREADS', None)
 
     merger = PdfFileMerger()
 
