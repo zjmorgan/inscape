@@ -70,6 +70,7 @@ directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
+dbgdir = os.path.join(outdir, 'debug')
 
 mod_vector_1 = dictionary['modulation-vector-1']
 mod_vector_2 = dictionary['modulation-vector-2']
@@ -102,7 +103,7 @@ peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
 peak_dictionary.apply_spherical_correction(0)
 peak_dictionary.clear_peaks()
 peak_dictionary.repopulate_workspaces()
-
+    
 LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
 
 peak_dictionary.recalculate_hkl()

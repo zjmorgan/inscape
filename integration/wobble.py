@@ -1,13 +1,19 @@
+# import mantid algorithms, numpy and matplotlib
 from mantid.simpleapi import *
+import matplotlib.pyplot as plt
 import numpy as np
 
-import matplotlib.pyplot as plt
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python38.zip')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8/lib-dynload')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8/site-packages')
+
 from matplotlib.backends.backend_pdf import PdfPages
 from itertools import cycle
 
 import sys, os, re
 
-directory = os.path.dirname(os.path.realpath(__file__))
+directory = '/SNS/software/scd/reduction/inscape_dev/integration/'
 sys.path.append(directory)
 
 directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
@@ -91,6 +97,7 @@ directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
+dbgdir = os.path.join(outdir, 'debug')
 
 mod_vector_1 = dictionary['modulation-vector-1']
 mod_vector_2 = dictionary['modulation-vector-2']
@@ -121,37 +128,37 @@ peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
 if cif_file is not None:
     peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
-        
+
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
 peak_dictionary.set_scale_constant(scale_constant)
 
-peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
+peak_dictionary.load(os.path.join(outdir, outname+'.pkl'))
 
 keys = list(peak_dictionary.peak_dict.keys())
 
 pg = PointGroupFactory.createPointGroup('-1')
 
 symmetry = { }
+
 for key in keys:
+
     h, k, l, m, n, p = key
 
-    hkl = [h, k, l]
-    equivalents = pg.getEquivalents(hkl)
+    equivalents = [[h,k,l,m,n,p],[-h,-k,-l,-m,-n,-p]]
 
-    h, k, l = equivalents[0]
-
-    symm_key = (int(h),int(k),int(l),0,0,0)
+    symm_key = (int(h),int(k),int(l),int(m),int(n),int(p))
 
     if symmetry.get(symm_key) is None:
 
         for equivalent in equivalents:
 
-            h, k, l = equivalent 
+            h, k, l, m, n, p = equivalent 
 
-            equi_key = (int(h),int(k),int(l),0,0,0)
+            equi_key = (int(h),int(k),int(l),int(m),int(n),int(p))
 
             if peak_dictionary.peak_dict.get(equi_key) is not None:
+
                 if symmetry.get(symm_key) is not None:
 
                     pair_list = symmetry[symm_key]
@@ -159,14 +166,19 @@ for key in keys:
                     symmetry[symm_key] = pair_list
 
                 else:
+
                     symmetry[symm_key] = [equi_key]
 
                 keys.remove(equi_key)
 
 keys = list(symmetry.keys())
+
 for key in keys:
+
     equivalents = symmetry[key]
+
     if len(equivalents) <= 1:
+
         symmetry.pop(key)
 
 plt.close('all')
@@ -194,18 +206,26 @@ for key in symmetry.keys():
 
         for ind, peak in enumerate(peaks):
 
-            I = peak.get_intensity()
-            rot = peak.get_omega_angles()
-            merge = peak.get_merged_intensity()
+            if peak.is_peak_integrated():
 
-            mask = np.isfinite(I) & (I > 0)
+                pk_vol_fract = peak.get_merged_peak_volume_fraction()
 
-            if len(I[mask]) > 0 and merge > 0:
+                I = peak.get_intensity()
+                sig = peak.get_intensity_error()
 
-                average = np.rad2deg(np.angle(np.sum(np.exp(1j*np.deg2rad(rot[mask])))))
+                rot = peak.get_omega_angles()
 
-                value.append(merge)
-                angle.append(average)
+                merge = peak.get_merged_intensity()
+                error = peak.get_merged_intensity_error()
+
+                mask = np.isfinite(I) & (I > 3*sig)
+
+                if len(I[mask]) > 0 and merge > 3*error and pk_vol_fract > 0.85:
+
+                    average = np.rad2deg(np.angle(np.sum(np.exp(1j*np.deg2rad(rot[mask])))))
+
+                    value.append(merge)
+                    angle.append(average)
 
     if len(value) >= 2:
 
@@ -222,9 +242,6 @@ for key in symmetry.keys():
 values = np.array(values)
 angles = np.array(angles)
 
-vals = np.array(vals)
-angs = np.array(angs)
-
 def scale(theta, wl, mu, alpha, a, b, c, e):
 
     t = np.deg2rad(theta-mu)
@@ -239,7 +256,7 @@ def scale(theta, wl, mu, alpha, a, b, c, e):
 
     return 1/f
 
-def residual(x, ref_dict, symmetry):
+def residual(x, ref_dict, keys):
 
     mu, alpha, a, b, c, e = x
 
@@ -247,7 +264,7 @@ def residual(x, ref_dict, symmetry):
 
     diff = []
 
-    for equivalents in symmetry:
+    for equivalents in keys:
 
         z, sig, key_list = [], [], []
 
@@ -257,13 +274,12 @@ def residual(x, ref_dict, symmetry):
 
             for peak in peaks:
 
-                sig0 = peak.get_merged_intensity_error()
+                sig0 = peak.get_merged_intensity_error(fit_contrib=False)
 
                 if sig0 > 0:
 
                     w = peak.get_wavelengths()
                     t = peak.get_omega_angles()
-                    #y = peak.get_intensity()
 
                     s = scale(t, w, mu, alpha, a, b, c, e)
 
@@ -311,7 +327,8 @@ ax.set_ylim(0.1,10)
 ax.set_yscale('log')
 ax.set_xlabel('Goniometer angle')
 ax.set_ylabel('Ratio')
-fig.show()
+ax.minorticks_on()
+fig.savefig(os.path.join(outdir, 'wobble_uncorrected.pdf'))
 
 mask = (init(angles, mu, k_const)/const < values) & (values < init(angles, mu, k_const)*const)
 
@@ -330,12 +347,13 @@ ax.set_ylim(0.1,10)
 ax.set_yscale('log')
 ax.set_xlabel('Goniometer angle')
 ax.set_ylabel('Ratio')
-fig.show()
+ax.minorticks_on()
+fig.savefig(os.path.join(outdir, 'wobble_uncorrected_prune.pdf'))
 
 data = []
 for i, (pairs, ang, val) in enumerate(zip(symmetry_pairs,angs,vals)):
     mask = (init(ang, mu, k_const)/const < val) & (val < init(ang, mu, k_const)*const)
-    if mask.any():
+    if mask.all():
         data.append(pairs)
 
 ref_dict = copy.deepcopy(peak_dictionary.peak_dict)
@@ -346,17 +364,26 @@ b = k_const/2
 c = k_const/2
 e = 0
 
-x0 = (mu,alpha,a,b,c,e)
-args = (ref_dict,data)
-bounds = ([-180,-180,0,0,0,0],[180,180,np.inf,np.inf,np.inf,1])
+x0 = (mu, alpha, a, b, c, e)
+args = (ref_dict, data)
+bounds = ([-180, -180, 0, 0, 0, 0], [180, 180, np.inf, np.inf, np.inf, 1])
 
 sol = least_squares(residual, x0, args=args, bounds=bounds, loss='soft_l1', verbose=2) #, method='trust-constr'
 mu, alpha, a, b, c, e = sol.x
 
-print(sol.x)
-print(mu, alpha, a, b, c, e)
+with open(os.path.join(outdir, 'wobble.txt'), 'w') as f:
 
-print(4*b*c-k_const)
+    f.write('goniometer offset: {:.4f} deg \n'.format(mu))
+    f.write('sample offset: {:.4f} deg \n'.format(alpha))
+    f.write('wavelength sensitivity: {:.4f} \n'.format(a))
+    f.write('offcentering mean parameter: {:.4f} \n'.format(b))
+    f.write('offcentering effective radius: {:.4f} \n'.format(c))
+    f.write('eccentricity: {:.4f} \n'.format(e))
+
+# print(sol.x)
+# print(mu, alpha, a, b, c, e)
+# 
+# print(4*b*c-k_const)
 
 ratios = []
 angles = []
@@ -410,11 +437,17 @@ ax2.set_xlabel('Goniometer angle')
 ax1.set_ylabel('Ratio')
 ax2.set_ylabel('Ratio')
 
+ax1.set_ylim(0,1)
+ax2.set_ylim(0,1)
+
+ax1.minorticks_on()
+ax2.minorticks_on()
+
 # ax1.legend()
 # ax2.legend()
 
-fig1.show()
-fig2.show()
+fig1.savefig(os.path.join(outdir, 'wobble_polar.pdf'))
+fig2.savefig(os.path.join(outdir, 'wobble_angle.pdf'))
 
 values = []
 angles = []
@@ -474,7 +507,8 @@ ax.set_ylim(0.1,10)
 ax.set_yscale('log')
 ax.set_xlabel('Goniometer angle')
 ax.set_ylabel('Ratio')
-fig.show()
+ax.minorticks_on()
+fig.savefig(os.path.join(outdir, 'wobble_corrected.pdf'))
 
 mask = (init(angles, mu, k_const)/const < values) & (values < init(angles, mu, k_const)*const)
 
@@ -493,7 +527,8 @@ ax.set_ylim(0.1,10)
 ax.set_yscale('log')
 ax.set_xlabel('Goniometer angle')
 ax.set_ylabel('Ratio')
-fig.show()
+ax.minorticks_on()
+fig.savefig(os.path.join(outdir, 'wobble_corrected_prune.pdf'))
 
 # for key in peak_dictionary.peak_dict.keys():
 #     h, k, l, m, n, p = key
@@ -517,10 +552,25 @@ fig.show()
 #             scale = peak.get_data_scale().copy()
 #             peak.set_data_scale(0*scale)
 
-LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
+LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat'))
 
-peak_dictionary.clear_peaks()
-peak_dictionary.repopulate_workspaces()
-peak_dictionary.recalculate_hkl()
-peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_pre.int'))
-peak_dictionary.save(os.path.join(directory, outname+'_corr.pkl'))
+scale_constant = 1e+4
+scale_file = os.path.join(outdir, 'scale.txt')
+
+adaptive_scale = False
+
+if scale_factor is None and os.path.exists(scale_file):
+    scale = np.loadtxt(scale_file)
+elif scale_factor is None:
+    scale = None
+    adaptive_scale = True
+else:
+    scale = scale_factor
+
+LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat'))
+
+peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
+peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
+scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=adaptive_scale, scale=scale)
+peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
+peak_dictionary.save(os.path.join(outdir, outname+'_corr.pkl'))

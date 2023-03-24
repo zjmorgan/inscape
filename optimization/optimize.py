@@ -11,9 +11,13 @@ from mantid.geometry import PointGroupFactory, SpaceGroupFactory
 
 import scipy.optimize
 
+from PyPDF2 import PdfFileMerger
+from matplotlib.colors import LogNorm
+import matplotlib.transforms as mtransforms
+
 filename, n_proc = sys.argv[1], int(sys.argv[2])
 
-#filename, n_proc = '/HFIR/HB3A/IPTS-29609/shared/zgf/HB3A_opt.config', 1
+#filename, n_proc = '/SNS/CORELLI/IPTS-23019/shared/reduction/optimization/Yb3Al5O12_300K_2022_0311_opt.inp', 1
 
 if n_proc > os.cpu_count():
     n_proc = os.cpu_count()
@@ -64,12 +68,11 @@ directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
+dbgdir = os.path.join(outdir, 'debug')
 if not os.path.exists(outdir):
     os.mkdir(outdir)
-
-rundir = os.path.join(directory,'{}_{}'.format(instrument,run_labels))
-if not os.path.exists(rundir):
-    os.mkdir(rundir)
+if not os.path.exists(dbgdir):
+    os.mkdir(dbgdir)
 
 if dictionary.get('tube-file') is not None:
     tube_calibration = os.path.join(shared_directory+'calibration', dictionary['tube-file'])
@@ -87,7 +90,7 @@ c = dictionary.get('c')
 alpha = dictionary.get('alpha')
 beta = dictionary.get('beta')
 gamma = dictionary.get('gamma')
-    
+
 cell_type = dictionary.get('cell-type').lower()
 
 centering = dictionary.get('centering')
@@ -236,7 +239,7 @@ def __tri(x):
 
 def __res(x, hkls, Qs, fun):
 
-    a, b, c, alpha, beta, gamma, *angles= fun(x)
+    a, b, c, alpha, beta, gamma, *angles = fun(x)
 
     B = __B_matrix(a, b, c, alpha, beta, gamma)
 
@@ -279,7 +282,7 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
     Q_max = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
     min_d_spacing = 2*np.pi/Q_max
 
-    max_d = 25
+    max_d = 250
     if np.array([a,b,c,alpha,beta,gamma]).all():
         max_d = np.max([a,b,c])
 
@@ -299,6 +302,8 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
 
         if instrument == 'CORELLI':
             SetGoniometer(Workspace='data', Axis0=str(gon_axis)+',0,1,0,1') 
+        elif instrument == 'SNAP':
+            SetGoniometer(Workspace='data', Axis0='omega,0,1,0,1') 
         else:
             SetGoniometer(Workspace='data', Goniometers='Universal') 
 
@@ -306,6 +311,11 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                                                      QDimensions='Q3D',
                                                      dEAnalysisMode='Elastic',
                                                      Q3DFrames='Q')
+
+        if not np.isfinite(min_vals).all():
+            min_vals = [-20,-20,-20]
+        if not np.isfinite(max_vals).all():
+            max_vals = [20,20,20]
 
         ConvertToMD(InputWorkspace='data', 
                     OutputWorkspace='md', 
@@ -322,7 +332,8 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
         if not mtd.doesExist('peaks'):
 
             CreatePeaksWorkspace(NumberOfPeaks=0,
-                                 OutputType='LeanElasticPeak',
+                                 InstrumentWorkspace='data',
+                                 OutputType='Peak',
                                  OutputWorkspace='peaks')
 
         if ub_file is not None:
@@ -336,7 +347,7 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                          WavelengthMax=lamda_max,
                          MinDSpacing=min_d_spacing,
                          MaxDSpacing=max_d_spacing,
-                         OutputType='LeanElasticPeak',
+                         OutputType='Peak',
                          ReflectionCondition=reflection_condition if reflection_condition is not None else 'Primitive',
                          OutputWorkspace='pk')
 
@@ -352,33 +363,54 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
 
         else:
 
-            min_Q = 2*np.pi/max_d
+            # min_Q = 2*np.pi/max_d
 
             FindPeaksMD(InputWorkspace='md', 
-                        PeakDistanceThreshold=min_Q*0.9,
-                        DensityThresholdFactor=100, 
+                        PeakDistanceThreshold=0.1,
+                        DensityThresholdFactor=5000, 
                         MaxPeaks=400,
-                        OutputType='LeanElasticPeak',
+                        OutputType='Peak',
                         OutputWorkspace='pk')
 
-        IntegratePeaksMD(InputWorkspace='md',
-                         PeakRadius=0.11,
-                         BackgroundInnerRadius=0.11,
-                         BackgroundOuterRadius=0.13,
-                         PeaksWorkspace='pk',
-                         OutputWorkspace='pk',
-                         IntegrateIfOnEdge=True)
+        IntegrateEllipsoids(InputWorkspace='data', 
+                            PeaksWorkspace='pk',
+                            OutputWorkspace='pk',
+                            RegionRadius=0.25,
+                            CutoffIsigI=1,
+                            NumSigmas=3,
+                            IntegrateIfOnEdge=True)
+
+        # IntegratePeaksMD(InputWorkspace='md',
+        #                  PeakRadius=0.11,
+        #                  BackgroundInnerRadius=0.11,
+        #                  BackgroundOuterRadius=0.13,
+        #                  PeaksWorkspace='pk',
+        #                  OutputWorkspace='pk',
+        #                  IntegrateIfOnEdge=True)
+
+        FilterPeaks(InputWorkspace='pk',
+                    OutputWorkspace='pk',
+                    FilterVariable='Intensity',
+                    FilterValue=0,
+                    Operator='>')
 
         FilterPeaks(InputWorkspace='pk',
                     OutputWorkspace='pk',
                     FilterVariable='Signal/Noise',
-                    FilterValue=5,
+                    FilterValue=10,
                     Operator='>')
+
+        FilterPeaks(InputWorkspace='pk',
+                    OutputWorkspace='pk',
+                    FilterVariable='DSpacing',
+                    FilterValue=float('inf'),
+                    Operator='<')
 
         if mtd['pk'].getNumberPeaks() > 10:
 
             if ub_file is not None:
                 LoadIsawUB(InputWorkspace='md', Filename=ub_file)
+                n_indx = IndexPeaks(PeaksWorkspace='pk', Tolerance=0.15, RoundHKLs=True)
             elif np.array([a,b,c,alpha,beta,gamma]).all():
                 FindUBUsingLatticeParameters(PeaksWorkspace='pk',
                                              a=a,
@@ -386,53 +418,192 @@ def run_optimization(runs, p, facility, instrument, ipts, detector_calibration, 
                                              c=c,
                                              alpha=alpha,
                                              beta=beta,
-                                             gamma=gamma)
+                                             gamma=gamma,
+                                             Tolerance=0.15,
+                                             FixParameters=False)
+                n_indx = IndexPeaks(PeaksWorkspace='pk', Tolerance=0.15, RoundHKLs=True)
             else:
-                FindUBUsingFFT(PeaksWorkspace='pk', MinD=min_d_spacing, MaxD=max_d, Iterations=15)
-                IndexPeaks(PeaksWorkspace='pk', Tolerance=0.125, RoundHKLs=True)
+                SortPeaksWorkspace(InputWorkspace='pk', OutputWorkspace='pk', ColumnNameToSortBy='DSpacing', SortAscending=False)
+                max_d = mtd['pk'].getPeak(0).getDSpacing()
+                FindUBUsingFFT(PeaksWorkspace='pk', MinD=0.25*max_d, MaxD=4*max_d, Iterations=15)
+                n_indx = IndexPeaks(PeaksWorkspace='pk', Tolerance=0.15, RoundHKLs=True)
                 SelectCellOfType(PeaksWorkspace='pk',
                                  CellType=select_cell_type,
                                  Centering=centering,
                                  Apply=True)
 
-            IndexPeaks(PeaksWorkspace='pk',
-                       Tolerance=0.125,
-                       ToleranceForSatellite=0.125,
-                       RoundHKLs=False,
-                       CommonUBForAll=False,
-                       ModVector1=mod_vector_1,
-                       ModVector2=mod_vector_2,
-                       ModVector3=mod_vector_3,
-                       MaxOrder=max_order,
-                       CrossTerms=cross_terms,
-                       SaveModulationInfo=True if max_order > 0 else False)
+            if n_indx[0] > 10:
 
-            FilterPeaks(InputWorkspace='pk',
-                        FilterVariable='h^2+k^2+l^2', 
-                        FilterValue=0,
-                        Operator='>',
-                        OutputWorkspace='pk')
+                OptimizeLatticeForCellType(PeaksWorkspace='pk',
+                                           CellType=cell_type,
+                                           PerRun=False,
+                                           Apply=True,
+                                           OutputDirectory=dbgdir)
 
-            SaveIsawUB(InputWorkspace='pk',
-                       Filename=os.path.join(outdir,'{}_{}_UB.mat'.format(instrument,r)))
+                IndexPeaks(PeaksWorkspace='pk',
+                           Tolerance=0.15,
+                           ToleranceForSatellite=0.15,
+                           RoundHKLs=False,
+                           CommonUBForAll=False,
+                           ModVector1=mod_vector_1,
+                           ModVector2=mod_vector_2,
+                           ModVector3=mod_vector_3,
+                           MaxOrder=max_order,
+                           CrossTerms=cross_terms,
+                           SaveModulationInfo=True if max_order > 0 else False)
 
-        # FindUBUsingIndexedPeaks('pk', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForAll=False)
+                FilterPeaks(InputWorkspace='pk',
+                            FilterVariable='h^2+k^2+l^2', 
+                            FilterValue=0,
+                            Operator='>',
+                            OutputWorkspace='pk')
 
-        # FilterPeaks(InputWorkspace='pk',
-        #             FilterVariable='h^2+k^2+l^2',
-        #             FilterValue=0,
-        #             Operator='>',
-        #             OutputWorkspace='pk')
+                SaveIsawUB(InputWorkspace='pk',
+                           Filename=os.path.join(dbgdir,'{}_{}_{}_{}.mat'.format(instrument,r,cell_type,centering)))
 
-        CombinePeaksWorkspaces(LHSWorkspace='peaks', 
-                               RHSWorkspace='pk', 
-                               OutputWorkspace='peaks')
+                # FindUBUsingIndexedPeaks('pk', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
+
+                # FilterPeaks(InputWorkspace='pk',
+                #             FilterVariable='h^2+k^2+l^2',
+                #             FilterValue=0,
+                #             Operator='>',
+                #             OutputWorkspace='pk')
+
+                CombinePeaksWorkspaces(LHSWorkspace='peaks', 
+                                       RHSWorkspace='pk', 
+                                       OutputWorkspace='peaks')
+
+                # FilterPeaks(InputWorkspace='pk',
+                #             FilterVariable='DSpacing', 
+                #             FilterValue=min_d_spacing,
+                #             Operator='>',
+                #             OutputWorkspace='pk')
+
+                CopySample(InputWorkspace='pk',
+                           OutputWorkspace='data',
+                           CopyName=False,
+                           CopyMaterial=False,
+                           CopyEnvironment=False,
+                           CopyShape=False,
+                           CopyLattice=True)
+
+                ConvertToMD(InputWorkspace='data', 
+                            OutputWorkspace='md', 
+                            QDimensions='Q3D',
+                            dEAnalysisMode='Elastic',
+                            Q3DFrames='HKL',
+                            LorentzCorrection=True,
+                            MinValues='-10,-10,-10',
+                            MaxValues='10,10,10',
+                            Uproj='1,0,0',
+                            Vproj='0,1,0',
+                            Wproj='0,0,1')
+
+                ol = mtd['pk'].sample().getOrientedLattice()
+
+                char_dict = {0:'0', 1:'{1}', -1:'-{1}'}
+                chars = ['H','K','L']
+
+                Ws = [np.array([[1,0,0],
+                                [0,1,0],
+                                [0,0,1]]),
+                      np.array([[1,0,0],
+                                [0,0,1],
+                                [0,1,0]]),
+                      np.array([[0,0,1],
+                                [1,0,0],
+                                [0,1,0]]),
+                      np.array([[1,0,-1],
+                                [1,0,1],
+                                [0,1,0]]),
+                      np.array([[1,0,-1],
+                                [0,1,0],
+                                [1,0,1]]),
+                      np.array([[0,1,0],
+                                [1,0,-1],
+                                [1,0,1]]),
+                      np.array([[-1,0,1],
+                                [1,0,1],
+                                [0,1,0]]),
+                      np.array([[-1,0,1],
+                                [0,1,0],
+                                [1,0,1]]),
+                      np.array([[0,1,0],
+                                [-1,0,1],
+                                [1,0,1]])]
+
+                min_vals = np.array([-8,-8,-8])
+                max_vals = np.array([8,8,8])
+                bins = np.array([512,512,512])
+
+                fig, axs = plt.subplots(3, 3, figsize=[19.2,19.2])
+                fig.suptitle('{} {}'.format(instrument,r))
+
+                axs = axs.flatten()
+
+                for j, (ax, W) in enumerate(zip(axs,Ws)):
+
+                    names = ['['+','.join(char_dict.get(j, '{0}{1}').format(j,chars[np.argmax(np.abs(W[:,i]))]) for j in W[:,i])+']' for i in range(3)]
+
+                    BinMD(InputWorkspace='md',
+                          OutputWorkspace='slice',
+                          AxisAligned=False,
+                          BasisVector0='{},r.l.u.,{},{},{}'.format(names[0],*W[:,0]),
+                          BasisVector1='{},r.l.u.,{},{},{}'.format(names[1],*W[:,1]),
+                          BasisVector2='{},r.l.u.,{},{},{}'.format(names[2],*W[:,2]),
+                          OutputExtents='{},{},{},{},-0.05,0.05'.format(min_vals[W[:,0] == 1][0],max_vals[W[:,0] == 1][0],min_vals[W[:,1] == 1][0],max_vals[W[:,1] == 1][0]),
+                          OutputBins='{},{},1'.format(bins[W[:,0] == 1][0],bins[W[:,1] == 1][0]),
+                          NormalizeBasisVectors=False)
+
+                    data = mtd['slice']
+
+                    dims = [data.getDimension(i) for i in range(3)]
+
+                    dmin = [dim.getMinimum() for dim in dims]
+                    dmax = [dim.getMaximum() for dim in dims]
+
+                    labels = [dim.getName().replace(',',' ').replace('[','(').replace(']',')').lower() for dim in dims]
+
+                    signal = data.getSignalArray().copy().squeeze(axis=2)
+
+                    signal[signal <= 0] = np.nan
+
+                    angle = ol.recAngle(*W[:,0].astype(float),*W[:,1].astype(float))
+
+                    transform = mtransforms.Affine2D().skew_deg(90-angle,0)
+
+                    vmin, vmax = np.nanpercentile(signal,2), np.nanpercentile(signal,98)
+
+                    if np.isnan(vmin):
+                        vmin = 0.001
+                    if np.isnan(vmax):
+                        vmax = 1000
+
+                    im = ax.imshow(signal.T, extent=[dmin[0],dmax[0],dmin[1],dmax[1]], origin='lower', interpolation='nearest', vmin=vmin, vmax=vmax, rasterized=True)
+                    ax.set_xlabel(labels[0])
+                    ax.set_ylabel(labels[1])
+                    ax.set_title(labels[2]+' = [-0.05,0.05]')
+                    ax.minorticks_on()
+
+                    ax.grid(which='both', alpha=0.5, transform=transform)
+                    ax.xaxis.get_major_locator().set_params(integer=True)
+                    ax.yaxis.get_major_locator().set_params(integer=True)
+
+                    #ax.set_aspect((dmax[0]-dmin[0])/(dmax[1]-dmin[1]))
+                    trans_data = transform+ax.transData
+                    im.set_transform(trans_data)
+
+                    cb = fig.colorbar(im, ax=ax)
+                    cb.ax.minorticks_on()
+
+                fig.savefig(os.path.join(dbgdir,'{}_{}_{}_{}.pdf'.format(instrument,r,cell_type,centering)))
+                plt.close()
 
         DeleteWorkspace('data')
         DeleteWorkspace('md')
         DeleteWorkspace('pk')
 
-    SaveNexus(InputWorkspace='peaks', Filename=os.path.join(outdir, 'peaks_p{}.nxs'.format(p)))
+    SaveNexus(InputWorkspace='peaks', Filename=os.path.join(dbgdir, 'peaks_p{}.nxs'.format(p)))
 
 if __name__ == '__main__':
 
@@ -454,51 +625,74 @@ if __name__ == '__main__':
         Q_max = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
         min_d_spacing = 2*np.pi/Q_max
 
-        max_d = 25
+        max_d = 250
         if np.array([a,b,c,alpha,beta,gamma]).all():
             max_d = np.max([a,b,c])
 
-        if not os.path.exists(os.path.join(outdir,'peaks.nxs')):
+        #if not os.path.exists(os.path.join(dbgdir,'peaks.nxs')):
 
-            args = [facility, instrument, ipts, detector_calibration, tube_calibration, gon_axis, directory,
-                    ub_file, a, b, c, alpha, beta, gamma, cell_type, select_cell_type, centering, reflection_condition,
-                    mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms]
+        args = [facility, instrument, ipts, detector_calibration, tube_calibration, gon_axis, directory,
+                ub_file, a, b, c, alpha, beta, gamma, cell_type, select_cell_type, centering, reflection_condition,
+                mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms]
 
-            split_runs = [split.tolist() for split in np.array_split(run_nos, n_proc)]
+        split_runs = [split.tolist() for split in np.array_split(run_nos, n_proc)]
 
-            join_args = [(split, i, *args) for i, split in enumerate(split_runs)]
+        join_args = [(split, i, *args) for i, split in enumerate(split_runs)]
 
-            config['MultiThreaded.MaxCores'] == 1
-            os.environ['OPENBLAS_NUM_THREADS'] = '1'
-            os.environ['OMP_NUM_THREADS'] = '1'
-            os.environ['_SC_NPROCESSORS_ONLN'] = '1'
+        config['MultiThreaded.MaxCores'] == 1
+        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        os.environ['OMP_NUM_THREADS'] = '1'
+        os.environ['_SC_NPROCESSORS_ONLN'] = '1'
 
-            multiprocessing.set_start_method('spawn', force=True)
-            with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
-                pool.starmap(run_optimization, join_args)
-                pool.close()
-                pool.join()
+        multiprocessing.set_start_method('spawn', force=True)
+        with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
+            pool.starmap(run_optimization, join_args)
+            pool.close()
+            pool.join()
 
-            config['MultiThreaded.MaxCores'] == 4
-            os.environ.pop('OPENBLAS_NUM_THREADS', None)
-            os.environ.pop('OMP_NUM_THREADS', None)
-            os.environ.pop('_SC_NPROCESSORS_ONLN', None)
+        # run_optimization(*join_args[0])
 
-            #run_optimization(*join_args)
+        config['MultiThreaded.MaxCores'] == 4
+        os.environ.pop('OPENBLAS_NUM_THREADS', None)
+        os.environ.pop('OMP_NUM_THREADS', None)
+        os.environ.pop('_SC_NPROCESSORS_ONLN', None)
 
-            CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace='peaks')
+        #run_optimization(*join_args)
 
-            for p in range(n_proc):
-                LoadNexus(Filename=os.path.join(outdir, 'peaks_p{}.nxs'.format(p)), OutputWorkspace='pk')
-                CombinePeaksWorkspaces(LHSWorkspace='pk', RHSWorkspace='peaks', OutputWorkspace='peaks')
-                DeleteWorkspace('pk')
+        for p in range(n_proc):
+            LoadNexus(Filename=os.path.join(dbgdir, 'peaks_p{}.nxs'.format(p)), OutputWorkspace='pk')
+            FilterPeaks(InputWorkspace='pk',
+                        OutputWorkspace='pk',
+                        FilterVariable='DSpacing',
+                        FilterValue=float('inf'),
+                        Operator='<')
+            if p == 0:
+                CloneWorkspace(InputWorkspace='pk', OutputWorkspace='peaks')
+            else: 
+                CombinePeaksWorkspaces(LHSWorkspace='peaks', RHSWorkspace='pk', OutputWorkspace='peaks')
+            DeleteWorkspace('pk')
 
-            SaveNexus(InputWorkspace='peaks', Filename=os.path.join(outdir,'peaks.nxs'))
+        SaveNexus(InputWorkspace='peaks', Filename=os.path.join(dbgdir,'peaks.nxs'))
 
-        else:
+        merger = PdfFileMerger()
 
-            LoadNexus(OutputWorkspace='peaks', Filename=os.path.join(outdir,'peaks.nxs'))
+        for r in run_nos:
+            partfile = os.path.join(dbgdir,'{}_{}_{}_{}.pdf'.format(instrument,r,cell_type,centering))
+            if os.path.exists(partfile):
+                merger.append(partfile)
 
+        merger.write(os.path.join(outdir,'{}_{}_opt.pdf'.format(cell_type,centering)))       
+        merger.close()
+
+        for r in run_nos:
+            partfile = os.path.join(dbgdir,'{}_{}_{}_{}.pdf'.format(instrument,r,cell_type,centering))
+            if os.path.exists(partfile):
+                os.remove(partfile)
+ 
+#         else:
+# 
+#             LoadNexus(OutputWorkspace='peaks', Filename=os.path.join(dbgdir, 'peaks.nxs'))
+# 
         if ub_file is not None:
             FindUBUsingIndexedPeaks('peaks', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
         elif np.array([a,b,c,alpha,beta,gamma]).all():
@@ -509,9 +703,12 @@ if __name__ == '__main__':
                                          alpha=alpha,
                                          beta=beta,
                                          gamma=gamma)
+            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.15, RoundHKLs=True)
         else:
-            FindUBUsingFFT(PeaksWorkspace='peaks', Tolerance=0.15, MinD=min_d_spacing, MaxD=max_d, Iterations=15)
-            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.15, RoundHKLs=True, CommonUBForAll=False)
+            SortPeaksWorkspace(InputWorkspace='peaks', OutputWorkspace='peaks', ColumnNameToSortBy='DSpacing', SortAscending=False)
+            max_d = mtd['peaks'].getPeak(0).getDSpacing()
+            FindUBUsingFFT(PeaksWorkspace='peaks', Tolerance=0.15, MinD=0.25*max_d, MaxD=4*max_d, Iterations=150)
+            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.15, RoundHKLs=True)
             SelectCellOfType(PeaksWorkspace='peaks', 
                              CellType=select_cell_type,
                              Centering=centering,
@@ -529,19 +726,42 @@ if __name__ == '__main__':
                    CrossTerms=cross_terms,
                    SaveModulationInfo=True if max_order > 0 else False)
 
-        FindUBUsingIndexedPeaks(PeaksWorkspace='peaks', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
+        common_ind = True
 
-        OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=False, Apply=True, OutputDirectory=rundir)
+        for r in run_nos:
 
-        SaveIsawUB(InputWorkspace='peaks', Filename=os.path.join(outdir, 'UB_opt.mat'))
+            FilterPeaks(InputWorkspace='peaks',
+                        FilterVariable='RunNumber',
+                        FilterValue=r,
+                        Operator='=',
+                        OutputWorkspace='peaks_run_{}'.format(r))
+
+            FilterPeaks(InputWorkspace='peaks_run_{}'.format(r),
+                        FilterVariable='h^2+k^2+l^2',
+                        FilterValue=0,
+                        Operator='>',
+                        OutputWorkspace='tmp')
+
+            if mtd['tmp'].getNumberPeaks() < 0.8*mtd['peaks_run_{}'.format(r)].getNumberPeaks():
+
+                common_ind = False
+
+        if common_ind:
+
+            FindUBUsingIndexedPeaks(PeaksWorkspace='peaks', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
+
+            OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=False, Apply=True, OutputDirectory=dbgdir)
+
+            SaveIsawUB(InputWorkspace='peaks', Filename=os.path.join(outdir, '{}_{}_opt.mat'.format(cell_type,centering)))
 
         for p in range(n_proc):
-            partfile = os.path.join(outdir,'peaks_p{}.nxs'.format(p))
+            partfile = os.path.join(dbgdir,'peaks_p{}.nxs'.format(p))
             if os.path.exists(partfile):
                 os.remove(partfile)
 
         CreatePeaksWorkspace(NumberOfPeaks=0,
-                             OutputType='LeanElasticPeak',
+                             InstrumentWorkspace='peaks',
+                             OutputType='Peak',
                              OutputWorkspace='reindx')
 
         if np.array([a,b,c,alpha,beta,gamma]).all():
@@ -553,7 +773,7 @@ if __name__ == '__main__':
                                          alpha=alpha,
                                          beta=beta,
                                          gamma=gamma,
-                                         FixParameters=True)
+                                         FixParameters=False)
 
         if not np.array([a,b,c,alpha,beta,gamma]).all():
 
@@ -567,26 +787,23 @@ if __name__ == '__main__':
 
         for r in run_nos:
 
-            FilterPeaks(InputWorkspace='peaks',
-                        FilterVariable='RunNumber',
-                        FilterValue=r,
-                        Operator='=',
-                        OutputWorkspace='peaks_run_{}'.format(r))
+            if common_ind:
 
-            if mtd['peaks_run_{}'.format(r)].getNumberPeaks() > 10:
+                FindUBUsingIndexedPeaks(PeaksWorkspace='peaks_run_{}'.format(r),
+                                        Tolerance=0.15,
+                                        ToleranceForSatellite=0.15,
+                                        CommonUBForAll=False)
 
-                FindUBUsingLatticeParameters(PeaksWorkspace='peaks_run_{}'.format(r),
-                                             a=a,
-                                             b=b,
-                                             c=c,
-                                             alpha=alpha,
-                                             beta=beta,
-                                             gamma=gamma)
+            else:
+
+                LoadIsawUB(InputWorkspace='peaks_run_{}'.format(r),
+                           Filename=os.path.join(dbgdir,'{}_{}_{}_{}.mat'.format(instrument,r,cell_type,centering)))
 
                 IndexPeaks(PeaksWorkspace='peaks_run_{}'.format(r),
                            Tolerance=0.15,
                            ToleranceForSatellite=0.15,
                            RoundHKLs=False,
+                           CommonUBForAll=False,
                            ModVector1=mod_vector_1,
                            ModVector2=mod_vector_2,
                            ModVector3=mod_vector_3,
@@ -594,61 +811,57 @@ if __name__ == '__main__':
                            CrossTerms=cross_terms,
                            SaveModulationInfo=True if max_order > 0 else False)
 
-                UBm = mtd['peaks_run_{}'.format(r)].sample().getOrientedLattice().getUB()
+            FilterPeaks(InputWorkspace='peaks_run_{}'.format(r),
+                        FilterVariable='h^2+k^2+l^2', 
+                        FilterValue=0,
+                        Operator='>',
+                        OutputWorkspace='peaks_run_{}'.format(r))
 
-                T = np.dot(np.linalg.inv(UB), UBm)
+            CombinePeaksWorkspaces(LHSWorkspace='reindx', 
+                                   RHSWorkspace='peaks_run_{}'.format(r), 
+                                   OutputWorkspace='reindx')
+                                   
+        a_min = b_min = c_min = 0.5
+        a_max = b_max = c_max = 300
 
-                if np.all(np.abs(T).max(axis=0) > 0.95):
+        alpha_min = beta_min = gamma_min = 10
+        alpha_max = beta_max = gamma_max = 170
 
-                    print(T)
-                    print(np.linalg.det(T))
-
-                    T = np.sign(T)*np.isclose(np.abs(T),np.abs(T).max(axis=0))
-
-                    print(T)
-                    print(np.linalg.det(T))
-
-                    TransformHKL(PeaksWorkspace='peaks_run_{}'.format(r), HKLTransform=T, FindError=False)
-
-                    IndexPeaks(PeaksWorkspace='peaks_run_{}'.format(r),
-                               Tolerance=0.15,
-                               ToleranceForSatellite=0.15,
-                               RoundHKLs=False,
-                               ModVector1=mod_vector_1,
-                               ModVector2=mod_vector_2,
-                               ModVector3=mod_vector_3,
-                               MaxOrder=max_order,
-                               CrossTerms=cross_terms,
-                               SaveModulationInfo=True if max_order > 0 else False)
-
-                CombinePeaksWorkspaces(LHSWorkspace='reindx', 
-                                       RHSWorkspace='peaks_run_{}'.format(r), 
-                                       OutputWorkspace='reindx')
-
-        if (np.allclose([a, b], c) and np.allclose([alpha, beta, gamma], 90)) or cell_type == 'Cubic':
+        if (np.allclose([a, b], c) and np.allclose([alpha, beta, gamma], 90)) or select_cell_type == 'Cubic':
             fun = __cub
             x0 = (a, )
-        elif (np.allclose([a, b], c) and np.allclose([alpha, beta], gamma)) or cell_type == 'Rhombohedral':
+            xmin = (a_min, )
+            xmax = (a_max, )
+        elif (np.allclose([a, b], c) and np.allclose([alpha, beta], gamma)) or select_cell_type == 'Rhombohedral':
             fun = __rhom
             x0 = (a, np.deg2rad(alpha))
-        elif (np.isclose(a, b) and np.allclose([alpha, beta, gamma], 90)) or cell_type == 'Tetragonal':
+            xmin = (a_min, np.deg2rad(alpha_min))
+            xmax = (a_max, np.deg2rad(alpha_max))
+        elif (np.isclose(a, b) and np.allclose([alpha, beta, gamma], 90)) or select_cell_type == 'Tetragonal':
             fun = __tet
             x0 = (a, c)
-        elif (np.isclose(a, b) and np.allclose([alpha, beta], 90) and np.isclose(gamma, 120)) or cell_type == 'Hexagonal':
+            xmin = (a_min, c_min)
+            xmax = (a_max, c_max)
+        elif (np.isclose(a, b) and np.allclose([alpha, beta], 90) and np.isclose(gamma, 120)) or select_cell_type == 'Hexagonal':
             fun = __hex
             x0 = (a, c)
-        elif (np.allclose([alpha, beta, gamma], 90)) or cell_type == 'Orthorhombic':
+            xmin = (a_min, c_min)
+            xmax = (a_max, c_max)
+        elif (np.allclose([alpha, beta, gamma], 90)) or select_cell_type == 'Orthorhombic':
             fun = __ortho
             x0 = (a, b, c)
-        elif np.allclose([alpha, gamma], 90) or cell_type == 'Monoclinic':
+            xmin = (a_min, b_min, c_min)
+            xmax = (a_max, b_max, c_max)
+        elif np.allclose([alpha, gamma], 90) or select_cell_type == 'Monoclinic':
             fun = __mono1
             x0 = (a, b, c, np.deg2rad(beta))
-        # elif np.allclose([alpha, beta], 90) or cell_type == 'Monoclinic2':
-        #     fun = __mono1
-        #     x0 = (a, b, c, np.deg2rad(gamma))
+            xmin = (a_min, b_min, c_min, np.deg2rad(beta_min))
+            xmax = (a_max, b_max, c_max, np.deg2rad(beta_max))
         else:
             fun = __tri
             x0 = (a, b, c, np.deg2rad(alpha), np.deg2rad(beta), np.deg2rad(gamma))
+            xmin = (a_min, b_min, c_min, np.deg2rad(alpha_min), np.deg2rad(beta_min), np.deg2rad(gamma_min))
+            xmax = (a_max, b_max, c_max, np.deg2rad(alpha_max), np.deg2rad(beta_max), np.deg2rad(gamma_max))
 
         mod_vec_1 = ol.getModVec(0)
         mod_vec_2 = ol.getModVec(1)
@@ -701,11 +914,43 @@ if __name__ == '__main__':
 
         angles = tuple(np.column_stack((omega,theta,phi)).flatten().tolist())
 
-        sol = scipy.optimize.least_squares(__res, x0=x0+angles, args=(hkl,Q,fun), method='lm')
+        min_angles = tuple(np.row_stack([0,0,-np.pi]*len(hkl)).flatten().tolist())
+        max_angles = tuple(np.row_stack([np.pi,np.pi,np.pi]*len(hkl)).flatten().tolist())
+
+        sol = scipy.optimize.least_squares(__res, x0=x0+angles, args=(hkl,Q,fun), method='lm') #bounds=(xmin+min_angles,xmax+max_angles),
 
         a, b, c, alpha, beta, gamma, *angles = fun(sol.x)
+        print(x0)
+        print(a, b, c, alpha, beta, gamma)
 
         B = __B_matrix(a, b, c, alpha, beta, gamma)
+
+        J = sol.jac
+        cov = np.linalg.inv(J.T.dot(J))
+
+        chi2dof = np.sum(sol.fun**2)/(sol.fun.size-sol.x.size)
+        cov *= chi2dof
+
+        sig = np.sqrt(np.diagonal(cov))
+
+        sig_a, sig_b, sig_c, sig_alpha, sig_beta, sig_gamma, *sig_angles = fun(sig)
+
+        alpha, beta, gamma = np.rad2deg(alpha), np.rad2deg(beta), np.rad2deg(gamma)
+        sig_alpha, sig_beta, sig_gamma = np.rad2deg(sig_alpha), np.rad2deg(sig_beta), np.rad2deg(sig_gamma)
+
+        if np.isclose(a,sig_a):
+            sig_a = 0
+        if np.isclose(b,sig_b):
+            sig_b = 0
+        if np.isclose(c,sig_c):
+            sig_c = 0
+
+        if np.isclose(alpha,sig_alpha):
+            sig_alpha = 0
+        if np.isclose(beta,sig_beta):
+            sig_beta = 0
+        if np.isclose(gamma,sig_gamma):
+            sig_gamma = 0
 
         remove = []
 
@@ -721,6 +966,8 @@ if __name__ == '__main__':
 
             SetUB(Workspace='peaks_run_{}'.format(r), UB=UB)
 
+            mtd['peaks_run_{}'.format(r)].sample().getOrientedLattice().setError(sig_a, sig_b, sig_c, sig_alpha, sig_beta, sig_gamma)
+
             IndexPeaks(PeaksWorkspace='peaks_run_{}'.format(r),
                        Tolerance=0.15,
                        ToleranceForSatellite=0.15,
@@ -735,7 +982,7 @@ if __name__ == '__main__':
             if numbers[i] > 10:
 
                 SaveIsawUB(InputWorkspace='peaks_run_{}'.format(r),
-                           Filename=os.path.join(outdir,'{}_{}_UB_opt.mat'.format(instrument,r)))
+                           Filename=os.path.join(dbgdir,'{}_{}_{}_{}_opt.mat'.format(instrument,r,cell_type,centering)))
 
             else:
 
@@ -744,7 +991,7 @@ if __name__ == '__main__':
         for r in remove:
             print('Remove run {}'.format(r))
 
-        SaveNexus(InputWorkspace='reindx', Filename=os.path.join(outdir,'peaks_opt.nxs'))
+        SaveNexus(InputWorkspace='reindx', Filename=os.path.join(outdir,'{}_{}_opt.nxs'.format(cell_type,centering)))
 
     else:
 
@@ -864,15 +1111,15 @@ if __name__ == '__main__':
                                          gamma=gamma)
         else:
             FindUBUsingFFT(PeaksWorkspace='peaks', MinD=3, MaxD=25, Iterations=15)
-            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True)
+            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.15, RoundHKLs=True)
             SelectCellOfType(PeaksWorkspace='peaks', 
                              CellType=select_cell_type,
                              Centering=centering,
                              Apply=True)
 
         IndexPeaks(PeaksWorkspace='peaks',
-                   Tolerance=0.125,
-                   ToleranceForSatellite=0.125,
+                   Tolerance=0.15,
+                   ToleranceForSatellite=0.15,
                    RoundHKLs=False,
                    CommonUBForAll=False,
                    ModVector1=mod_vector_1,
@@ -889,7 +1136,7 @@ if __name__ == '__main__':
                     OutputWorkspace='peaks')
 
         if ub_file is not None:
-            FindUBUsingIndexedPeaks('peaks', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForAll=False)
+            FindUBUsingIndexedPeaks('peaks', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
         elif np.array([a,b,c,alpha,beta,gamma]).all():
             FindUBUsingLatticeParameters(PeaksWorkspace='peaks',
                                          a=a,
@@ -900,15 +1147,15 @@ if __name__ == '__main__':
                                          gamma=gamma)
         else:
             FindUBUsingFFT(PeaksWorkspace='peaks', MinD=3, MaxD=25)
-            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.125, RoundHKLs=True, CommonUBForAll=False)
+            IndexPeaks(PeaksWorkspace='peaks', Tolerance=0.15, RoundHKLs=True, CommonUBForAll=False)
             SelectCellOfType(PeaksWorkspace='peaks', 
                              CellType=select_cell_type,
                              Centering=centering,
                              Apply=True)
 
         IndexPeaks(PeaksWorkspace='peaks',
-                   Tolerance=0.125,
-                   ToleranceForSatellite=0.125,
+                   Tolerance=0.15,
+                   ToleranceForSatellite=0.15,
                    RoundHKLs=False,
                    CommonUBForAll=False,
                    ModVector1=mod_vector_1,
@@ -918,13 +1165,13 @@ if __name__ == '__main__':
                    CrossTerms=cross_terms,
                    SaveModulationInfo=True if max_order > 0 else False)
 
-        FindUBUsingIndexedPeaks('peaks', Tolerance=0.125, ToleranceForSatellite=0.125, CommonUBForAll=False)
+        FindUBUsingIndexedPeaks('peaks', Tolerance=0.15, ToleranceForSatellite=0.15, CommonUBForAll=False)
 
-        OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=True, Apply=True, OutputDirectory=rundir)
+        OptimizeLatticeForCellType(PeaksWorkspace='peaks', CellType=cell_type, PerRun=True, Apply=True, OutputDirectory=dbgdir)
 
         IndexPeaks(PeaksWorkspace='peaks',
-                   Tolerance=0.125,
-                   ToleranceForSatellite=0.125,
+                   Tolerance=0.15,
+                   ToleranceForSatellite=0.15,
                    RoundHKLs=False,
                    CommonUBForAll=False,
                    ModVector1=mod_vector_1,

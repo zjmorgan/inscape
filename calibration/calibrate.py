@@ -141,6 +141,8 @@ elif np.allclose([alpha, beta], 90):
 else:
     cell_type = 'Triclinic'
 
+sample_shift = []
+
 with PdfPages(os.path.join(outdir, outname+'.pdf')) as pdf:
 
     for i, _ in enumerate(panels):
@@ -246,6 +248,7 @@ with PdfPages(os.path.join(outdir, outname+'.pdf')) as pdf:
                           Filename=os.path.join(outdir,outname+'.xml'))
 
         sample_pos = mtd[instrument].getInstrument().getComponentByName('sample-position').getPos()
+        sample_shift.append(sample_pos)
 
         for bank in banks:
             MoveInstrumentComponent(Workspace=instrument, 
@@ -378,6 +381,15 @@ ApplyInstrumentToPeaks(InputWorkspace='ref',
                        InstrumentWorkspace=instrument,
                        OutputWorkspace='ref')
 
+f = open(os.path.join(outdir, outname+'_sample.txt'), 'w')
+f.write(' dx [micron] dy [micron] dz [micron]\n')
+
+for sample_pos in sample_shift:
+    x, y, z = sample_pos
+    f.write('{:12.2f}{:12.2f}{:12.2f}\n'.format(x*1e6,y*1e6,z*1e6))
+
+f.close()
+
 bn = []
 lat_a, lat_b, lat_c, lat_alpha, lat_beta, lat_gamma = [], [], [], [], [], []
 err_lat_a, err_lat_b, err_lat_c, err_lat_alpha, err_lat_beta, err_lat_gamma = [], [], [], [], [], []
@@ -387,8 +399,10 @@ for bank in banks:
     FilterPeaks('tmp', FilterVariable='h^2+k^2+l^2', 
                 FilterValue=0, Operator='>', OutputWorkspace='tmp')
     if mtd['tmp'].getNumberPeaks() > 20:
-        FindUBUsingIndexedPeaks('tmp', Tolerance=0.15)
-        #FindUBUsingLatticeParameters('tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
+        try:
+            FindUBUsingIndexedPeaks('tmp', Tolerance=0.15)
+        except:
+            FindUBUsingLatticeParameters('tmp', a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma)
         OptimizeLatticeForCellType('tmp', CellType=cell_type, Apply=True)
         lat_a.append(mtd['tmp'].sample().getOrientedLattice().a())
         lat_b.append(mtd['tmp'].sample().getOrientedLattice().b())
@@ -435,5 +449,5 @@ ax[1,0].set_xlabel('Bank number')
 ax[1,1].set_xlabel('Bank number')
 ax[1,2].set_xlabel('Bank number')
 
-fig.savefig(os.path.join(directory,outname+'.pdf'))
+fig.savefig(os.path.join(directory, outname+'.pdf'))
 fig.show()

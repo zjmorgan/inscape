@@ -58,8 +58,10 @@ directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
+dbgdir = os.path.join(outdir, 'debug')
 if not os.path.exists(outdir):
     os.mkdir(outdir)
+    os.mkdir(dbgdir)
 
 if dictionary['flux-file'] is not None:
     spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
@@ -127,7 +129,7 @@ w_binning = [w_lims[0]-w_bin_size/2,w_bin_size,w_lims[1]+w_bin_size/2]
 group = dictionary['group']
 
 elastic = dictionary.get('elastic')
-timing_offset = dictionary.get('timing-offset')
+timing_offset = dictionary.get('time-offset')
 
 if elastic:
     outname += '_cc'
@@ -144,9 +146,45 @@ if group is not None:
         pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getHMSymbol()
     else:
         pg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getPointGroup().getHMSymbol()
+        
+    group = pg.replace(' ', '')
+
+    if group in ['1','-1']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-1')]).getHMSymbol()
+    elif group in ['2','m','2/m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('2/m')]).getHMSymbol()
+    elif group in ['112','11m','112/m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('112/m')]).getHMSymbol()
+    elif group in ['222','2mm','m2m','mm2','mmm']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('mmm')]).getHMSymbol()
+    elif group in ['4','-4','4/m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('4/m')]).getHMSymbol()
+    elif group in ['422','4mm','-4m2','-42m','4/mmm']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('4/mmm')]).getHMSymbol()
+    elif group in ['3','-3']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-3')]).getHMSymbol()
+    elif group in ['3r','-3r']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-3r')]).getHMSymbol()
+    elif group in ['32','3m','-3m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-3m')]).getHMSymbol()
+    elif group in ['32r','3mr','-3mr']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-3mr')]).getHMSymbol()
+    elif group in ['321','3m1','-3m1']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-3m1')]).getHMSymbol()
+    elif group in ['312','31m','-31m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('-31m')]).getHMSymbol()
+    elif group in ['6','-6','6/m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('6/m')]).getHMSymbol()
+    elif group in ['622','6mm','-62m','-6m2','6/mmm']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('6/mmm')]).getHMSymbol()
+    elif group in ['23','m-3']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('m-3')]).getHMSymbol()
+    elif group in ['432','-43m','m-3m']:
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index('m-3m')]).getHMSymbol()
     symmetry = pg
+ 
 else:
-    symmetry = None
+    symmetry = '-1'
 
 def run_normalization(runs, p, facility, instrument, ipts, detector_calibration, tube_calibration, 
                       directory, counts_file, spectrum_file, background_file, mask_file,
@@ -171,6 +209,9 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
         ApplyCalibration(Workspace='sa', CalibrationTable='tube_table')
 
     #LoadInstrument(Workspace='sa', InstrumentName=instrument, RewriteSpectraMap=True)
+
+    #if instrument != 'CORELLI':
+     #  SumNeighbours(InputWorkspace='sa', SumX=2, SumY=2, OutputWorkspace='sa')
 
     if detector_calibration is not None:
         _, ext =  os.path.splitext(detector_calibration)
@@ -204,17 +245,19 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
 
         MaskDetectors(Workspace='bkg', MaskedWorkspace='mask')
 
-        if instrument != 'CORELLI':
-            SumNeighbours(InputWorkspace='bkg', SumX=2, SumY=2, OutputWorkspace='bkg')
-
         ConvertUnits(InputWorkspace='bkg', OutputWorkspace='bkg', EMode='Elastic', Target='Momentum')
+
+        #if instrument != 'CORELLI':
+        #   SumNeighbours(InputWorkspace='bkg', SumX=2, SumY=2, OutputWorkspace='bkg')
 
         CropWorkspaceForMDNorm(InputWorkspace='bkg',
                                XMin=mtd['flux'].dataX(0).min(),
                                XMax=mtd['flux'].dataX(0).max(),
                                OutputWorkspace='bkg')
 
-        #CompressEvents(InputWorkspace='bkg', Tolerance=1e-4, OutputWorkspace='bkg')
+        mtd['bkg'] *= 0.95
+
+        CompressEvents(InputWorkspace='bkg', Tolerance=1e-4, OutputWorkspace='bkg')
 
     for i, r in enumerate(runs):
 
@@ -223,9 +266,8 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
 
         if elastic:
             CopyInstrumentParameters(InputWorkspace=instrument, OutputWorkspace='data')
-            CorelliCrossCorrelate(InputWorkspace='data', TimingOffset=timing_offset, OutputWorkspace='data')
-            #LoadNexus(Filename='/{}/{}/IPTS-{}/shared/autoreduce/{}_{}_elastic.nxs'.format(facility,instrument,ipts,instrument,r), 
-            #          OutputWorkspace='data') 
+            LoadNexus(Filename='/{}/{}/IPTS-{}/shared/autoreduce/{}_{}_elastic.nxs'.format(facility,instrument,ipts,instrument,r), 
+                     OutputWorkspace='data') 
 
         if type(ub_file) is list:
             LoadIsawUB(InputWorkspace='data', Filename=ub_file[i])
@@ -260,12 +302,12 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
                         gon_axis = possible_axis
             SetGoniometer(Workspace='data', Axis0='{},0,1,0,1'.format(gon_axis))
         else:
-            SetGoniometer('data', Goniometers='Universal') 
-
-        if instrument != 'CORELLI':
-            SumNeighbours(InputWorkspace='data', SumX=2, SumY=2, OutputWorkspace='data')
+            SetGoniometer(Workspace='data', Goniometers='Universal') 
 
         ConvertUnits(InputWorkspace='data', OutputWorkspace='data', EMode='Elastic', Target='Momentum')
+
+        #if instrument != 'CORELLI':
+        #    SumNeighbours(InputWorkspace='data', SumX=2, SumY=2, OutputWorkspace='data')
 
         CropWorkspaceForMDNorm(InputWorkspace='data',
                                XMin=mtd['flux'].dataX(0).min(),
@@ -278,6 +320,11 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
                                                      QDimensions='Q3D',
                                                      dEAnalysisMode='Elastic',
                                                      Q3DFrames='Q')
+
+        if not np.isfinite(min_vals).all():
+            min_vals = [-20,-20,-20]
+        if not np.isfinite(max_vals).all():
+            max_vals = [20,20,20]
 
         ConvertToMD(InputWorkspace='data', 
                     OutputWorkspace='md', 
@@ -334,39 +381,45 @@ def run_normalization(runs, p, facility, instrument, ipts, detector_calibration,
                OutputBackgroundDataWorkspace='bkgDataMD' if mtd.doesExist('bkg') else None,
                OutputBackgroundNormalizationWorkspace='bkgNormMD' if mtd.doesExist('bkg') else None)
 
+        MDNorm(InputWorkspace='md',
+               SolidAngleWorkspace='sa',
+               FluxWorkspace='flux',
+               BackgroundWorkspace='bkg_md' if mtd.doesExist('bkg') else None,
+               QDimension0='{},{},{}'.format(*u_proj),
+               QDimension1='{},{},{}'.format(*v_proj),
+               QDimension2='{},{},{}'.format(*w_proj),
+               Dimension0Name='QDimension0',
+               Dimension1Name='QDimension1',
+               Dimension2Name='QDimension2',
+               Dimension0Binning='{},{},{}'.format(*u_binning),
+               Dimension1Binning='{},{},{}'.format(*v_binning),
+               Dimension2Binning='{},{},{}'.format(*w_binning),
+               SymmetryOperations=None,
+               TemporaryDataWorkspace='dataMD_no_symm' if mtd.doesExist('dataMD_no_symm') else None,
+               TemporaryNormalizationWorkspace='normMD_no_symm' if mtd.doesExist('normMD_no_symm') else None,
+               TemporaryBackgroundDataWorkspace='bkgDataMD_no_symm' if mtd.doesExist('bkgDataMD_no_symm') else None,
+               TemporaryBackgroundNormalizationWorkspace='bkgNormMD_no_symm' if mtd.doesExist('bkgNormMD_no_symm') else None,
+               OutputWorkspace='normData_no_symm',
+               OutputDataWorkspace='dataMD_no_symm',
+               OutputNormalizationWorkspace='normMD_no_symm',
+               OutputBackgroundDataWorkspace='bkgDataMD_no_symm' if mtd.doesExist('bkg') else None,
+               OutputBackgroundNormalizationWorkspace='bkgNormMD_no_symm' if mtd.doesExist('bkg') else None)
+
         DeleteWorkspace('md')
 
-    # for ws in ['dataMD', 'normMD']:
-    #     data = mtd[ws]
-    #     CreateMDHistoWorkspace(SignalInput=data.getSignalArray().T,
-    #                            ErrorInput=data.getErrorSquaredArray().T,
-    #                            Dimensionality=data.getNumDims(),
-    #                            Extents=','.join(['{},{}'.format(data.getDimension(i).getMinimum(),data.getDimension(i).getMaximum()) for i in range(data.getNumDims())]),
-    #                            NumberOfBins=[data.getDimension(i).getNBins() for i in range(data.getNumDims())],
-    #                            Names=','.join([data.getDimension(i).getName() for i in range(data.getNumDims())]),
-    #                            Units=','.join([data.getDimension(i).getUnits() for i in range(data.getNumDims())]),
-    #                            OutputWorkspace=ws,
-    #                            Frames='HKL,HKL,HKL')
+    SaveMD(Inputworkspace='dataMD', Filename=os.path.join(dbgdir,'data_{}_p{}.nxs'.format(symmetry.strip(),p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+    SaveMD(Inputworkspace='normMD', Filename=os.path.join(dbgdir,'norm_{}_p{}.nxs'.format(symmetry.strip(),p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
 
-    SaveMD(Inputworkspace='dataMD', Filename=os.path.join(outdir,'data_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
-    SaveMD(Inputworkspace='normMD', Filename=os.path.join(outdir,'norm_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+    SaveMD(Inputworkspace='dataMD_no_symm', Filename=os.path.join(dbgdir,'data_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+    SaveMD(Inputworkspace='normMD_no_symm', Filename=os.path.join(dbgdir,'norm_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
 
     if mtd.doesExist('bkg'):
 
-        # for ws in ['bkgDataMD', 'bkgNormMD']:
-        #     data = mtd[ws]
-        #     CreateMDHistoWorkspace(SignalInput=data.getSignalArray().T,
-        #                            ErrorInput=data.getErrorSquaredArray().T,
-        #                            Dimensionality=data.getNumDims(),
-        #                            Extents=','.join(['{},{}'.format(data.getDimension(i).getMinimum(),data.getDimension(i).getMaximum()) for i in range(data.getNumDims())]),
-        #                            NumberOfBins=[data.getDimension(i).getNBins() for i in range(data.getNumDims())],
-        #                            Names=','.join([data.getDimension(i).getName() for i in range(data.getNumDims())]),
-        #                            Units=','.join([data.getDimension(i).getUnits() for i in range(data.getNumDims())]),
-        #                            OutputWorkspace=ws,
-        #                            Frames='HKL,HKL,HKL')
+        SaveMD(Inputworkspace='bkgDataMD', Filename=os.path.join(dbgdir,'bkg_data_{}_p{}.nxs'.format(symmetry.strip(),p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+        SaveMD(Inputworkspace='bkgNormMD', Filename=os.path.join(dbgdir,'bkg_norm_{}_p{}.nxs'.format(symmetry.strip(),p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
 
-        SaveMD(Inputworkspace='bkgDataMD', Filename=os.path.join(outdir,'bkg_data_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
-        SaveMD(Inputworkspace='bkgNormMD', Filename=os.path.join(outdir,'bkg_norm_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+        SaveMD(Inputworkspace='bkgDataMD_no_symm', Filename=os.path.join(dbgdir,'bkg_data_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
+        SaveMD(Inputworkspace='bkgNormMD_no_symm', Filename=os.path.join(dbgdir,'bkg_norm_p{}.nxs'.format(p)), SaveHistory=False, SaveInstrument=False, SaveSample=False, SaveLogs=False)
 
 if __name__ == '__main__':
 
@@ -397,124 +450,138 @@ if __name__ == '__main__':
     os.environ.pop('OMP_NUM_THREADS', None)
     os.environ.pop('_SC_NPROCESSORS_ONLN', None)
 
-    for p in range(n_proc):
-        LoadMD(OutputWorkspace='tmpDataMD', Filename=os.path.join(outdir,'data_p{}.nxs'.format(p)), LoadHistory=False)
-        LoadMD(OutputWorkspace='tmpNormMD', Filename=os.path.join(outdir,'norm_p{}.nxs'.format(p)), LoadHistory=False)
+    for app in ['', '_'+symmetry.strip()]:
 
-        if os.path.exists(os.path.join(outdir,'bkg_data_p{}.nxs'.format(p))):
-            LoadMD(OutputWorkspace='tmpBkgDataMD', Filename=os.path.join(outdir,'bkg_data_p{}.nxs'.format(p)), LoadHistory=False)
-            LoadMD(OutputWorkspace='tmpBkgNormMD', Filename=os.path.join(outdir,'bkg_norm_p{}.nxs'.format(p)), LoadHistory=False)
+        for p in range(n_proc):
+            LoadMD(OutputWorkspace='tmpDataMD', Filename=os.path.join(dbgdir,'data{}_p{}.nxs'.format(app,p)), LoadHistory=False)
+            LoadMD(OutputWorkspace='tmpNormMD', Filename=os.path.join(dbgdir,'norm{}_p{}.nxs'.format(app,p)), LoadHistory=False)
 
-        if p == 0:
-            CloneMDWorkspace(InputWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            CloneMDWorkspace(InputWorkspace='tmpNormMD', OutputWorkspace='normMD')
-            if mtd.doesExist('tmpBkgDataMD'):
-                CloneMDWorkspace(InputWorkspace='tmpBkgDataMD', OutputWorkspace='bkgDataMD')
-                CloneMDWorkspace(InputWorkspace='tmpBkgNormMD', OutputWorkspace='bkgNormMD')    
-        else:
-            PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD', OutputWorkspace='dataMD')
-            PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD', OutputWorkspace='normMD')
-            if mtd.doesExist('tmpBkgDataMD'):
-                PlusMD(LHSWorkspace='bkgDataMD', RHSWorkspace='tmpBkgDataMD', OutputWorkspace='bkgDataMD')
-                PlusMD(LHSWorkspace='bkgNormMD', RHSWorkspace='tmpBkgNormMD', OutputWorkspace='bkgNormMD')
+            if os.path.exists(os.path.join(outdir,'bkg_data{}_p{}.nxs'.format(app,p))):
+                LoadMD(OutputWorkspace='tmpBkgDataMD', Filename=os.path.join(dbgdir,'bkg_data{}_p{}.nxs'.format(app,p)), LoadHistory=False)
+                LoadMD(OutputWorkspace='tmpBkgNormMD', Filename=os.path.join(dbgdir,'bkg_norm{}_p{}.nxs'.format(app,p)), LoadHistory=False)
 
-    DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normData')
-    if mtd.doesExist('bkgDataMD'):
-        DivideMD(LHSWorkspace='bkgDataMD', RHSWorkspace='bkgNormMD', OutputWorkspace='bkgNormData')
-        MinusMD(LHSWorkspace='normData', RHSWorkspace='bkgNormData', OutputWorkspace='normData')
+            if p == 0:
+                CloneMDWorkspace(InputWorkspace='tmpDataMD', OutputWorkspace='dataMD')
+                CloneMDWorkspace(InputWorkspace='tmpNormMD', OutputWorkspace='normMD')
+                if mtd.doesExist('tmpBkgDataMD'):
+                    CloneMDWorkspace(InputWorkspace='tmpBkgDataMD', OutputWorkspace='bkgDataMD')
+                    CloneMDWorkspace(InputWorkspace='tmpBkgNormMD', OutputWorkspace='bkgNormMD')    
+            else:
+                PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD', OutputWorkspace='dataMD')
+                PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD', OutputWorkspace='normMD')
+                if mtd.doesExist('tmpBkgDataMD'):
+                    PlusMD(LHSWorkspace='bkgDataMD', RHSWorkspace='tmpBkgDataMD', OutputWorkspace='bkgDataMD')
+                    PlusMD(LHSWorkspace='bkgNormMD', RHSWorkspace='tmpBkgNormMD', OutputWorkspace='bkgNormMD')
 
-    CreateSingleValuedWorkspace(OutputWorkspace='ws')
+        DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normData')
+        if mtd.doesExist('bkgDataMD'):
+            DivideMD(LHSWorkspace='bkgDataMD', RHSWorkspace='bkgNormMD', OutputWorkspace='bkgNormData')
+            MinusMD(LHSWorkspace='normData', RHSWorkspace='bkgNormData', OutputWorkspace='normData')
 
-    W_MATRIX = '{},{},{},{},{},{},{},{},{}'.format(*u_proj,*v_proj,*w_proj)
+        CreateSingleValuedWorkspace(OutputWorkspace='ws')
 
-    if type(ub_file) is list:
-        LoadIsawUB(InputWorkspace='ws', Filename=ub_file[0])
-    elif type(ub_file) is str:
-        LoadIsawUB(InputWorkspace='ws', Filename=ub_file)
+        W = np.array([u_proj,v_proj,w_proj]).T
 
-    for ws in ['normData', 'dataMD', 'normMD']:
-        CopySample(InputWorkspace='ws',
-                   OutputWorkspace=ws,
-                   CopyName=False,
-                   CopyMaterial=False,
-                   CopyEnvironment=False,
-                   CopyLattice=True,
-                   CopyOrientationOnly=False)
-        AddSampleLog(Workspace=ws, LogName='W_MATRIX', LogText=W_MATRIX, LogType='String')
+        W_MATRIX = '{},{},{},{},{},{},{},{},{}'.format(*W.flatten())
 
-    SaveMD(Inputworkspace='normData', Filename=os.path.join(directory,outname+'.nxs'), SaveHistory=False, SaveInstrument=False, SaveSample=True)
+        if type(ub_file) is list:
+            LoadIsawUB(InputWorkspace='ws', Filename=ub_file[0])
+        elif type(ub_file) is str:
+            LoadIsawUB(InputWorkspace='ws', Filename=ub_file)
 
-    SaveMD(Inputworkspace='dataMD', Filename=os.path.join(outdir,outname+'_data.nxs'), SaveHistory=False, SaveInstrument=False, SaveSample=True)
-    SaveMD(Inputworkspace='normMD', Filename=os.path.join(outdir,outname+'_norm.nxs'), SaveHistory=False, SaveInstrument=False, SaveSample=True)
-    if mtd.doesExist('bkgNormData'):
-        SaveMD(Inputworkspace='bkgDataMD', Filename=os.path.join(outdir,outname+'_bkg_data.nxs'), SaveHistory=False, SaveInstrument=False)
-        SaveMD(Inputworkspace='bkgNormMD', Filename=os.path.join(outdir,outname+'_bkg_norm.nxs'), SaveHistory=False, SaveInstrument=False)
-        SaveMD(Inputworkspace='bkgNormData', Filename=os.path.join(directory,outname+'_bkg.nxs'), SaveHistory=False, SaveInstrument=False)
+        for ws in ['normData', 'dataMD', 'normMD']:
+            AddSampleLog(Workspace=ws, LogName='W_MATRIX', LogText=W_MATRIX, LogType='String')
+            mtd[ws].getExperimentInfo(0).run().addProperty('W_MATRIX', list(W.flatten()*1.), True)
+            CopySample(InputWorkspace='ws',
+                       OutputWorkspace=ws,
+                       CopyName=False,
+                       CopyMaterial=False,
+                       CopyEnvironment=False,
+                       CopyLattice=True,
+                       CopyOrientationOnly=False)
 
-    for p in range(n_proc):
-        partfile = os.path.join(outdir,'data_p{}.nxs'.format(p))
-        if os.path.exists(partfile):
-            os.remove(partfile)
-        partfile = os.path.join(outdir,'norm_p{}.nxs'.format(p))
-        if os.path.exists(partfile):
-            os.remove(partfile)
-        partfile = os.path.join(outdir,'bkg_data_p{}.nxs'.format(p))
-        if os.path.exists(partfile):
-            os.remove(partfile)
-        partfile = os.path.join(outdir,'bkg_norm_p{}.nxs'.format(p))
-        if os.path.exists(partfile):
-            os.remove(partfile)
+        SaveMD(Inputworkspace='normData', Filename=os.path.join(outdir,outname+app+'.nxs'), SaveHistory=False, SaveInstrument=True, SaveSample=True, SaveLogs=True)
 
-    data = mtd['normData']
+        SaveMD(Inputworkspace='dataMD', Filename=os.path.join(outdir,outname+app+'_data.nxs'), SaveHistory=False, SaveInstrument=True, SaveSample=True, SaveLogs=True)
+        SaveMD(Inputworkspace='normMD', Filename=os.path.join(outdir,outname+app+'_norm.nxs'), SaveHistory=False, SaveInstrument=True, SaveSample=True, SaveLogs=True)
+        if mtd.doesExist('bkgNormData'):
+            SaveMD(Inputworkspace='bkgDataMD', Filename=os.path.join(outdir,outname+app+'_bkg_data.nxs'), SaveHistory=False, SaveInstrument=False)
+            SaveMD(Inputworkspace='bkgNormMD', Filename=os.path.join(outdir,outname+app+'_bkg_norm.nxs'), SaveHistory=False, SaveInstrument=False)
+            SaveMD(Inputworkspace='bkgNormData', Filename=os.path.join(outdir,outname+app+'_bkg.nxs'), SaveHistory=False, SaveInstrument=False)
 
-    n = data.getNumDims()
+        for p in range(n_proc):
+            partfile = os.path.join(dbgdir,'data{}_p{}.nxs'.format(app,p))
+            if os.path.exists(partfile):
+                os.remove(partfile)
+            partfile = os.path.join(dbgdir,'norm{}_p{}.nxs'.format(app,p))
+            if os.path.exists(partfile):
+                os.remove(partfile)
+            partfile = os.path.join(dbgdir,'bkg_data{}_p{}.nxs'.format(app,p))
+            if os.path.exists(partfile):
+                os.remove(partfile)
+            partfile = os.path.join(dbgdir,'bkg_norm{}_p{}.nxs'.format(app,p))
+            if os.path.exists(partfile):
+                os.remove(partfile)
 
-    if n == 3:
+        data = mtd['normData']
 
-        with PdfPages(os.path.join(directory,outname+'.pdf')) as pdf:
+        n = data.getNumDims()
 
-            ol = mtd['ws'].sample().getOrientedLattice()
+        if n == 3:
 
-            dims = [data.getDimension(i) for i in range(n)]
+            if app == '':
+                app += '_no_symm'
 
-            dmin = [dim.getMinimum() for dim in dims]
-            dmax = [dim.getMaximum() for dim in dims]
+            with PdfPages(os.path.join(outdir,outname+app+'.pdf')) as pdf:
 
-            labels = [dim.getName().replace(',',' ').replace('[','(').replace(']',')').lower() for dim in dims]
+                ol = mtd['ws'].sample().getOrientedLattice()
 
-            proj = [u_proj,v_proj,w_proj]
+                dims = [data.getDimension(i) for i in range(n)]
 
-            for i in range(n):
+                dmin = [dim.getMinimum() for dim in dims]
+                dmax = [dim.getMaximum() for dim in dims]
 
-                hslice = IntegrateMDHistoWorkspace(InputWorkspace='normData', 
-                                                   P1Bin=[-0.0001,0.0001] if i == 0 else None, 
-                                                   P2Bin=[-0.0001,0.0001] if i == 1 else None, 
-                                                   P3Bin=[-0.0001,0.0001] if i == 2 else None)
- 
-                signal = hslice.getSignalArray().copy().squeeze(axis=i)
- 
-                signal[signal < 1e-5] = np.nan
- 
-                j, k = np.sort([(i+1) % n, (i+2) % n])
+                labels = [dim.getName().replace(',',' ').replace('[','(').replace(']',')').lower() for dim in dims]
 
-                angle = ol.recAngle(*proj[j],*proj[k])
+                proj = [u_proj,v_proj,w_proj]
 
-                transform = mtransforms.Affine2D().skew_deg(90-angle,0)
+                for i in range(n):
 
-                fig, ax = plt.subplots()
+                    hslice = IntegrateMDHistoWorkspace(InputWorkspace='normData', 
+                                                       P1Bin=[-0.0001,0.0001] if i == 0 else None, 
+                                                       P2Bin=[-0.0001,0.0001] if i == 1 else None, 
+                                                       P3Bin=[-0.0001,0.0001] if i == 2 else None)
 
-                im = ax.imshow(signal.T, extent=[dmin[j],dmax[j],dmin[k],dmax[k]], origin='lower', interpolation='nearest', norm=LogNorm())
-                ax.set_xlabel(labels[j])
-                ax.set_ylabel(labels[k])
-                ax.set_title(labels[i]+' = 0')
-                ax.minorticks_on()
+                    signal = hslice.getSignalArray().copy().squeeze(axis=i)
 
-                ax.set_aspect((dmax[j]-dmin[j])/(dmax[k]-dmin[k]))
-                trans_data = transform+ax.transData
-                im.set_transform(trans_data)
+                    signal[signal <= 0] = np.nan
 
-                cb = fig.colorbar(im, ax=ax)
-                cb.ax.minorticks_on()
+                    j, k = np.sort([(i+1) % n, (i+2) % n])
 
-                pdf.savefig()
-                plt.close()
+                    angle = ol.recAngle(*proj[j],*proj[k])
+
+                    transform = mtransforms.Affine2D().skew_deg(90-angle,0)
+
+                    fig, ax = plt.subplots()
+
+                    vmin, vmax = np.nanpercentile(signal,2), np.nanpercentile(signal,98)
+
+                    im = ax.imshow(signal.T, extent=[dmin[j],dmax[j],dmin[k],dmax[k]], origin='lower', interpolation='nearest', vmin=vmin, vmax=vmax, rasterized=True)
+                    ax.set_xlabel(labels[j])
+                    ax.set_ylabel(labels[k])
+                    ax.set_title(labels[i]+' = 0')
+                    ax.minorticks_on()
+
+                    ax.grid(which='both', alpha=0.5, transform=transform)
+                    ax.xaxis.get_major_locator().set_params(integer=True)
+                    ax.yaxis.get_major_locator().set_params(integer=True)
+
+                    trans_data = transform+ax.transData
+                    im.set_transform(trans_data)
+                    #ax.set_aspect((dmax[j]-dmin[j])/(dmax[k]-dmin[k]))
+
+                    cb = fig.colorbar(im, ax=ax)
+                    cb.ax.minorticks_on()
+
+                    pdf.savefig()
+                    plt.close()

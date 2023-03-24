@@ -11,7 +11,9 @@ import sys
 import multiprocessing
 
 #filename = sys.argv[1] #'/SNS/CORELLI/IPTS-23019/shared/Vanadium/vanadium.config'
-filename = sys.argv[1]  #'/SNS/TOPAZ/IPTS-31189/shared/YAG/calibration/vanadium.config'
+#filename = sys.argv[1]  #'/SNS/TOPAZ/IPTS-31189/shared/YAG/calibration/vanadium.config'
+
+filename = '/SNS/CORELLI/shared/Vanadium/2022B_0725_CCR_5x7/2022B_0725_CCR_5x7.inp'
 
 directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
@@ -72,7 +74,9 @@ if dictionary.get('tof-range') is not None:
 else:
     tof_min, tof_max = None, None
 
-#sample_mass = dictionary['mass']
+sample_mass = dictionary.get('mass')
+if sample_mass is None:
+    sample_mass = 0
 
 file_directory = '/SNS/{}/IPTS-{}/nexus/'
 file_name = '{}_{}.nxs.h5'
@@ -151,8 +155,8 @@ else:
 
 FilterBadPulses(InputWorkspace='van', LowerCutoff=95, OutputWorkspace='van')
 
-if instrument_filename is not None:
-    LoadInstrument(Workspace='van', Filename=instrument_filename, RewriteSpectraMap=True)
+# if instrument_filename is not None:
+#     LoadInstrument(Workspace='van', Filename=instrument_filename, RewriteSpectraMap=True)
 
 AddSampleLog(Workspace='van', 
              LogName='vanadium-mass', 
@@ -201,15 +205,15 @@ if detector_calibration is not None:
         LoadIsawDetCal(InputWorkspace='van',
                        Filename=os.path.join(calibration_directory, detector_calibration))
 
-CopyInstrumentParameters(InputWorkspace='van',
-                         OutputWorkspace=instrument)
-
-SaveNexusGeometry(InputWorkspace=instrument,
-                  Filename=os.path.join(vanadium_directory, 'calibration.nxs'))
-
-LoadInstrument(Workspace='van',
-               Filename=os.path.join(vanadium_directory, 'calibration.nxs'),
-               RewriteSpectraMap=True)
+# CopyInstrumentParameters(InputWorkspace='van',
+#                          OutputWorkspace=instrument)
+#
+# SaveNexusGeometry(InputWorkspace=instrument,
+#                   Filename=os.path.join(vanadium_directory, 'calibration.nxs'))
+# 
+# LoadInstrument(Workspace='van',
+#                Filename=os.path.join(vanadium_directory, 'calibration.nxs'),
+#                RewriteSpectraMap=False)
 
 LoadMask(Instrument=instrument,
          InputFile=os.path.join(vanadium_directory, 'mask.xml'),
@@ -218,18 +222,101 @@ LoadMask(Instrument=instrument,
 
 MaskDetectors(Workspace='van', MaskedWorkspace='mask')
 
+CloneWorkspace(InputWorkspace='van', OutputWorkspace='vantest')
+
+#SmoothData(InputWorkspace='vantest', OutputWorkspace='vantest')
+#StripVanadiumPeaks(InputWorkspace='vantest', OutputWorkspace='vanstrip', BackgroundType='Quadratic')
+
+# ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Momentum')
+
+volume = sample_mass/6.1206
+radius = np.cbrt(0.75/np.pi*volume)
+
+# ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Wavelength')
+# 
+# AnvredCorrection(InputWorkspace='van',
+#                  OutputWorkspace='van',
+#                  LinearScatteringCoef=0.369,
+#                  LinearAbsorptionCoef=0.3676,
+#                  Radius=radius,
+#                  PowerLambda=0,
+#                  OnlySphericalAbsorption=True)
+
+ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Wavelength')
+
+# wsg = PreprocessDetectorsToMD('van')
+# tt = np.degrees(wsg.column('TwoTheta'))
+# phi = np.degrees(wsg.column('Azimuthal'))
+# detID = wsg.column('DetectorID')
+# 
+# tt_step = 5
+# phi_step = 10
+# 
+# tt_nsteps = int(np.ceil((tt.max()-tt.min())/tt_step))
+# phi_nsteps = int(np.ceil((phi.max()-phi.min())/phi_step))
+# 
+# det_group_list = [[[] for i in range(phi_nsteps)] for j in range(tt_nsteps)]
+# for t, p, d in zip(tt,phi,detID):
+#     ind_tt = int(np.floor((t-tt.min())/tt_step))
+#     ind_phi = int(np.floor((p-phi.min())/phi_step))
+#     det_group_list[ind_tt][ind_phi].append(d)
+# 
+# # Save a .xml for the grouping and use only groups with detector pixels
+# detlist = []
+# with open(os.path.join(vanadium_directory, 'CORELLI_group_{0}x{1}.xml'.format(tt_step,phi_step)),'wt+') as f:
+#     f.write('<?xml version="1.0" encoding="UTF-8" ?>\n<detector-grouping instrument="CORELLI">\n')
+#     det_group = -1
+#     for i in range(tt_nsteps):
+#         for j in range(phi_nsteps):
+#             dets = det_group_list[i][j]
+#             if len(dets) > 0:
+#                 detlist.append(dets)
+#                 det_group += 1
+#                 f.write('<group name="{}"><detids val="{}"/> </group>\n'.format(det_group,str(dets).lstrip('[').rstrip(']')))
+#     f.write('</detector-grouping>')
+# 
+# GroupDetectors(InputWorkspace='van',
+#                OutputWorkspace='van_group',
+#                MapFile=os.path.join(vanadium_directory, 'CORELLI_group_{0}x{1}.xml'.format(tt_step,phi_step)),
+#                IgnoreGroupNumber=True,
+#                Behaviour='Sum',
+#                PreserveEvents=True)
+
+# SphericalAbsorption(InputWorkspace='van', 
+#                     OutputWorkspace='sphere',
+#                     AttenuationXSection=5.08,
+#                     ScatteringXSection=5.1,
+#                     SampleNumberDensity=0.0724,
+#                     SphericalSampleRadius=radius)
+# 
+# CylinderAbsorption(InputWorkspace='van', 
+#                    OutputWorkspace='cylinder',
+#                    AttenuationXSection=5.08,
+#                    ScatteringXSection=5.1,
+#                    SampleNumberDensity=0.0724,
+#                    CylinderSampleHeight=0.7,
+#                    CylinderSampleRadius=0.25,
+#                    NumberOfSlices=32, 
+#                    NumberOfAnnuli=16)
+
+
+PaalmanPingsMonteCarloAbsorption(InputWorkspace='van',
+                                 CorrectionsWorkspace='cylinder',
+                                 SampleAttenuationXSection=5.08,
+                                 SampleIncoherentXSection=5.1,
+                                 Shape='Cylinder',
+                                 SampleDensityType='Number Density',
+                                 SampleDensity=0.0724,
+                                 Height=0.7,
+                                 SampleRadius=0.25)
+
+UnGroupWorkspace(InputWorkspace='cylinder')
+
+Divide(LHSWorkspace='van', RHSWorkspace='cylinder_ass', OutputWorkspace='van')
+
 ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Momentum')
 Rebin(InputWorkspace='van', OutputWorkspace='van', Params=rebin_param)
 CropWorkspace(InputWorkspace='van', OutputWorkspace='van', XMin=k_min, XMax=k_max)
-
-if instrument == 'TOPAZ':
-    AnvredCorrection(InputWorkspace='van',
-                     OutputWorkspace='van',
-                     LinearScatteringCoef=0.367,
-                     LinearAbsorptionCoef=0.366,
-                     Radius=0.2,
-                     PowerLambda=0,
-                     OnlySphericalAbsorption=True)
 
 Rebin(InputWorkspace='van',
       OutputWorkspace='sa',
@@ -241,17 +328,21 @@ GroupDetectors(InputWorkspace='van',
                MapFile=os.path.join(vanadium_directory, 'grouping.xml'),
                OutputWorkspace='van')
 
-Rebin(InputWorkspace='van', OutputWorkspace='van', Params=rebin_param)
+#Rebin(InputWorkspace='van', OutputWorkspace='van', Params='{},{},{}'.format(k_min,(k_max-k_min)/1000,k_max))
+#ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='dSpacing')
+#StripVanadiumPeaks(InputWorkspace='van', OutputWorkspace='van', BackgroundType='Linear')
+#FFTSmooth(InputWorkspace='van', OutputWorkspace='van', Filter='Butterworth', Params='3,3', IgnoreXBins=True, AllSpectra=True)
+
+#ConvertUnits(InputWorkspace='van', OutputWorkspace='van', Target='Momentum')
+#Rebin(InputWorkspace='van', OutputWorkspace='van', Params=rebin_param)
 
 data = mtd['van']
 for i in range(data.getNumberHistograms()):
     el = data.getSpectrum(i)
     if data.readY(i)[0] > 0:
-        print(data.readY(i)[0], el.getSpectrumNo())
         el.divide(data.readY(i)[0], data.readE(i)[0])
  
 SortEvents(InputWorkspace='van', SortBy='X Value')
-
 IntegrateFlux(InputWorkspace='van', OutputWorkspace='flux', NPoints=1000)
 
 #FFTDerivative(InputWorkspace='spectrum', Order=1, OutputWorkspace='spectrum')
@@ -303,6 +394,9 @@ with PdfPages(os.path.join(vanadium_directory, flux_name+'.pdf')) as pdf:
 
         ax[0].set_title('Bank {}'.format(sp_no))
         ax[1].set_title('Bank {}'.format(fl_no))
+
+        ax[0].minorticks_on()
+        ax[1].minorticks_on()
 
         pdf.savefig()
         plt.close()

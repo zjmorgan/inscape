@@ -4,6 +4,17 @@ import matplotlib.transforms as transforms
 from matplotlib.patches import Ellipse
 from matplotlib.colors import LogNorm
 
+import os
+import sys
+
+directory = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(directory)
+
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python38.zip')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8/lib-dynload')
+sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.8/site-packages')
+
 import numpy as np
 
 import imp
@@ -15,7 +26,7 @@ from fitting import GaussianFit3D
 
 np.random.seed(13)
 
-nx, ny, nz = 101, 101, 101
+nx, ny, nz = 21, 21, 21
 
 Qx_min, Qx_max = -0.5, 0.5
 Qy_min, Qy_max = -0.5, 0.5
@@ -40,7 +51,7 @@ cov = np.array([[sigma_x**2, rho_xy*sigma_x*sigma_y, rho_xz*sigma_x*sigma_z],
 
 Q0 = np.array([mu_x, mu_y, mu_z])
 
-size = 100000
+size = 1000000
 
 signal = np.random.multivariate_normal(Q0, cov, size=size)
 
@@ -53,6 +64,7 @@ z_bin_centers = 0.5*(z_bin_edges[1:]+z_bin_edges[:-1])
 x_bin, y_bin, z_bin = np.meshgrid(x_bin_centers, y_bin_centers, z_bin_centers, indexing='ij')
 
 data /= data.max()
+data *= 3
 data += 1
 
 error = np.sqrt(data)
@@ -62,16 +74,18 @@ e = error.flatten()
 
 x = (x_bin.flatten(), y_bin.flatten(), z_bin.flatten())
 
-mu = [0, mu_y, mu_z]
+mu = [mu_x, mu_y, mu_z]
 sigma = [sigma_x, sigma_y, sigma_z]
 
 peak_fit_3d = GaussianFit3D(x, y, e, mu, sigma)
 
-A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
 print(A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary)
+print('\n')
 
-A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
+A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.estimate()
 
 print(A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary)
+print('\n')
 

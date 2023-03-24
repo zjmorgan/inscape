@@ -103,7 +103,10 @@ class Ellipsoid:
         cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                         [rho*sigma_x*sigma_y, sigma_y**2]])
 
-        vals, vecs = np.linalg.eig(cov)
+        if np.linalg.det(cov) > 0:
+            vals, vecs = np.linalg.eig(cov)
+        else:
+            vals, vecs = np.zeros(2), np.eye(2)
 
         radii = scale*np.sqrt(vals)
 
@@ -138,7 +141,10 @@ class Ellipsoid:
         cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                         [rho*sigma_x*sigma_y, sigma_y**2]])
 
-        vals, vecs = np.linalg.eig(cov)
+        if np.linalg.det(cov) > 0:
+            vals, vecs = np.linalg.eig(cov)
+        else:
+            vals, vecs = np.zeros(2), np.eye(2)
 
         sigma_i = np.sqrt(vals)
 
@@ -171,7 +177,7 @@ class Ellipsoid:
 
         return mask
 
-    def profile_mask(self):
+    def profile_mask(self, extend=False):
 
         size = self.size
 
@@ -185,9 +191,13 @@ class Ellipsoid:
 
         radius = n_std*sigma
 
-        if radius > 0.75*size:
-            radius = 0.75*size
-        elif radius < 0.075:
+        if not extend:
+            if radius > 0.75*size:
+                radius = 0.75*size
+        else:
+            radius = 1.75*size
+
+        if radius < 0.075:
             radius = 0.075
 
         mu_x, mu_y, sigma_x, sigma_y, rho = self.mu_x, self.mu_y, self.sigma_x, self.sigma_y, self.rho
@@ -199,7 +209,10 @@ class Ellipsoid:
         cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                         [rho*sigma_x*sigma_y, sigma_y**2]])
 
-        vals, vecs = np.linalg.eig(cov)
+        if np.linalg.det(cov) > 0:
+            vals, vecs = np.linalg.eig(cov)
+        else:
+            vals, vecs = np.zeros(2), np.eye(2)
 
         radii = scale*np.sqrt(vals)
         radii[radii > 0.75*size] = 0.75*size
@@ -242,7 +255,10 @@ class Ellipsoid:
         cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                         [rho*sigma_x*sigma_y, sigma_y**2]])
 
-        vals, vecs = np.linalg.eig(cov)
+        if np.linalg.det(cov) > 0:
+            vals, vecs = np.linalg.eig(cov)
+        else:
+            vals, vecs = np.zeros(2), np.eye(2)
 
         radii = scale*np.sqrt(vals)
         radii[radii > 0.75*size] = 0.75*size
@@ -265,9 +281,11 @@ class Ellipsoid:
 
 def estimate_bins(val, mask, weights):
 
-    bins = 51
+    bins = 41
 
-    if weights[mask].sum() > 0:
+    if (weights[mask] > 0).sum() > 11:
+
+        weights -= 0.95*weights[mask][weights[mask] > 0].min()
 
         mu = np.average(val[mask], weights=weights[mask]**2)
         sigma = np.sqrt(np.average((val[mask]-mu)**2, weights=weights[mask]**2))
@@ -277,7 +295,7 @@ def estimate_bins(val, mask, weights):
 
         if bin_size > 0 and not np.isclose(val_range,0):
 
-            bins = np.min([np.ceil(val_range/bin_size),101])
+            bins = np.min([np.ceil(val_range/bin_size),41])
 
     return int(bins)
 
@@ -362,7 +380,7 @@ class Profile:
         mask = (np.cumsum(~mask) == 1) | (np.cumsum(~mask[::-1]) == 1)[::-1]
 
         bin_data_norm_sub = bin_data/bin_norm
-        bin_err_sub = np.sqrt(bin_data+bin_bkg*bin_norm)/bin_norm
+        bin_err_sub = np.sqrt(bin_data)/bin_norm
 
         bin_data_norm[~bin_int_mask] = bin_data_norm_sub[~bin_int_mask]
         bin_data_norm[bin_int_mask] = np.nan
@@ -399,12 +417,9 @@ class Profile:
         mask = (y > -np.inf) & (e > 0) & (y_fit > -np.inf) & (y < np.inf) & (e < np.inf)
 
         n_df = y[mask].size-5
-        
-        m_std = 2*n_std
 
         pk  = (np.abs(x-mu) <= n_std*sigma) & mask
-        bkg = (np.abs(x-mu) >  n_std*sigma) \
-            & (np.abs(x-mu) <= n_std*m_std) & mask
+        bkg = (np.abs(x-mu) >  n_std*sigma) & mask
 
         n_pk, n_bkg = np.sum(pk), np.sum(bkg)
 
@@ -412,7 +427,7 @@ class Profile:
 
         peak_bkg_ratio = np.std(y[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
 
-        sig_noise_ratio = np.sum(np.abs(y[pk]))/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
+        sig_noise_ratio = np.sum(y[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
 
         return chi_sq, peak_bkg_ratio, sig_noise_ratio
 
@@ -474,8 +489,7 @@ class Profile:
 
         y_fit += y_bkg
 
-        y_fit[np.isnan(y_fit)] = 1e+15
-        y_fit[np.isinf(y_fit)] = 1e+15
+        y_fit[~np.isfinite(y_fit)] = 1e+15
 
         return ((y_fit-y)*w).flatten()
 
@@ -560,7 +574,7 @@ class Profile:
             params.add('b', value=b, min=min_b, max=max_b)
             params.add('c', value=c, min=min_c, max=max_c)
 
-            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='raise') #
+            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='omit') #
 
             result = out.minimize(method='leastsq')
 
@@ -697,7 +711,7 @@ class Projection:
         bin_norm[mask] = np.nan
 
         bin_data_norm_sub = bin_data/bin_norm
-        bin_err_sub = np.sqrt(bin_data+bin_bkg*bin_norm)/bin_norm
+        bin_err_sub = np.sqrt(bin_data)/bin_norm
 
         bin_data_norm[~bin_int_mask] = bin_data_norm_sub[~bin_int_mask]
         bin_data_norm[bin_int_mask] = np.nan
@@ -734,17 +748,15 @@ class Projection:
 
             W = vecs.copy()
             D = np.diag(1/radii**2)
-            A = np.dot(np.dot(W, D), W.T)
 
-            B = A/4
+            A = np.dot(np.dot(W, D), W.T)
 
             mask = (z > -np.inf) & (e > 0) & (z_fit > -np.inf) & (z < np.inf) & (e < np.inf)
 
             n_df = z[mask].size-10
 
             pk  = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) <= 1) & mask
-            bkg = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) >  1) \
-                & (B[0,0]*(x-mu_x)**2+B[1,1]*(y-mu_y)**2+2*B[0,1]*(x-mu_x)*(y-mu_y) <= 1) & mask
+            bkg = (A[0,0]*(x-mu_x)**2+A[1,1]*(y-mu_y)**2+2*A[0,1]*(x-mu_x)*(y-mu_y) >  1) & mask
 
             n_pk, n_bkg = np.sum(pk), np.sum(bkg)
 
@@ -786,7 +798,10 @@ class Projection:
             cov = np.array([[sigma_x**2, rho*sigma_x*sigma_y],
                             [rho*sigma_x*sigma_y, sigma_y**2]])
 
-            vals, vecs = np.linalg.eig(cov)
+            if np.linalg.det(cov) > 0:
+                vals, vecs = np.linalg.eig(cov)
+            else:
+                vals, vecs = np.zeros(2), np.eye(2)
 
             sigma_1, sigma_2 = np.sqrt(vals)
             theta = np.arctan(vecs[1,0]/vecs[0,0])
@@ -799,6 +814,18 @@ class Projection:
             y_min, y_max = y[mask].min(), y[mask].max()
             z_min, z_max = z[mask].min(), z[mask].max()
 
+            if np.isclose(x_min,x_max):
+                x_min -= 0.1
+                x_max += 0.1
+
+            if np.isclose(y_min,y_max):
+                y_min -= 0.1
+                y_max += 0.1
+
+            if np.isclose(z_min,z_max):
+                z_min -= 0.1
+                z_max += 0.1
+
             center = np.array([0.5*(x_max+x_min), 0.5*(y_max+y_min)])
             width  = np.array([0.5*(x_max-x_min), 0.5*(y_max-y_min)])
 
@@ -808,7 +835,7 @@ class Projection:
             y_range = (y_max-y_min)
             z_range = (z_max-z_min)
 
-            min_bounds = (0.01*z_range, x_min, y_min, 0.005/3,    0.005/3,    -np.pi/2, z_min-0.5*z_range, -100*z_range/x_range, -100*z_range/y_range, -100*z_range/x_range/y_range)
+            min_bounds = (0.01*z_range, x_min, y_min, 0.01/3,     0.01/3,     -np.pi/2, z_min-0.5*z_range, -100*z_range/x_range, -100*z_range/y_range, -100*z_range/x_range/y_range)
             max_bounds = ( 100*z_range, x_max, y_max, width[0]/2, width[1]/2,  np.pi/2, z_max+0.5*z_range,  100*z_range/x_range,  100*z_range/y_range,  100*z_range/x_range/y_range)
 
             a = z_range
@@ -843,8 +870,7 @@ class Projection:
 
         w = 1/e
 
-        z_fit[np.isnan(z_fit)] = 1e+15
-        z_fit[np.isinf(z_fit)] = 1e+15
+        z_fit[~np.isfinite(z_fit)] = 1e+15
 
         return ((z_fit-z)*w).flatten()
 
@@ -928,12 +954,8 @@ class Projection:
         x0 = (a, mu_x, mu_y, sigma_1, sigma_2, theta, b, cx, cy, cxy)
 
         return self.jac(x0, x, y, z, e)
-        
-    # def loss(self, r):
-    #
-    #     return np.sum(2*(np.sqrt(1+r**2)-1))
 
-    def fit(self, dQ1, dQ2, data, norm, int_mask, bkg_mask, bkg_scale=0.95):
+    def fit(self, dQ1, dQ2, data, norm, int_mask, bkg_mask, bkg_scale=0.95, max_size=None):
 
         x = dQ1.copy()
         y = dQ2.copy()
@@ -963,6 +985,12 @@ class Projection:
         min_a, min_mu_x, min_mu_y, min_sigma_1, min_sigma_2, min_theta, min_b, min_cx, min_cy, min_cxy = min_bounds
         max_a, max_mu_x, max_mu_y, max_sigma_1, max_sigma_2, max_theta, max_b, max_cx, max_cy, max_cxy = max_bounds
 
+        if max_size is not None:
+            if 3*max_sigma_1 > max_size:
+                max_sigma_1 = max_size/3
+            if 3*max_sigma_2 > max_size:
+                max_sigma_2 = max_size/3
+
         # xa, ya, za, ea = np.array([0.005]), np.array([0.006]), np.array([1.1]), np.array([0.9])
         # h = 1e-4
         # for i in range(10):
@@ -986,7 +1014,7 @@ class Projection:
 
             # reduce_fcn = None if not robust else self.loss
 
-            out = Minimizer(self.residual, params, fcn_args=(args)) #, Dfun=self.gradient, col_deriv=True, nan_policy='raise'
+            out = Minimizer(self.residual, params, fcn_args=(args)) #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
             result = out.minimize(method='leastsq')
 
             params = result.params['a'].value, \
@@ -1032,7 +1060,7 @@ class Projection:
 
 class LineCut(Profile):
  
-    def __init__(self):
+    def __init__(self, delta=0):
 
         self.a0, self.a1, self.a2 = 0, 0, 0
 
@@ -1040,6 +1068,8 @@ class LineCut(Profile):
 
         self.y_sub, self.e_sub = None, None
         self.y_fit = None
+
+        self.delta = delta
 
     def estimate(self, x, y, e): 
 
@@ -1049,10 +1079,12 @@ class LineCut(Profile):
 
         if mask.sum() <= 11 or weights[mask].sum() <= 0:
 
-            a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c = 0, 0, 0, 0, 0
+            a0, a1, a2, mu0, mu1, mu2, sigma, b, c = 0, 0, 0, 0, 0, 0, 0, 0, 0
 
             min_bounds = (0,      0,      0,      -np.inf, -np.inf, -np.inf, 0,      0,      0     )
             max_bounds = (np.inf, np.inf, np.inf,  np.inf,  np.inf,  np.inf, np.inf, np.inf, np.inf)
+            
+            a, center, width = 0, 0, 0
 
         else:
 
@@ -1071,12 +1103,12 @@ class LineCut(Profile):
             x_range = x_max-x_min
             y_range = y_max-y_min
 
-            min_bounds = (0.5*y_range, 0.5*y_range, 0.5*y_range, x_min, x_min, x_min, 0.001/3,       0.001/3,       0.001/3,       y_min-0.1*y_range, -10*y_range/x_range)
-            max_bounds = (  2*y_range,   2*y_range,   2*y_range, x_max, x_max, x_max, width.max()/3, width.max()/3, width.max()/3, y_max+0.1*y_range,  10*y_range/x_range)
+            min_bounds = (0.0*y_range, 0.0*y_range, 0.0*y_range, x_min, x_min, x_min, 0.0001/3,      y_min-y_range, -10*y_range/x_range)
+            max_bounds = (  2*y_range,   2*y_range,   2*y_range, x_max, x_max, x_max, width.max()/3, y_max+y_range,  10*y_range/x_range)
 
             a = y_range
 
-            if np.any([mu < min_bounds[1], mu > max_bounds[1], sigma > width/3]):
+            if np.any([mu < min_bounds[3], mu > max_bounds[3], mu < min_bounds[4], mu > max_bounds[4], mu < min_bounds[5], mu > max_bounds[5], sigma > width/3]):
 
                 mu, sigma = center, width/6
 
@@ -1095,19 +1127,45 @@ class LineCut(Profile):
 
         args = (x[mask], y[mask], e[mask])
 
-        params = (a, a, a, center-width/2, center, center+width/2, sigma/3, sigma/3, sigma/3, b, c)
+        params = (a, a, a, center-width/2, center, center+width/2, sigma/3, b, c)
 
         bounds = (min_bounds, max_bounds)
 
         return args, params, bounds
 
+    def statistics(self, x, y, e, y_fit, mu0, mu1, mu2, sigma, n_std=3):
+
+        mask = (y > -np.inf) & (e > 0) & (y_fit > -np.inf) & (y < np.inf) & (e < np.inf)
+
+        n_df = y[mask].size-1
+
+        mu = np.array([mu0,mu1,mu2])
+
+        argmin, argmax = np.argmin(mu), np.argmax(mu)
+
+        mu_min = mu[argmin]
+        mu_max = mu[argmax]
+
+        pk  = ((x-mu_min >= -n_std*sigma) & (x-mu_max <= n_std*sigma)) & mask
+        bkg = ((x-mu_min <  -n_std*sigma) | (x-mu_max >  n_std*sigma)) & mask
+
+        n_pk, n_bkg = np.sum(pk), np.sum(bkg)
+
+        chi_sq = np.sum((y[mask]-y_fit[mask])**2/e[mask]**2)/n_df if n_df >= 1 else np.inf
+
+        peak_bkg_ratio = np.std(y[pk])/np.median(e[bkg]) if n_bkg >= 1 else np.inf
+
+        sig_noise_ratio = np.sum(y[pk])/np.sqrt(np.sum(e[pk]**2)) if n_pk >= 1 else np.inf
+
+        return chi_sq, peak_bkg_ratio, sig_noise_ratio
+
     def func(self, params, x, y, e):
 
-        A0, A1, A2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c = params
+        A0, A1, A2, mu0, mu1, mu2, sigma, b, c = params
 
-        y0_fit = self.gaussian(x, A0, mu0, sigma0)
-        y1_fit = self.gaussian(x, A1, mu1, sigma1)
-        y2_fit = self.gaussian(x, A2, mu2, sigma2)
+        y0_fit = self.gaussian(x, A0, mu0, sigma)
+        y1_fit = self.gaussian(x, A1, mu1, sigma)
+        y2_fit = self.gaussian(x, A2, mu2, sigma)
 
         y_fit = y0_fit+y1_fit+y2_fit
         y_bkg = self.linear(x, b, c)
@@ -1116,8 +1174,7 @@ class LineCut(Profile):
 
         y_fit += y_bkg
 
-        #y_fit[np.isnan(y_fit)] = 1e+15
-        #y_fit[np.isinf(y_fit)] = 1e+15
+        y_fit[~np.isfinite(y_fit)] = 1e+15
 
         return ((y_fit-y)*w).flatten()
 
@@ -1163,14 +1220,12 @@ class LineCut(Profile):
         mu1 = params['mu1']
         mu2 = params['mu2']
 
-        sigma0 = params['sigma0']
-        sigma1 = params['sigma1']
-        sigma2 = params['sigma2']
+        sigma = params['sigma']
 
         b = params['b']
         c = params['c']
 
-        x0 = (a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c)
+        x0 = (a0, a1, a2, mu0, mu1, mu2, sigma, b, c)
 
         return self.func(x0, x, y, e)
 
@@ -1184,14 +1239,12 @@ class LineCut(Profile):
         mu1 = params['mu1']
         mu2 = params['mu2']
 
-        sigma0 = params['sigma0']
-        sigma1 = params['sigma1']
-        sigma2 = params['sigma2']
+        sigma = params['sigma']
 
         b = params['b']
         c = params['c']
 
-        x0 = (a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c)
+        x0 = (a0, a1, a2, mu0, mu1, mu2, sigma, b, c)
 
         return self.jac(x0, x, y, e)
 
@@ -1208,12 +1261,12 @@ class LineCut(Profile):
 
         args, params, bounds = self.estimate(xh, y_sub, e_sub)
 
-        a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c = params
+        a0, a1, a2, mu0, mu1, mu2, sigma, b, c = params
 
         min_bounds, max_bounds = bounds
 
-        min_a0, min_a1, min_a2, min_mu0, min_mu1, min_mu2, min_sigma0, min_sigma1, min_sigma2, min_b, min_c = min_bounds
-        max_a0, max_a1, max_a2, max_mu0, max_mu1, max_mu2, max_sigma0, max_sigma1, max_sigma2, max_b, max_c = max_bounds
+        min_a0, min_a1, min_a2, min_mu0, min_mu1, min_mu2, min_sigma, min_b, min_c = min_bounds
+        max_a0, max_a1, max_a2, max_mu0, max_mu1, max_mu2, max_sigma, max_b, max_c = max_bounds
 
         # h = 1e-6
         # 
@@ -1226,22 +1279,30 @@ class LineCut(Profile):
         #     print(np.round((self.func(p, xh, yh, eh)-self.func(p0, xh, yh, eh))/h,2))
         #     print(np.round(self.jac(p0, xh, yh, eh),2)[i])
 
-        if args[0].size > 11:
+        errs = np.nan, np.nan, np.nan, np.nan
+
+        if args[0].size > 9:
 
             params = Parameters()
             params.add('a0', value=a0, min=min_a0, max=max_a0)
             params.add('a1', value=a1, min=min_a1, max=max_a1)
-            params.add('a2', value=a2, min=min_a2, max=max_a2)
-            params.add('mu0', value=mu0, min=min_mu0, max=max_mu0)
             params.add('mu1', value=mu1, min=min_mu1, max=max_mu1)
-            params.add('mu2', value=mu2, min=min_mu2, max=max_mu2)
-            params.add('sigma0', value=sigma0, min=min_sigma0, max=max_sigma0)
-            params.add('sigma1', value=sigma1, min=min_sigma1, max=max_sigma1)
-            params.add('sigma2', value=sigma2, min=min_sigma2, max=max_sigma2)
+            params.add('sigma', value=sigma, min=min_sigma, max=max_sigma)
             params.add('b', value=b, min=min_b, max=max_b)
             params.add('c', value=c, min=min_c, max=max_c)
 
-            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='raise')
+            delta = self.delta
+            if 2*delta <= 1.5*min_sigma:
+                delta = 6*min_sigma
+
+            params.add('kappa', value=delta-1.5*sigma, min=0, max=2*delta-1.5*min_sigma, vary=True)
+            params.add('delta', expr='kappa+1.5*sigma')
+            params.add('a2', expr='a0')
+
+            params.add('mu0', expr='mu1-delta')
+            params.add('mu2', expr='mu1+delta')
+
+            out = Minimizer(self.residual, params, fcn_args=(args), nan_policy='omit') #, col_deriv=True, Dfun=self.gradient
 
             result = out.minimize(method='leastsq')
 
@@ -1251,19 +1312,28 @@ class LineCut(Profile):
                      result.params['mu0'].value, \
                      result.params['mu1'].value, \
                      result.params['mu2'].value, \
-                     result.params['sigma0'].value, \
-                     result.params['sigma1'].value, \
-                     result.params['sigma2'].value, \
+                     result.params['sigma'].value, \
                      result.params['b'].value, \
                      result.params['c'].value
 
+            errs = result.params['a0'].stderr, \
+                   result.params['a1'].stderr, \
+                   result.params['a2'].stderr, \
+                   result.params['sigma'].stderr
+
+            if not np.all(errs):
+
+                errs = np.nan, np.nan, np.nan, np.nan
+
             # print(fit_report(result))
 
-        a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2, b, c = params
+        a0, a1, a2, mu0, mu1, mu2, sigma, b, c = params
 
-        y0_fit = self.gaussian(xh, a0, mu0, sigma0)
-        y1_fit = self.gaussian(xh, a1, mu1, sigma1)
-        y2_fit = self.gaussian(xh, a2, mu2, sigma2)
+        err_a0, err_a1, err_a2, err_s = errs
+
+        y0_fit = self.gaussian(xh, a0, mu0, sigma)
+        y1_fit = self.gaussian(xh, a1, mu1, sigma)
+        y2_fit = self.gaussian(xh, a2, mu2, sigma)
 
         y_fit = y0_fit+y1_fit+y2_fit
 
@@ -1283,5 +1353,622 @@ class LineCut(Profile):
 
         self.y_sub, self.e_sub = y_sub.copy(), e_sub.copy()
         self.y_bkg, self.y_fit = y_bkg.copy(), y_fit.copy()
+       
+        a = np.array([a0,a1,a2])
+        err_a = np.array([err_a0,err_a1,err_a2])
+        mu = np.array([mu0,mu1,mu2])
 
-        return self.statistics(xh, y_sub, e_sub, y_fit), (a0, a1, a2, mu0, mu1, mu2, sigma0, sigma1, sigma2)
+        sort = np.argsort(mu)
+
+        a, err_a, mu = a[sort], err_a[sort], mu[sort]
+
+        a0, a1, a2 = a
+        mu0, mu1, mu2 = mu
+
+        self.intensity = a*sigma*np.sqrt(2*np.pi)
+        self.error = np.sqrt(2*np.pi*(a**2*err_s**2+sigma**2*err_a**2+2*a*sigma*0))        
+
+        return self.statistics(xh, y_sub, e_sub, y_fit, mu0, mu1, mu2, sigma), (a0, a1, a2, mu0, mu1, mu2, sigma)
+
+class GaussianFit3D:
+
+    def __init__(self, x, y, e, mu, sigma):
+
+        params = Parameters()
+
+        x0_min, x0_max = np.min(x[0]), np.max(x[0])
+        x1_min, x1_max = np.min(x[1]), np.max(x[1])
+        x2_min, x2_max = np.min(x[2]), np.max(x[2])
+
+        y_min, y_max = np.min(y), np.max(y)
+
+        x0_range = x0_max-x0_min
+        x1_range = x1_max-x1_min
+        x2_range = x2_max-x2_min
+
+        y_range = y_max-y_min
+
+        params.add('A', value=y_range, min=0.001*y_range, max=1000*y_range)
+        params.add('B', value=y_min, min=y_min-100*y_range, max=y_max+100*y_range)
+
+        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range)
+        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range)
+        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range)
+
+        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
+        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
+        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
+
+        params.add('sigma0', value=sigma[0], min=0.25*sigma[0], max=2*sigma[0])
+        params.add('sigma1', value=sigma[1], min=0.25*sigma[1], max=2*sigma[1])
+        params.add('sigma2', value=sigma[2], min=0.25*sigma[2], max=2*sigma[2])
+
+        params.add('phi', value=0, min=-np.pi/2, max=np.pi/2)
+        params.add('theta', value=np.pi/2, min=np.pi/4, max=3*np.pi/4)
+        params.add('omega', value=0, min=-np.pi/2, max=np.pi/2)
+
+        self.params = params
+
+        self.x = x
+        self.y = y
+        self.e = e
+
+    def gaussian_3d(self, Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+
+        inv_S = np.linalg.inv(S)
+
+        return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))
+
+    def gaussian(self, Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
+
+        x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+
+        inv_S = np.linalg.inv(S)
+
+        return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))
+
+    def S_matrix(self, sigma0, sigma1, sigma2, phi=0, theta=0, omega=0):
+
+        U = self.U_matrix(phi, theta, omega)
+        V = np.diag(np.dot(np.linalg.inv(U**2), [sigma0**2, sigma1**2, sigma2**2]))
+
+        S = np.dot(np.dot(U,V),U.T)
+
+        return S
+
+    def U_matrix(self, phi=0, theta=0, omega=0):
+
+        ux = np.cos(phi)*np.sin(theta)
+        uy = np.sin(phi)*np.sin(theta)
+        uz = np.cos(theta)
+
+        U = np.array([[np.cos(omega)+ux**2*(1-np.cos(omega)), ux*uy*(1-np.cos(omega))-uz*np.sin(omega), ux*uz*(1-np.cos(omega))+uy*np.sin(omega)],
+                      [uy*ux*(1-np.cos(omega))+uz*np.sin(omega), np.cos(omega)+uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))-ux*np.sin(omega)],
+                      [uz*ux*(1-np.cos(omega))-uy*np.sin(omega), uz*uy*(1-np.cos(omega))+ux*np.sin(omega), np.cos(omega)+uz**2*(1-np.cos(omega))]])
+
+        return U
+
+    def residual(self, params, x, y, e):
+
+        Q0, Q1, Q2 = x
+
+        A = params['A']
+        B = params['B']
+
+        C0 = params['C0']
+        C1 = params['C1']
+        C2 = params['C2']
+
+        mu0 = params['mu0']
+        mu1 = params['mu1']
+        mu2 = params['mu2']
+
+        sigma0 = params['sigma0']
+        sigma1 = params['sigma1']
+        sigma2 = params['sigma2']
+
+        phi = params['phi']
+        theta = params['theta']
+        omega = params['omega']
+
+        args = Q0, Q1, Q2, A, B, C0, C1, C2, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
+
+        yfit = self.func(*args)
+
+        diff = (y-yfit)/e
+
+        diff[~np.isfinite(diff)] = 1e+15
+        diff[~np.isfinite(diff)] = 1e+15
+
+        return diff
+
+    def func(self, Q0, Q1, Q2, A, B, C0, C1, C2, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega):
+
+        args = Q0, Q1, Q2, A, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
+
+        return self.gaussian(*args)+B+C0*Q0+C1*Q1+C2*Q2
+
+    def gradient(self, params, x, y, e):
+
+        Q0, Q1, Q2 = x
+
+        A = params['A']
+        B = params['B']
+
+        C0 = params['C0']
+        C1 = params['C1']
+        C2 = params['C2']
+
+        mu0 = params['mu0']
+        mu1 = params['mu1']
+        mu2 = params['mu2']
+
+        sigma0 = params['sigma0']
+        sigma1 = params['sigma1']
+        sigma2 = params['sigma2']
+
+        phi = params['phi']
+        theta = params['theta']
+        omega = params['omega']
+
+        args = Q0, Q1, Q2, A, B, C0, C1, C2, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega
+
+        return self.jac(*args)/e
+
+    def fit(self):
+
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
+        result = out.minimize(method='leastsq')
+
+        #result = out.prepare_fit()
+
+        self.params = result.params
+
+        # report_fit(result)
+
+        A = result.params['A'].value
+        B = result.params['B'].value
+
+        C0 = result.params['C0'].value
+        C1 = result.params['C1'].value
+        C2 = result.params['C2'].value
+
+        mu0 = result.params['mu0'].value
+        mu1 = result.params['mu1'].value
+        mu2 = result.params['mu2'].value
+
+        sigma0 = result.params['sigma0'].value
+        sigma1 = result.params['sigma1'].value
+        sigma2 = result.params['sigma2'].value
+
+        phi = result.params['phi'].value
+        theta = result.params['theta'].value
+        omega = result.params['omega'].value
+
+        # Q0, Q1, Q2 = self.x
+        # Q0, Q1, Q2 = np.array([-0.06]), np.array([-0.05]), np.array([-0.025])
+        # 
+        # params = (Q0, Q1, Q2, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, phi, theta, omega)
+        # 
+        # h = 1e-8
+        # for i in range(11):
+        #     fargs = list(params)
+        #     fargs[i+3] += h
+        # 
+        #     print(fargs[3:])
+        #     print(params[3:])
+        #     print(i,(self.func(*fargs)-self.func(*params))/h, self.jac(*params)[i,:].round(8))
+
+        # print(result.params['A'])
+        # print(result.params['B'])
+        # print(result.params['mu0'])
+        # print(result.params['mu1'])
+        # print(result.params['mu2'])
+        # print(result.params['sigma0'])
+        # print(result.params['sigma1'])
+        # print(result.params['sigma2'])
+        # print(result.params['phi'])
+        # print(result.params['theta'])
+        # print(result.params['omega'])
+
+        boundary = self.check_boundary(A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, result.params)
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+
+        var = np.diag(S)
+        sig = np.sqrt(var)
+
+        sig_inv = np.diag(1/sig)
+
+        rho = np.dot(np.dot(sig_inv, S), sig_inv)
+
+        sig0, sig1, sig2 = sig[0], sig[1], sig[2]
+        rho12, rho02, rho01 = rho[1,2], rho[0,2], rho[0,1]
+
+        return A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary
+
+    def eigendecomposition(self):
+
+        params = self.params
+
+        sigma0 = params['sigma0'].value
+        sigma1 = params['sigma1'].value
+        sigma2 = params['sigma2'].value
+
+        phi = params['phi'].value
+        theta = params['theta'].value
+        omega = params['omega'].value
+
+        U = self.U_matrix(phi, theta, omega)
+        V = np.dot(np.linalg.inv(U**2), [sigma0**2, sigma1**2, sigma2**2])
+
+        return V, U
+
+    def estimate(self):
+
+        Q0, Q1, Q2 = self.x
+        y, e = self.y, self.e
+
+        params = self.params
+
+        bkg = np.percentile(y, 25)
+
+        mask = (y > 0) & (y < bkg) & (e > 0) & (e < np.inf)
+
+        if np.sum(mask) > 6:
+
+            A = (np.array([np.ones_like(Q0[mask]), Q0[mask], Q1[mask], Q2[mask]])/e[mask]).T
+            b = y[mask]/e[mask]
+
+            coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+
+        else:
+
+            coeff = 0, 0, 0, 0
+
+        B, C0, C1, C2 = coeff
+
+        z = y.copy()
+
+        z -= B+C0*Q0+C1*Q1+C2*Q2
+        z[z < 0] = 0
+
+        weights = z**2/e**2
+
+        mask = (z > 0) & (z < np.inf) & (e > 0) & (e < np.inf)
+
+        if np.sum(mask) > 3:
+
+            mu0 = np.average(Q0[mask], weights=weights[mask])
+            mu1 = np.average(Q1[mask], weights=weights[mask])
+            mu2 = np.average(Q2[mask], weights=weights[mask])
+
+            x0, x1, x2 = Q0-mu0, Q1-mu1, Q2-mu2
+
+            sig0 = np.sqrt(np.average(x0[mask]**2, weights=weights[mask]))
+            sig1 = np.sqrt(np.average(x1[mask]**2, weights=weights[mask]))
+            sig2 = np.sqrt(np.average(x2[mask]**2, weights=weights[mask]))
+
+            rho12 = np.average(x1[mask]*x2[mask], weights=weights[mask])/sig1/sig2
+            rho02 = np.average(x0[mask]*x2[mask], weights=weights[mask])/sig0/sig2
+            rho01 = np.average(x0[mask]*x1[mask], weights=weights[mask])/sig0/sig1
+
+            S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+
+            inv_S = np.linalg.inv(S)
+
+            y = np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                         +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))
+
+            A = (np.array([y, np.ones_like(y)])/e).T
+            b = z/e
+
+            coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+
+        else:
+
+            coeff = 0, 0
+
+        A, b = coeff
+
+        B += b
+
+        boundary = self.check_outside(A, B, mu0, mu1, mu2, sig0, sig1, sig2, params)
+
+        return A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary
+
+    def check_outside(self, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A_min, A_max = params['A'].min, params['A'].max
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary =  (mu0 <= mu0_min) or (mu0 >= mu0_max)\
+                 or (mu1 <= mu1_min) or (mu1 >= mu1_max)\
+                 or (mu2 <= mu2_min) or (mu2 >= mu2_max)\
+                 or (sigma0 <= sigma0_min) or (sigma0 >= sigma0_max)\
+                 or (sigma1 <= sigma1_min) or (sigma1 >= sigma1_max)\
+                 or (sigma2 <= sigma2_min) or (sigma2 >= sigma2_max)
+
+        return boundary
+
+    def check_boundary(self, A, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A_min, A_max = params['A'].min, params['A'].max
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary = np.isclose(mu0, mu0_min, rtol=1e-3) | np.isclose(mu0, mu0_max, rtol=1e-3) \
+                 | np.isclose(mu1, mu1_min, rtol=1e-3) | np.isclose(mu1, mu1_max, rtol=1e-3) \
+                 | np.isclose(mu2, mu2_min, rtol=1e-3) | np.isclose(mu2, mu2_max, rtol=1e-3) \
+                 | np.isclose(sigma0, sigma0_min, rtol=1e-3) | np.isclose(sigma0, sigma0_max, rtol=1e-3) \
+                 | np.isclose(sigma1, sigma1_min, rtol=1e-3) | np.isclose(sigma1, sigma1_max, rtol=1e-3) \
+                 | np.isclose(sigma2, sigma2_min, rtol=1e-3) | np.isclose(sigma2, sigma2_max, rtol=1e-3)
+
+        return boundary
+
+    def covariance_matrix(self, sig0, sig1, sig2, rho12, rho02, rho01):
+
+        sig = np.diag([sig0, sig1, sig2])
+
+        rho = np.array([[1, rho01, rho02],
+                        [rho01, 1, rho12],
+                        [rho02, rho12, 1]])
+
+        S = np.dot(np.dot(sig, rho), sig)
+
+        return S
+
+    def model(self, x, A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
+
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+
+        inv_S = np.linalg.inv(S)
+
+        x0, x1, x2 = x[0]-mu0, x[1]-mu1, x[2]-mu2
+
+        norm = np.sqrt(np.linalg.det(2*np.pi*S))
+
+        return A*np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                          +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm+B+C0*x0+C1*x1+C2*x2
+
+class SatelliteGaussianFit3D(GaussianFit3D):
+
+    def __init__(self, x, y, e, mu, sigma, delta):
+
+        if np.isclose(sigma[2]-delta/3, 0):
+            delta = sigma[2]/2
+
+        params = Parameters()
+
+        x0_min, x0_max = np.min(x[0]), np.max(x[0])
+        x1_min, x1_max = np.min(x[1]), np.max(x[1])
+        x2_min, x2_max = np.min(x[2]), np.max(x[2])
+
+        y_min, y_max = np.min(y), np.max(y)
+
+        x0_range = x0_max-x0_min
+        x1_range = x1_max-x1_min
+        x2_range = x2_max-x2_min
+
+        y_range = y_max-y_min
+
+        params.add('A0', value=y_range, min=0.001*y_range, max=1000*y_range)
+        params.add('A1', value=y_range, min=0.001*y_range, max=1000*y_range)
+        params.add('A2', expr='A0')
+
+        params.add('B', value=y_min, min=y_min-100*y_range, max=y_max+100*y_range)
+
+        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range)
+        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range)
+        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range)
+
+        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
+        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
+        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
+
+        params.add('delta', value=delta, min=0.5*delta, max=2*delta)
+
+        params.add('sigma0', value=sigma[0], min=0.25*sigma[0], max=2*sigma[0])
+        params.add('sigma1', value=sigma[1], min=0.25*sigma[1], max=2*sigma[1])
+        params.add('sigma2', value=(sigma[2]-delta/3), min=0.25*(sigma[2]-delta/3), max=2*(sigma[2]-delta/3))
+
+        params.add('phi', value=0, min=-np.pi/2, max=np.pi/2)
+        params.add('theta', value=np.pi/2, min=np.pi/4, max=3*np.pi/4)
+        params.add('omega', value=0, min=-np.pi/2, max=np.pi/2)
+
+        self.params = params
+
+        self.x = x
+        self.y = y
+        self.e = e
+
+    def residual(self, params, x, y, e):
+
+        Q0, Q1, Q2 = x
+
+        A0 = params['A0']
+        A1 = params['A1']
+        A2 = params['A2']
+
+        B = params['B']
+
+        C0 = params['C0']
+        C1 = params['C1']
+        C2 = params['C2']
+
+        mu0 = params['mu0']
+        mu1 = params['mu1']
+        mu2 = params['mu2']
+
+        delta = params['delta']
+
+        sigma0 = params['sigma0']
+        sigma1 = params['sigma1']
+        sigma2 = params['sigma2']
+
+        phi = params['phi']
+        theta = params['theta']
+        omega = params['omega']
+
+        args = Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sigma0, sigma1, sigma2, phi, theta, omega
+
+        yfit = self.func(*args)
+
+        obj = (y-yfit)/e
+
+        obj[~np.isfinite(obj)] = 1e+15
+        obj[~np.isfinite(obj)] = 1e+15
+
+        return obj
+
+    def func(self, Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sigma0, sigma1, sigma2, phi, theta, omega):
+
+        args0 = Q0, Q1, Q2, A0, mu0, mu1, mu2-delta, sigma0, sigma1, sigma2, phi, theta, omega
+        args1 = Q0, Q1, Q2, A1, mu0, mu1, mu2,       sigma0, sigma1, sigma2, phi, theta, omega
+        args2 = Q0, Q1, Q2, A2, mu0, mu1, mu2+delta, sigma0, sigma1, sigma2, phi, theta, omega
+
+        return self.gaussian(*args0)+self.gaussian(*args1)+self.gaussian(*args2)+B+C0*Q0+C1*Q1+C2*Q2
+
+    def fit(self):
+
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
+        result = out.minimize(method='leastsq')
+
+        #result = out.prepare_fit()
+
+        self.params = result.params
+
+        # report_fit(result)
+
+        A0 = result.params['A0'].value
+        A1 = result.params['A1'].value
+        A2 = result.params['A2'].value
+
+        B = result.params['B'].value
+
+        C0 = result.params['C0'].value
+        C1 = result.params['C1'].value
+        C2 = result.params['C2'].value
+
+        mu0 = result.params['mu0'].value
+        mu1 = result.params['mu1'].value
+        mu2 = result.params['mu2'].value
+
+        delta = result.params['delta'].value
+
+        sigma0 = result.params['sigma0'].value
+        sigma1 = result.params['sigma1'].value
+        sigma2 = result.params['sigma2'].value
+
+        phi = result.params['phi'].value
+        theta = result.params['theta'].value
+        omega = result.params['omega'].value
+
+        boundary = self.check_boundary(A0, A1, A2, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, result.params)
+
+        S = self.S_matrix(sigma0, sigma1, sigma2, phi, theta, omega)
+
+        var = np.diag(S)
+        sig = np.sqrt(var)
+
+        sig_inv = np.diag(1/sig)
+
+        rho = np.dot(np.dot(sig_inv, S), sig_inv)
+
+        sig0, sig1, sig2 = sig[0], sig[1], sig[2]
+        rho12, rho02, rho01 = rho[1,2], rho[0,2], rho[0,1]
+
+        return A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01, boundary
+
+    def check_outside(self, A0, A1, A2, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A0_min, A0_max = params['A0'].min, params['A0'].max
+        A1_min, A1_max = params['A1'].min, params['A1'].max
+        A2_min, A2_max = params['A2'].min, params['A2'].max
+
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary =  (mu0 <= mu0_min) or (mu0 >= mu0_max)\
+                 or (mu1 <= mu1_min) or (mu1 >= mu1_max)\
+                 or (mu2 <= mu2_min) or (mu2 >= mu2_max)\
+                 or (sigma0 <= sigma0_min) or (sigma0 >= sigma0_max)\
+                 or (sigma1 <= sigma1_min) or (sigma1 >= sigma1_max)\
+                 or (sigma2 <= sigma2_min) or (sigma2 >= sigma2_max)
+
+        return boundary
+
+    def check_boundary(self, A0, A1, A2, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
+
+        A0_min, A0_max = params['A0'].min, params['A0'].max
+        A1_min, A1_max = params['A1'].min, params['A1'].max
+        A2_min, A2_max = params['A2'].min, params['A2'].max
+
+        B_min, B_max = params['B'].min, params['B'].max
+
+        mu0_min, mu0_max = params['mu0'].min, params['mu0'].max
+        mu1_min, mu1_max = params['mu1'].min, params['mu1'].max
+        mu2_min, mu2_max = params['mu2'].min, params['mu2'].max
+
+        sigma0_min, sigma0_max = params['sigma0'].min, params['sigma0'].max
+        sigma1_min, sigma1_max = params['sigma1'].min, params['sigma1'].max
+        sigma2_min, sigma2_max = params['sigma2'].min, params['sigma2'].max
+
+        boundary = np.isclose(mu0, mu0_min, rtol=1e-3) | np.isclose(mu0, mu0_max, rtol=1e-3) \
+                 | np.isclose(mu1, mu1_min, rtol=1e-3) | np.isclose(mu1, mu1_max, rtol=1e-3) \
+                 | np.isclose(mu2, mu2_min, rtol=1e-3) | np.isclose(mu2, mu2_max, rtol=1e-3) \
+                 | np.isclose(sigma0, sigma0_min, rtol=1e-3) | np.isclose(sigma0, sigma0_max, rtol=1e-3) \
+                 | np.isclose(sigma1, sigma1_min, rtol=1e-3) | np.isclose(sigma1, sigma1_max, rtol=1e-3) \
+                 | np.isclose(sigma2, sigma2_min, rtol=1e-3) | np.isclose(sigma2, sigma2_max, rtol=1e-3)
+
+        return boundary
+
+    def model(self, x, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01):
+
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+
+        inv_S = np.linalg.inv(S)
+
+        x0, x1, x2_1 = x[0]-mu0, x[1]-mu1, x[2]-mu2
+
+        x2_0 = x2_1-delta
+        x2_2 = x2_1+delta
+
+        norm = np.sqrt(np.linalg.det(2*np.pi*S))
+
+        return (A0*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_0**2\
+                            +2*(inv_S[1,2]*x1*x2_0+inv_S[0,2]*x0*x2_0+inv_S[0,1]*x0*x1)))\
+               +A1*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_1**2\
+                            +2*(inv_S[1,2]*x1*x2_1+inv_S[0,2]*x0*x2_1+inv_S[0,1]*x0*x1)))\
+               +A2*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_2**2\
+                            +2*(inv_S[1,2]*x1*x2_2+inv_S[0,2]*x0*x2_2+inv_S[0,1]*x0*x1))))/norm+B+C0*x0+C1*x1+C2*x2_1

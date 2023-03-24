@@ -1,15 +1,18 @@
 import logging
-logging.disable(logging.CRITICAL)
+#logging.disable(logging.CRITICAL)
 
 import warnings
-warnings.filterwarnings('ignore')
+#warnings.filterwarnings('ignore')
 
 import sys, os, re, imp, copy, shutil
-    
+
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import multiprocess as multiprocessing
 
 from mantid import config
-config.setLogLevel(0, quiet=True)
+#config.setLogLevel(0, quiet=True)
 
 from mantid.simpleapi import *
 import numpy as np
@@ -34,6 +37,8 @@ from PyPDF2 import PdfFileMerger
 from mantid.kernel import V3D
 from mantid.geometry import PointGroupFactory, SpaceGroupFactory
 
+import matplotlib.pyplot as plt
+
 from scipy.spatial import KDTree
 
 filename, n_proc = sys.argv[1], int(sys.argv[2])
@@ -46,6 +51,8 @@ scale_constant = 1e+4
 if __name__ == '__main__':
 
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
+
+    #ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True, DownloadedInstrumentFileCache=True, GeometryFileCache=True)
 
     CreateSampleWorkspace(OutputWorkspace='sample')
 
@@ -66,27 +73,38 @@ if __name__ == '__main__':
     if scale_factor is None:
         scale_factor = 1
 
-    reflection_condition = dictionary['reflection-condition']
-    group = dictionary['group']
+    reflection_condition = dictionary.get('reflection-condition')
+    centering = dictionary.get('centering')
 
-    if reflection_condition == 'P':
-        reflection_condition = 'Primitive'
-    elif reflection_condition == 'F':
+    group = dictionary.get('group')
+
+    if np.any([key in ['P', 'Primitive'] for key in [centering, reflection_condition]]):
+        reflection_condition = 'Primitive'    
+        centering = 'P'
+    elif np.any([key in ['F', 'All-face centred'] for key in [centering, reflection_condition]]):
         reflection_condition = 'All-face centred'
-    elif reflection_condition == 'I':
+        centering = 'F'
+    elif np.any([key in ['I', 'Body centred'] for key in [centering, reflection_condition]]):
         reflection_condition = 'Body centred'
-    elif reflection_condition == 'A':
+        centering = 'I'
+    elif np.any([key in ['A', 'A-face centred'] for key in [centering, reflection_condition]]):
         reflection_condition = 'A-face centred'
-    elif reflection_condition == 'B':
+        centering = 'A'
+    elif np.any([key in ['B', 'B-face centred'] for key in [centering, reflection_condition]]):
         reflection_condition = 'B-face centred'
-    elif reflection_condition == 'C':
+        centering = 'B'
+    elif np.any([key in ['C', 'C-face centred'] for key in [centering, reflection_condition]]):
         reflection_condition = 'C-face centred'
-    elif reflection_condition == 'R' or reflection_condition == 'Robv':
+        centering = 'C'
+    elif np.any([key in ['R', 'Robv', 'Rhombohedrally centred, obverse'] for key in [centering, reflection_condition]]):
         reflection_condition = 'Rhombohedrally centred, obverse'
-    elif reflection_condition == 'Rrev':
+        centering = 'R'
+    elif np.any([key in ['Rrev', 'Rhombohedrally centred, reverse'] for key in [centering, reflection_condition]]):
         reflection_condition = 'Rhombohedrally centred, reverse'
-    elif reflection_condition == 'H':
-         reflection_condition = 'Hexagonally centred, reverse'
+        centering = 'R'
+    elif np.any([key in ['H', 'Hexagonally centred, reverse'] for key in [centering, reflection_condition]]):
+        reflection_condition = 'Hexagonally centred, reverse'
+        centering = 'H'
 
     pgs = [pg.replace(' ', '') for pg in PointGroupFactory.getAllPointGroupSymbols()]
     sgs = [sg.replace(' ', '') for sg in SpaceGroupFactory.getAllSpaceGroupSymbols()]
@@ -137,7 +155,7 @@ if __name__ == '__main__':
 
     experiment = dictionary.get('experiment')
 
-    if dictionary['ub-file'] is not None:
+    if dictionary.get('ub-file') is not None:
         ub_file = os.path.join(working_directory, dictionary['ub-file'])
         if '*' in ub_file:
             ub_file = [ub_file.replace('*', str(run)) for run in run_nos]
@@ -149,25 +167,30 @@ if __name__ == '__main__':
     directory = os.path.dirname(os.path.abspath(filename))
     outname = dictionary['name']
 
+    elastic = dictionary.get('elastic')
+    timing_offset = dictionary.get('time-offset')
+
+    if elastic:
+        outname += '_cc'
+
     outdir = os.path.join(directory, outname)
+    dbgdir = os.path.join(outdir, 'debug')
     if not os.path.exists(outdir):
         #shutil.rmtree(outdir)
         os.mkdir(outdir)
-    else:
-        items = os.listdir(outdir)
-        for item in items:
-            if item.endswith('.png'):
-                os.remove(os.path.join(outdir, item))
-            elif item.endswith('.jpg'):
-                os.remove(os.path.join(outdir, item))
-            elif item.endswith('.pdf'):
-                os.remove(os.path.join(outdir, item))
-            elif item.endswith('.txt'):
-                os.remove(os.path.join(outdir, item))
+    if not os.path.exists(dbgdir):
+        os.mkdir(dbgdir)
 
-    parameters.output_input_file(filename, directory, outname)
+    items = os.listdir(dbgdir)
+    for item in items:
+        if item.endswith('.png') or item.endswith('.jpg') or item.endswith('.pdf') or item.endswith('.txt'):
+            #if '_p' in item:
+            #    if item.split('_p')[-1][0].isdigit():
+            os.remove(os.path.join(dbgdir, item))
 
-    if dictionary.get('flux-file')is not None:
+    parameters.output_input_file(filename, directory, outname+'_int')
+
+    if dictionary.get('flux-file') is not None:
         spectrum_file = os.path.join(shared_directory+'Vanadium', dictionary['flux-file'])
     else:
         spectrum_file = None
@@ -187,7 +210,7 @@ if __name__ == '__main__':
     else:
         tube_calibration = None
 
-    if dictionary.get('detector-file')is not None:
+    if dictionary.get('detector-file') is not None:
         detector_calibration = os.path.join(shared_directory+'calibration', dictionary['detector-file'])
     else:
         detector_calibration = None
@@ -197,6 +220,13 @@ if __name__ == '__main__':
     mod_vector_3 = dictionary['modulation-vector-3']
     max_order = dictionary['max-order']
     cross_terms = dictionary['cross-terms']
+
+    min_d_sat = dictionary.get('minimum-modulation-d-spacing')
+    if min_d_sat is None:
+        min_d_sat = min_d
+
+    if np.allclose(mod_vector_1, 0) and np.allclose(mod_vector_2, 0) and np.allclose(mod_vector_3, 0):
+        max_order = 0
 
     if not all([a,b,c,alpha,beta,gamma]):
         if ub_file is not None:
@@ -230,97 +260,12 @@ if __name__ == '__main__':
 
     tmp = ows.format(run_labels)
 
-    if os.path.exists(os.path.join(directory, tmp+'_pk.nxs')) and not mtd.doesExist(tmp):
+    if os.path.exists(os.path.join(dbgdir, tmp+'_pk.nxs')) and not mtd.doesExist(tmp):
 
-        LoadNexus(Filename=os.path.join(directory, tmp+'_pk_lean.nxs'), OutputWorkspace=tmp+'_lean')
-        LoadNexus(Filename=os.path.join(directory, tmp+'_pk.nxs'), OutputWorkspace=tmp)
-        LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, tmp+'.mat'))
-        LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
-
-        for r in runs:
-            FilterPeaks(InputWorkspace=tmp, 
-                        FilterVariable='RunNumber',
-                        FilterValue=r,
-                        Operator='=',
-                        OutputWorkspace=opk.format(r))
-            FilterPeaks(InputWorkspace=tmp+'_lean', 
-                        FilterVariable='RunNumber',
-                        FilterValue=r,
-                        Operator='=',
-                        OutputWorkspace=opk.format(r)+'_lean')
-
-    if not mtd.doesExist(tmp):
-
-        split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
-
-        args = [outdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
-                spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
-                mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
-
-        join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
-
-        # merge.pre_integration(*join_args)
-
-        config['MultiThreaded.MaxCores'] == 1
-        os.environ['OPENBLAS_NUM_THREADS'] = '1'
-        os.environ['OMP_NUM_THREADS'] = '1'
-
-        print('Spawning threads for pre-integration')
-        multiprocessing.set_start_method('spawn', force=True)
-        with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
-            pool.starmap(merge.pre_integration, join_args)
-            pool.close()
-            pool.join()
-        print('Joining threads from pre-integration')
-
-        config['MultiThreaded.MaxCores'] == 4
-        os.environ.pop('OPENBLAS_NUM_THREADS', None)
-        os.environ.pop('OMP_NUM_THREADS', None)
-
-    if not mtd.doesExist(tmp):   
-
-        if mtd.doesExist('sa'):
-            CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
-        else:
-            CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
-
-        CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
-
-        CreateEmptyTableWorkspace(OutputWorkspace='run_info')
-
-        mtd['run_info'].addColumn('Int', 'RunNumber')
-        mtd['run_info'].addColumn('Double', 'Scale')
-
-        for i in range(m_proc):
-            partname = outname+'_p{}'.format(i)
-
-            LoadNexus(Filename=os.path.join(outdir, partname+'_log.nxs'), OutputWorkspace=partname+'_log')
-            for j in range(mtd[partname+'_log'].rowCount()):
-                items = mtd[partname+'_log'].row(j)
-                mtd['run_info'].addRow(list(items.values()))
-            DeleteWorkspace(partname+'_log')
-
-            LoadNexus(Filename=os.path.join(outdir, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
-            LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(outdir, partname+'.mat'))
-            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
-            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(outdir, partname+'.mat'))
-            DeleteWorkspace(partname+'_pk')
-
-            LoadNexus(Filename=os.path.join(outdir, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
-            LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(outdir, partname+'.mat'))
-            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
-            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(outdir, partname+'.mat'))
-            DeleteWorkspace(partname+'_pk_lean')
-
-            os.remove(os.path.join(outdir, partname+'_log.nxs'))
-            os.remove(os.path.join(outdir, partname+'_pk_lean.nxs'))
-            os.remove(os.path.join(outdir, partname+'_pk.nxs'))
-            os.remove(os.path.join(outdir, partname+'.mat'))
-
-        SaveNexus(InputWorkspace='run_info', Filename=os.path.join(directory, tmp+'_log.nxs'))
-        SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(directory, tmp+'_pk_lean.nxs'))
-        SaveNexus(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'_pk.nxs'))
-        SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(directory, tmp+'.mat'))
+        LoadNexus(Filename=os.path.join(dbgdir, tmp+'_pk_lean.nxs'), OutputWorkspace=tmp+'_lean')
+        LoadNexus(Filename=os.path.join(dbgdir, tmp+'_pk.nxs'), OutputWorkspace=tmp)
+        LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, tmp+'.mat'))
+        LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'.mat'))
 
         for r in runs:
             FilterPeaks(InputWorkspace=tmp, 
@@ -333,34 +278,195 @@ if __name__ == '__main__':
                         FilterValue=r,
                         Operator='=',
                         OutputWorkspace=opk.format(r)+'_lean')
+
+    if os.path.exists(os.path.join(dbgdir, tmp+'_ellip.nxs')):
+
+        LoadNexus(Filename=os.path.join(dbgdir, tmp+'_pk_ellip.nxs'), OutputWorkspace=tmp+'_ellip')
+        LoadIsawUB(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, tmp+'.mat'))
+
+    # if not mtd.doesExist(tmp):
+
+    split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
+
+    args = [outdir, dbgdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
+            spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
+            mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
+
+    join_args = [(split, i, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
+
+    # merge.pre_integration(*join_args)
+
+    config['MultiThreaded.MaxCores'] == 1
+    os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    os.environ['OMP_NUM_THREADS'] = '1'
+
+    print('Spawning threads for pre-integration')
+    multiprocessing.set_start_method('spawn', force=True)
+    with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
+        pool.starmap(merge.pre_integration, join_args)
+        pool.close()
+        pool.join()
+    print('Joining threads from pre-integration')
+
+    config['MultiThreaded.MaxCores'] == 4
+    os.environ.pop('OPENBLAS_NUM_THREADS', None)
+    os.environ.pop('OMP_NUM_THREADS', None)
+
+    # if not mtd.doesExist(tmp):   
 
     if mtd.doesExist('sa'):
-        DeleteWorkspace('sa')
+        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp+'_ellip')
+    else:
+        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
 
-    if mtd.doesExist('flux'):
-        DeleteWorkspace('flux')
+    CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
 
-    if mtd.doesExist('van'):
-        DeleteWorkspace('van')
+    CreateEmptyTableWorkspace(OutputWorkspace='run_info')
+
+    mtd['run_info'].addColumn('Int', 'RunNumber')
+    mtd['run_info'].addColumn('Double', 'Scale')
+
+    for i in range(m_proc):
+        partname = outname+'_p{}'.format(i)
+
+        LoadNexus(Filename=os.path.join(dbgdir, partname+'_log.nxs'), OutputWorkspace=partname+'_log')
+        for j in range(mtd[partname+'_log'].rowCount()):
+            items = mtd[partname+'_log'].row(j)
+            mtd['run_info'].addRow(list(items.values()))
+        DeleteWorkspace(partname+'_log')
+
+        LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
+        if mtd[partname+'_pk'].getNumberPeaks() > 0:
+            LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(dbgdir, partname+'.mat'))
+            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
+            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, partname+'.mat'))
+        DeleteWorkspace(partname+'_pk')
+
+        LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
+        if mtd[partname+'_pk_lean'].getNumberPeaks() > 0:
+            LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
+            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
+            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
+        DeleteWorkspace(partname+'_pk_lean')
+
+        if os.path.exists(os.path.join(dbgdir, partname+'_pk_ellip.nxs')):
+
+            LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_ellip.nxs'), OutputWorkspace=partname+'_pk_ellip')
+            if mtd[partname+'_pk_ellip'].getNumberPeaks() > 0:
+                LoadIsawUB(InputWorkspace=partname+'_pk_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
+                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_ellip', RHSWorkspace=tmp+'_ellip', OutputWorkspace=tmp+'_ellip')
+                LoadIsawUB(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
+            DeleteWorkspace(partname+'_pk_ellip')
+
+            os.remove(os.path.join(dbgdir, partname+'_pk_ellip.nxs'))
+
+        os.remove(os.path.join(dbgdir, partname+'_log.nxs'))
+        os.remove(os.path.join(dbgdir, partname+'_pk_lean.nxs'))
+        os.remove(os.path.join(dbgdir, partname+'_pk.nxs'))
+        os.remove(os.path.join(dbgdir, partname+'.mat'))
+        
+    SaveNexus(InputWorkspace='run_info', Filename=os.path.join(dbgdir, tmp+'_log.nxs'))
+    SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, tmp+'_pk_lean.nxs'))
+    SaveNexus(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'_pk.nxs'))
+    SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'.mat'))
+
+    if mtd.doesExist(tmp+'_ellip'):
+        SaveNexus(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, tmp+'_pk_ellip.nxs'))
+
+    for r in runs:
+        FilterPeaks(InputWorkspace=tmp, 
+                    FilterVariable='RunNumber',
+                    FilterValue=r,
+                    Operator='=',
+                    OutputWorkspace=opk.format(r))
+        FilterPeaks(InputWorkspace=tmp+'_lean', 
+                    FilterVariable='RunNumber',
+                    FilterValue=r,
+                    Operator='=',
+                    OutputWorkspace=opk.format(r)+'_lean')
 
     if ref_dict is not None:
         ref_peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
         ref_peak_dictionary.load(os.path.join(working_directory, ref_dict))
+        ref_dict = ref_peak_dictionary.peak_dict
     else:
         ref_peak_dictionary = None
-        
+
+    if mtd.doesExist(tmp+'_ellip'):
+
+        Q, r = [], []
+
+        for p in range(mtd[tmp+'_ellip'].getNumberPeaks()):
+            pk = mtd[tmp+'_ellip'].getPeak(p)
+            js = eval(pk.getPeakShape().toJSON())
+            if pk.getIntensity() >= 1:
+                Qmod = 2*np.pi/pk.getDSpacing()
+                radius = np.cbrt([js['radius0']*js['radius1']*js['radius2']])
+                if np.isfinite(Qmod) and np.isfinite(radius) and np.isreal(radius):
+                    Q.append(Qmod)
+                    r.append(radius)
+
+        Q, r = np.array(Q), np.array(r)
+
+        Q_max = np.nanmax(Q) if min_d is None else 2*np.pi/min_d
+
+        Q_bin, Qh = np.linspace(np.nanmin(Q), Q_max, 20, retstep=True)
+        r_bin = np.zeros_like(Q_bin)
+        for i in range(Q_bin.size-1):
+            mask = np.logical_and(Q > Q[i]-Qh/2, Q <= Q[i+1]+Qh/2)
+            r_bin[i] = np.nanmean(r[mask])
+
+        mask = np.logical_and(np.isfinite(r_bin), r_bin > 0)
+
+        r_bin = r_bin[mask]
+        Q_bin = Q_bin[mask]
+
+        box_fit_size = np.linalg.lstsq(np.vstack([np.ones_like(Q_bin), Q_bin]).T, r_bin)[0]
+
+        fig, ax = plt.subplots()
+        ax.plot(Q_bin, r_bin, '.')
+        ax.plot(Q_bin, box_fit_size[0]+box_fit_size[1]*Q_bin, '-')
+        ax.set_xlabel('Q [\u212B\u207B\u00B9]')
+        ax.set_ylabel('Radius [\u212B\u207B\u00B9]')
+        fig.savefig(os.path.join(outdir, 'size.pdf'))
+
+        with open(os.path.join(outdir, 'size.txt'), 'w') as f:
+            f.write('nominal peak Q size        : {:12.4f}\n'.format(box_fit_size[0]))
+            f.write('adaptive peak Q multiplier : {:12.4f}\n'.format(box_fit_size[1]))
+
+    else:
+
+        box_fit_size = 0.15, 0
+
     cif_file = dictionary.get('cif-file')
 
     peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
     if cif_file is not None:
         peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
-        
+
     peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
     peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
     peak_dictionary.set_scale_constant(scale_constant)
 
+    cluster = dictionary.get('close-satellite-fitting')
+    if cluster is None:
+        cluster = False
+
     for r in runs:
+
+        if min_d is not None:
+            FilterPeaks(InputWorkspace=opk.format(r),
+                        OutputWorkspace=opk.format(r),
+                        FilterVariable='DSpacing',
+                        FilterValue=min_d, 
+                        Operator='>')
+            FilterPeaks(InputWorkspace=opk.format(r)+'_lean',
+                        OutputWorkspace=opk.format(r)+'_lean',
+                        FilterVariable='DSpacing',
+                        FilterValue=min_d,
+                        Operator='>')
 
         if max_order > 0:
 
@@ -429,36 +535,69 @@ if __name__ == '__main__':
                         pk.setIntMNP(V3D(*mnp))
                         pk.setIntHKL(V3D(*HKL))
 
-        peak_dictionary.add_peaks(opk.format(r))
+        if mtd.doesExist('flux'):
+            lamda_min = 2*np.pi/mtd['flux'].dataX(0).max()
+            lamda_max = 2*np.pi/mtd['flux'].dataX(0).min()
+        else:
+            lamda_min = None
+            lamda_max = None
+
+        print('Adding run {}'.format(opk.format(r)), cluster, lamda_min, lamda_max)
+
+        peak_dictionary.add_peaks(opk.format(r), cluster, lamda_min, lamda_max)
 
         if mtd.doesExist(opk.format(r)):
             DeleteWorkspace(opk.format(r))
             DeleteWorkspace(opk.format(r)+'_lean')
 
+    if mtd.doesExist('sa'):
+        DeleteWorkspace('sa')
+
+    if mtd.doesExist('flux'):
+        DeleteWorkspace('flux')
+
+    if mtd.doesExist('van'):
+        DeleteWorkspace('van')
+
     peak_dictionary.split_peaks(split_angle)
     peak_dict = peak_dictionary.to_be_integrated()
-
-    # ClearCache(AlgorithmCache=True, InstrumentCache=True, UsageServiceCache=True)
 
     keys = list(peak_dict.keys())
 
     if min_d is not None:
         keys = [key for key in keys if peak_dictionary.get_d(*key) > min_d]
 
-    split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
+    key_list, run_list, ind_list = [], [], []
+    for key in keys:
+        peaks = peak_dictionary.peak_dict.get(key)
+        for j, peak in enumerate(peaks):
+            run_list.append(peak.get_run_numbers()[0])
+            key_list.append(key)
+            ind_list.append(j)
 
-    filename = os.path.join(directory, tmp)
+    if np.isclose(split_angle, 0):
+        sort = np.argsort(run_list)
+    else:
+        sort = np.arange(len(run_list))
+
+    keys = [key_list[i] for i in sort]
+    inds = [ind_list[i] for i in sort]
+
+    split_keys = [split.tolist() for split in np.array_split(keys, n_proc)]
+    split_inds = [split.tolist() for split in np.array_split(inds, n_proc)]
+
+    filename = os.path.join(dbgdir, tmp)
 
     int_list, peak_tree = None, None
 
-    args = [ref_dict, peak_tree, int_list, filename,
+    args = [ref_dict, int_list, filename, box_fit_size,
             spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
-            outdir, directory, facility, instrument, ipts, runs,
-            split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
+            outdir, dbgdir, directory, facility, instrument, ipts, runs,
+            split_angle, min_d, min_d_sat, a, b, c, alpha, beta, gamma, reflection_condition,
             mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
-            chemical_formula, z_parameter, sample_mass, experiment, tmp]
+            chemical_formula, z_parameter, sample_mass, elastic, timing_offset, experiment, tmp, cluster]
 
-    join_args = [(split, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_keys)]
+    join_args = [(split_key, split_ind, i, outname+'_p{}'.format(i), *args) for i, (split_key, split_ind) in enumerate(zip(split_keys,split_inds))]
 
     # merge.integration_loop(*join_args[0])
 
@@ -481,58 +620,65 @@ if __name__ == '__main__':
     merger = PdfFileMerger()
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pdf')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'.pdf')
         if os.path.exists(partfile):
             merger.append(partfile)
 
-    merger.write(os.path.join(directory, outname+'.pdf'))       
+    merger.write(os.path.join(outdir, outname+'.pdf'))       
     merger.close()
 
-    if os.path.exists(os.path.join(directory, outname+'.pdf')):
+    if os.path.exists(os.path.join(outdir, outname+'.pdf')):
         for i in range(n_proc):
-            partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pdf')
+            partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'.pdf')
             if os.path.exists(partfile):
                 os.remove(partfile)
 
     merger = PdfFileMerger()
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
+        partfile = os.path.join(dbgdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
         if os.path.exists(partfile):
             merger.append(partfile)
-                
-    merger.write(os.path.join(outdir, 'rejected.pdf'))       
+
+    merger.write(os.path.join(dbgdir, 'rejected.pdf'))       
     merger.close()
 
-    if os.path.exists(os.path.join(outdir, 'rejected.pdf')):
+    if os.path.exists(os.path.join(dbgdir, 'rejected.pdf')):
         for i in range(n_proc):
-            partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
+            partfile = os.path.join(dbgdir, 'rej_'+outname+'_p{}'.format(i)+'.pdf')
             if os.path.exists(partfile):
                 os.remove(partfile)
 
     for i in range(n_proc):
-        tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(outdir, outname+'_p{}.pkl'.format(i)))
+        tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(dbgdir, outname+'_p{}.pkl'.format(i)))
 
         if i == 0:
             peak_dict = copy.deepcopy(tmp_peak_dict)
 
         for key in list(tmp_peak_dict.keys()):
-            peaks, tmp_peaks = peak_dict[key], tmp_peak_dict[key]
+            peaks, tmp_peaks = peak_dict.get(key), tmp_peak_dict[key]
 
             new_peaks = []
-            for peak, tmp_peak in zip(peaks, tmp_peaks):
-                if tmp_peak.get_merged_intensity() > 0:
-                    new_peaks.append(tmp_peak)
-                else:
-                    new_peaks.append(peak)
+
+            if peaks is not None:
+                for peak, tmp_peak in zip(peaks, tmp_peaks):
+                    if tmp_peak.get_merged_intensity() > 0:
+                        new_peaks.append(tmp_peak)
+                    else:
+                        new_peaks.append(peak)
+            else:
+                for tmp_peak in tmp_peaks:
+                    if tmp_peak.get_merged_intensity() > 0:
+                        new_peaks.append(tmp_peak)
+
             peak_dict[key] = new_peaks
 
     peak_dictionary.peak_dict = peak_dict
 
     peak_dictionary.clear_peaks()
     peak_dictionary.repopulate_workspaces()
-    scale = peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=adaptive_scale, scale=scale_factor)
-    peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
+    scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'.int'), adaptive_scale=adaptive_scale, scale=scale_factor)
+    peak_dictionary.save(os.path.join(outdir, outname+'.pkl'))
 
     scale_file = open(os.path.join(outdir, 'scale.txt'), 'w')
     scale_file.write('{:10.4e}'.format(scale))
@@ -540,159 +686,78 @@ if __name__ == '__main__':
 
     # ---
 
-    keys = peak_dictionary.peak_dict.keys()
+    LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(dbgdir, tmp+'.mat'))
 
-    int_list = []
-    Q_points = []
-
-    for key in list(keys):
-
-        peaks = peak_dictionary.peak_dict.get(key)
-
-        Q_point = []
-
-        for peak in peaks:
-
-            if peak.get_merged_intensity() > 0:
-                Q0 = peak.get_Q()
-                Q_point.append(Q0)
-
-        if len(Q_point) > 0:
-
-            Q_points.append(np.mean(Q_point, axis=0))
-            int_list.append(key)
-
-    weak = False
-
-    if weak:
-
-        Q_points = np.stack(Q_points)
-
-        peak_tree = KDTree(Q_points)
-
-        args = [peak_dict, peak_tree, int_list, filename,
-                spectrum_file, counts_file, tube_calibration, detector_calibration,
-                outdir, directory, facility, instrument, ipts, runs,
-                split_angle, a, b, c, alpha, beta, gamma, reflection_condition,
-                mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
-                chemical_formula, z_parameter, sample_mass, experiment, tmp]
-
-        join_args = [(split, outname+'_weak_p{}'.format(i), *args) for i, split in enumerate(split_keys)]
-
-        multiprocessing.set_start_method('spawn', force=True)
-        with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
-            pool.starmap(merge.integration_loop, join_args)
-            pool.close()
-            pool.join()
-
-        merger = PdfFileMerger()
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pdf')
-            if os.path.exists(partfile):
-                merger.append(partfile)
-
-        merger.write(os.path.join(outdir, outname+'_weak.pdf'))       
-        merger.close()
-
-        if os.path.exists(os.path.join(outdir, outname+'_weak.pdf')):
-            for i in range(n_proc):
-                partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pdf')
-                if os.path.exists(partfile):
-                    os.remove(partfile)
-
-        merger = PdfFileMerger()
-
-        for i in range(n_proc):
-            partfile = os.path.join(directory, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
-            merger.append(partfile)
-
-        merger.write(os.path.join(outdir, 'rejected_weak.pdf'))       
-        merger.close()
-
-        if os.path.exists(os.path.join(outdir, 'rejected_weak.pdf')):
-            for i in range(n_proc):
-                partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'.pdf')
-                if os.path.exists(partfile):
-                    os.remove(partfile)
-
-        merge_peak_dict = {}
-
-        for i in range(n_proc):
-            tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(outdir, outname+'_weak_p{}.pkl'.format(i)))
-
-            for key in list(tmp_peak_dict.keys()):
-                peaks, tmp_peaks = peak_dict[key], tmp_peak_dict[key]
-
-                new_peaks = []
-                for peak, tmp_peak in zip(peaks, tmp_peaks):
-                    if tmp_peak.get_merged_intensity() > 0:
-                        new_peaks.append(tmp_peak)
-                    elif peak.get_merged_intensity() > 0:
-                        new_peaks.append(peak)
-                if len(new_peaks) > 0:
-                    merge_peak_dict[key] = new_peaks
-
-        peak_dictionary.peak_dict = merge_peak_dict
-
-        peak_dictionary.clear_peaks()
-        peak_dictionary.repopulate_workspaces()
-        peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
-        peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
-
-    # ---
-
-    peak_dictionary.save_reflections(os.path.join(directory, outname+'.hkl'), adaptive_scale=True)
-
-    LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, tmp+'.mat'))
-
-    peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
+    peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
     peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
-    peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'.int'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), adaptive_scale=True)
 
-    peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
-    peak_statistics.prune_outliers()
-    peak_statistics.write_statisics()
-    peak_statistics.write_intensity()
+    if sg is not None:
+        peak_statistics = PeakStatistics(os.path.join(outdir, outname+'.hkl'), sg)
+        peak_statistics.prune_outliers()
+        peak_statistics.write_statisics()
+        peak_statistics.write_intensity()
 
     absorption_file = os.path.join(outdir, 'absorption.txt')
 
     if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
         peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
-        peak_dictionary.recalculate_hkl()
-        peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
-        peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+        peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
+        peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
 
-        peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
-        peak_statistics.prune_outliers()
-        peak_statistics.write_statisics()
-        peak_statistics.write_intensity()
+        if sg is not None:
+            peak_statistics = PeakStatistics(os.path.join(outdir, outname+'_w_abs.hkl'), sg)
+            peak_statistics.prune_outliers()
+            peak_statistics.write_statisics()
+            peak_statistics.write_intensity()
 
-    peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
+    peak_dictionary.save(os.path.join(outdir, outname+'.pkl'))
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.hkl')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.int')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'.int')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'.pkl')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_fit.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.hkl')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_fit.int')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.int')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_nuc.hkl')
         if os.path.exists(partfile):
             os.remove(partfile)
-        partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'.pkl')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_nuc.int')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_sat.hkl')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_sat.int')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_nuc_fit.hkl')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_nuc_fit.int')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_sat_fit.hkl')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_sat_fit.int')
+        if os.path.exists(partfile):
+            os.remove(partfile)
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'.pkl')
         if os.path.exists(partfile):
             os.remove(partfile)
 
     fmt_summary = 3*'{:8}'+'{:8}'+6*'{:8}'+'{:4}'+6*'{:8}'+'\n'
-    fmt_stats = 3*'{:8}'+'{:8}'+9*'{:10}'+'\n'
-    fmt_params = 3*'{:8}'+'{:8}'+2*'{:10}'+6*'{:8}'+3*'{:8}'+'{:6}'+2*'{:6}'+'\n'
+    fmt_stats = 3*'{:8}'+'{:8}'+13*'{:10}'+'\n'
+    fmt_params = 3*'{:8}'+'{:8}'+2*'{:10}'+6*'{:8}'+3*'{:8}'+'{:6}'+2*'{:6}'+6*'{:8}'+'\n'
 
     hdr_summary = ['#      h', '       k', '       l', '    d-sp', '  wl-min', '  wl-max', \
                    '  2t-min', '  2t-max', '  az-min', '  az-max', '   n', \
@@ -701,20 +766,22 @@ if __name__ == '__main__':
     hdr_stats = ['#      h', '       k', '       l', '    d-sp',
                  ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d',
                  ' chi2-2d', ' pk/bkg-2d', ' I/sig-2d',
-                 ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d']
+                 ' chi2-1d', ' pk/bkg-1d', ' I/sig-1d',
+                 ' chi2-2d', ' pk/bkg-2d', ' I/sig-2d', '   reason']
 
     hdr_params = ['#      h', '       k', '       l', '    d-sp', '         A', '         B', 
                   '    mu_0', '    mu_1', '    mu_2', ' sigma_0', ' sigma_1', ' sigma_2',
-                  '  rho_12', '  rho_02', '  rho_01', '   pts', ' bound', '  type']
+                  '  rho_12', '  rho_02', '  rho_01', '   pts', ' bound', '  type',
+                  '    mu_0', '    mu_1', '    mu_2', ' sigma_0', ' sigma_1', ' sigma_2']
 
-    peak_file = open(os.path.join(directory, outname+'_summary.txt'), 'w')
-    excl_file = open(os.path.join(outdir, 'rejected_summary.txt'), 'w')
+    peak_file = open(os.path.join(outdir, outname+'_summary.txt'), 'w')
+    excl_file = open(os.path.join(dbgdir, 'rejected_summary.txt'), 'w')
 
     peak_file.write(fmt_summary.format(*hdr_summary))
     excl_file.write(fmt_summary.format(*hdr_summary))
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_summary.txt')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_summary.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -724,7 +791,7 @@ if __name__ == '__main__':
             os.remove(partfile)
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_summary.txt')
+        partfile = os.path.join(dbgdir, 'rej_'+outname+'_p{}'.format(i)+'_summary.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -736,14 +803,14 @@ if __name__ == '__main__':
     peak_file.close()
     excl_file.close()
 
-    peak_file = open(os.path.join(directory, outname+'_stats.txt'), 'w')
-    excl_file = open(os.path.join(outdir, 'rejected_stats.txt'), 'w')
+    peak_file = open(os.path.join(outdir, outname+'_stats.txt'), 'w')
+    excl_file = open(os.path.join(dbgdir, 'rejected_stats.txt'), 'w')
 
     peak_file.write(fmt_stats.format(*hdr_stats))
     excl_file.write(fmt_stats.format(*hdr_stats))
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_stats.txt')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_stats.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -753,7 +820,7 @@ if __name__ == '__main__':
             os.remove(partfile)
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_stats.txt')
+        partfile = os.path.join(dbgdir, 'rej_'+outname+'_p{}'.format(i)+'_stats.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -765,14 +832,14 @@ if __name__ == '__main__':
     peak_file.close()
     excl_file.close()
 
-    peak_file = open(os.path.join(directory, outname+'_params.txt'), 'w')
-    excl_file = open(os.path.join(outdir, 'rejected_params.txt'), 'w')
+    peak_file = open(os.path.join(outdir, outname+'_params.txt'), 'w')
+    excl_file = open(os.path.join(dbgdir, 'rejected_params.txt'), 'w')
 
     peak_file.write(fmt_params.format(*hdr_params))
     excl_file.write(fmt_params.format(*hdr_params))
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, outname+'_p{}'.format(i)+'_params.txt')
+        partfile = os.path.join(dbgdir, outname+'_p{}'.format(i)+'_params.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -782,7 +849,7 @@ if __name__ == '__main__':
             os.remove(partfile)
 
     for i in range(n_proc):
-        partfile = os.path.join(outdir, 'rej_'+outname+'_p{}'.format(i)+'_params.txt')
+        partfile = os.path.join(dbgdir, 'rej_'+outname+'_p{}'.format(i)+'_params.txt')
         if os.path.exists(partfile):
             tmp_file = open(partfile, 'r')
             tmp_lines = tmp_file.readlines()
@@ -795,92 +862,3 @@ if __name__ == '__main__':
     excl_file.close()
 
     # ---
-
-    if weak:
-
-        peak_file = open(os.path.join(directory, outname+'_weak_summary.txt'), 'w')
-        excl_file = open(os.path.join(outdir, 'rejected_weak_summary.txt'), 'w')
-
-        peak_file.write(fmt_summary.format(*hdr_summary))
-        excl_file.write(fmt_summary.format(*hdr_summary))
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_summary.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    peak_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_summary.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    excl_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        peak_file.close()
-        excl_file.close()
-
-        peak_file = open(os.path.join(directory, outname+'_weak_stats.txt'), 'w')
-        excl_file = open(os.path.join(outdir, 'rejected_weak_stats.txt'), 'w')
-
-        peak_file.write(fmt_stats.format(*hdr_stats))
-        excl_file.write(fmt_stats.format(*hdr_stats))
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_stats.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    peak_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_stats.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    excl_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        peak_file.close()
-        excl_file.close()
-
-        peak_file = open(os.path.join(directory, outname+'_weak_params.txt'), 'w')
-        excl_file = open(os.path.join(outdir, 'rejected_weak_params.txt'), 'w')
-
-        peak_file.write(fmt_params.format(*hdr_params))
-        excl_file.write(fmt_params.format(*hdr_params))
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, outname+'_weak_p{}'.format(i)+'_params.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    peak_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        for i in range(n_proc):
-            partfile = os.path.join(outdir, 'rej_'+outname+'_weak_p{}'.format(i)+'_params.txt')
-            if os.path.exists(partfile):
-                tmp_file = open(partfile, 'r')
-                tmp_lines = tmp_file.readlines()
-                for tmp_line in tmp_lines:
-                    excl_file.write(tmp_line)
-                tmp_file.close()
-                os.remove(partfile)
-
-        peak_file.close()
-        excl_file.close()

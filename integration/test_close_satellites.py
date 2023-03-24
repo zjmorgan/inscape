@@ -21,7 +21,7 @@ Qx_min, Qx_max = -0.25, 0.25
 Qy_min, Qy_max = -0.25, 0.25
 Qz_min, Qz_max = -0.25, 0.25
 
-mu_x, mu_y, mu_z = 1, 1, 0
+mu_x, mu_y, mu_z = 1, 0, 0
 
 Qx_min += mu_x
 Qy_min += mu_y
@@ -34,7 +34,7 @@ Qz_max += mu_z
 sigma_x, sigma_y, sigma_z = 0.015, 0.03, 0.04
 rho_yz, rho_xz, rho_xy = 0.0, -0.0, -0.0
 
-delta_mu_x, delta_mu_y, delta_mu_z = 0.0, 0.1, 0
+delta_mu_x, delta_mu_y, delta_mu_z = 0.0, 0.0, 0.1
 
 d = 2
 
@@ -93,6 +93,36 @@ ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, 0.8)
 ellip.reset_axes(delta_Q0)
 
 plt.close('all')
+
+prof = LineCut()
+
+int_mask, bkg_mask = ellip.profile_mask()
+Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
+stats, params = prof.fit(Qp, data, norm, int_mask, bkg_mask, 0.99)
+
+chi_sq, peak_bkg_ratio, sig_noise_ratio = stats
+#a, mu, sigma = params
+
+#print(chi_sq, peak_bkg_ratio, sig_noise_ratio)
+
+x = prof.x
+y = prof.y
+
+y_sub = prof.y_sub
+y_bkg = prof.y_bkg
+y_fit = prof.y_fit
+
+e = prof.e
+e_sub = prof.e_sub
+
+fig, ax = plt.subplots(num='Profile1')
+ax.errorbar(x, y, e, fmt='-o')
+ax.errorbar(x, y_sub, e_sub, fmt='-s')
+ax.plot(x, y_fit, '--')
+ax.plot(x, y_bkg, '--')
+ax.set_xlabel('$Q_p$')
+ax.set_ylabel('$I$')
+plt.show()
 
 proj = Projection()
 
@@ -158,7 +188,7 @@ y_fit = prof.y_fit
 e = prof.e
 e_sub = prof.e_sub
 
-fig, ax = plt.subplots(num='Profile1')
+fig, ax = plt.subplots(num='Profile2')
 ax.errorbar(x, y, e, fmt='-o')
 ax.errorbar(x, y_sub, e_sub, fmt='-s')
 ax.plot(x, y_fit, '--')

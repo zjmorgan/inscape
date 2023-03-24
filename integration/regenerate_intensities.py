@@ -13,7 +13,7 @@ sys.path.append(directory)
 
 import parameters
 
-from peak import PeakDictionary, PeakStatistics
+from peak import PeakDictionary, PeakStatistics, PeakFitPrune
 
 from mantid.geometry import PointGroupFactory, SpaceGroupFactory
 
@@ -32,9 +32,6 @@ gamma = dictionary['gamma']
 
 adaptive_scale = dictionary.get('adaptive-scale')
 scale_factor = dictionary.get('scale-factor')
-
-if scale_factor is None:
-    scale_factor = 1
 
 group = dictionary['group']
 
@@ -68,7 +65,7 @@ ipts = dictionary['ipts']
 
 working_directory = '/{}/{}/IPTS-{}/shared/'.format(facility,instrument,ipts)
 shared_directory = '/{}/{}/shared/'.format(facility,instrument)
-    
+
 if dictionary['ub-file'] is not None:
     ub_file = os.path.join(working_directory, dictionary['ub-file'])
     if '*' in ub_file:
@@ -80,6 +77,7 @@ directory = os.path.dirname(os.path.abspath(filename))
 outname = dictionary['name']
 
 outdir = os.path.join(directory, outname)
+dbgdir = os.path.join(outdir, 'debug')
 
 mod_vector_1 = dictionary['modulation-vector-1']
 mod_vector_2 = dictionary['modulation-vector-2']
@@ -101,8 +99,17 @@ if not all([a,b,c,alpha,beta,gamma]):
         gamma = mtd['sample'].sample().getOrientedLattice().gamma()
 
 scale_constant = 1e+4
+scale_file = os.path.join(outdir, 'scale.txt')
 
-scale = np.loadtxt(os.path.join(outdir, 'scale.txt'))
+adaptive_scale = False
+
+if scale_factor is None and os.path.exists(scale_file):
+    scale = np.loadtxt(scale_file)
+elif scale_factor is None:
+    scale = None
+    adaptive_scale = True
+else:
+    scale = scale_factor
 
 cif_file = dictionary.get('cif-file')
 
@@ -110,37 +117,108 @@ peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
 
 if cif_file is not None:
     peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
-        
+
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
 peak_dictionary.set_material_info(chemical_formula, z_parameter, 0)
 peak_dictionary.set_scale_constant(scale_constant)
-peak_dictionary.load(os.path.join(directory, outname+'.pkl'))
+peak_dictionary.load(os.path.join(outdir, outname+'.pkl'))
 peak_dictionary.apply_spherical_correction(0)
 
-LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(directory, outname+'_cal.mat'))
+LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat'))
 
-peak_dictionary.save_calibration(os.path.join(directory, outname+'_cal.nxs'))
-peak_dictionary.recalculate_hkl(fname= os.path.join(outdir, 'indexing.txt'))
-peak_dictionary.save_hkl(os.path.join(directory, outname+'.int'), adaptive_scale=False, scale=scale)
-peak_dictionary.save_reflections(os.path.join(directory, outname+'.hkl'), adaptive_scale=False, scale=scale)
+peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
+peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
+scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'.hkl'), adaptive_scale=adaptive_scale, scale=scale)
+peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), adaptive_scale=False, scale=scale)
 
-peak_statistics = PeakStatistics(os.path.join(directory, outname+'.int'), sg)
-peak_statistics.prune_outliers()
-peak_statistics.write_statisics()
-peak_statistics.write_intensity()
+if max_order == 0:
+    peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_norm.hkl'))
+    peak_prune.fit_peaks()
+    peak_prune.write_intensity()
+
+if sg is not None:
+    peak_statistics = PeakStatistics(os.path.join(outdir, outname+'.int'), sg)
+    peak_statistics.prune_outliers()
+    peak_statistics.write_statisics()
+    peak_statistics.write_intensity()
 
 absorption_file = os.path.join(outdir, 'absorption.txt')
 
 if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
     peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
     peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
-    peak_dictionary.recalculate_hkl()
-    peak_dictionary.save_hkl(os.path.join(directory, outname+'_w_abs.int'), adaptive_scale=False, scale=scale)
-    peak_dictionary.save_reflections(os.path.join(directory, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
 
-    peak_statistics = PeakStatistics(os.path.join(directory, outname+'_w_abs.int'), sg)
-    peak_statistics.prune_outliers()
-    peak_statistics.write_statisics()
-    peak_statistics.write_intensity()
+    if max_order == 0:
+        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_abs_norm.hkl'))
+        peak_prune.fit_peaks()
+        peak_prune.write_intensity()
 
-peak_dictionary.save(os.path.join(directory, outname+'.pkl'))
+    if sg is not None:
+        peak_statistics = PeakStatistics(os.path.join(outdir, outname+'_w_abs.hkl'), sg)
+        peak_statistics.prune_outliers()
+        peak_statistics.write_statisics()
+        peak_statistics.write_intensity()
+
+peak_dictionary.save(os.path.join(outdir, outname+'.pkl'))
+
+def wobble_scale(theta, wl, mu, alpha, a, b, c, e):
+
+    t = np.deg2rad(theta-mu)
+
+    beta = np.deg2rad(alpha)
+
+    d = c*np.sqrt(1-e**2)
+
+    x = c*np.cos(t)*np.cos(beta)-d*np.sin(t)*np.sin(beta)
+
+    f = np.exp(-(x-b)**2/(1+a*wl)**2)
+
+    return 1/f
+
+wobble_file = os.path.join(outdir, 'wobble.txt')
+
+if os.path.exists(wobble_file):
+
+    with open(wobble_file, 'r') as f:
+
+        mu = float(f.readline().rstrip().strip('deg').split(':')[1])
+        alpha = float(f.readline().rstrip().strip('deg').split(':')[1])
+        a = float(f.readline().rstrip().split(':')[1])
+        b = float(f.readline().rstrip().split(':')[1])
+        c = float(f.readline().rstrip().split(':')[1])
+        e = float(f.readline().rstrip().split(':')[1])
+
+    for key in peak_dictionary.peak_dict.keys():
+
+        peaks = peak_dictionary.peak_dict.get(key)
+
+        h, k, l, m, n, p = key
+
+        for peak in peaks:
+
+            if peak.get_merged_intensity() > 0:
+
+                intens = peak.get_intensity()
+                scales = peak.get_data_scale().copy()
+                omegas = peak.get_omega_angles()
+                lamdas = peak.get_wavelengths()
+
+                peak.set_data_scale(scales*wobble_scale(omegas, lamdas, mu, alpha, a, b, c, e))
+
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
+
+    if max_order == 0:
+        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_pre_norm.hkl'))
+        peak_prune.fit_peaks()
+        peak_prune.write_intensity()
+
+    if sg is not None:
+        peak_statistics = PeakStatistics(os.path.join(outdir, outname+'_w_pre.hkl'), sg)
+        peak_statistics.prune_outliers()
+        peak_statistics.write_statisics()
+        peak_statistics.write_intensity()
+
+peak_dictionary.save(os.path.join(outdir, outname+'_corr.pkl'))
