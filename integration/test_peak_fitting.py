@@ -26,7 +26,7 @@ from fitting import GaussianFit3D
 
 np.random.seed(13)
 
-nx, ny, nz = 21, 21, 21
+nx, ny, nz = 13, 13, 13
 
 Qx_min, Qx_max = -0.5, 0.5
 Qy_min, Qy_max = -0.5, 0.5

@@ -115,12 +115,12 @@ if __name__ == '__main__':
     if type(group) is int:
         sg = SpaceGroupFactory.subscribedSpaceGroupSymbols(group)[0]
     elif group in pgs:
-        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
+        pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getHMSymbol()
     elif group in sgs:
         sg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getHMSymbol()
 
     if dictionary.get('chemical-formula') is not None:
-        chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[A-Za-z]+|\d+', dictionary['chemical-formula'])]).lstrip(' ')
+        chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[\(\)A-Za-z]+|[\d?\d.\d]+', dictionary['chemical-formula'])]).lstrip(' ')
     else:
         chemical_formula = None
 
@@ -224,6 +224,10 @@ if __name__ == '__main__':
     min_d_sat = dictionary.get('minimum-modulation-d-spacing')
     if min_d_sat is None:
         min_d_sat = min_d
+    
+    sat_only = dictionary.get('satellite-only')
+    if sat_only is None:
+        sat_only = False
 
     if np.allclose(mod_vector_1, 0) and np.allclose(mod_vector_2, 0) and np.allclose(mod_vector_3, 0):
         max_order = 0
@@ -284,92 +288,92 @@ if __name__ == '__main__':
         LoadNexus(Filename=os.path.join(dbgdir, tmp+'_pk_ellip.nxs'), OutputWorkspace=tmp+'_ellip')
         LoadIsawUB(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, tmp+'.mat'))
 
-    # if not mtd.doesExist(tmp):
+    if not mtd.doesExist(tmp):
 
-    split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
+        split_runs = [split.tolist() for split in np.array_split(runs, m_proc)]
 
-    args = [outdir, dbgdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
-            spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
-            mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
+        args = [outdir, dbgdir, directory, facility, instrument, ipts, runs, ub_file, reflection_condition, min_d,
+                spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
+                mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms, experiment, tmp]
 
-    join_args = [(split, i, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
+        join_args = [(split, i, outname+'_p{}'.format(i), *args) for i, split in enumerate(split_runs)]
 
-    # merge.pre_integration(*join_args)
+        # merge.pre_integration(*join_args)
 
-    config['MultiThreaded.MaxCores'] == 1
-    os.environ['OPENBLAS_NUM_THREADS'] = '1'
-    os.environ['OMP_NUM_THREADS'] = '1'
+        config['MultiThreaded.MaxCores'] == 1
+        os.environ['OPENBLAS_NUM_THREADS'] = '1'
+        os.environ['OMP_NUM_THREADS'] = '1'
 
-    print('Spawning threads for pre-integration')
-    multiprocessing.set_start_method('spawn', force=True)
-    with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
-        pool.starmap(merge.pre_integration, join_args)
-        pool.close()
-        pool.join()
-    print('Joining threads from pre-integration')
+        print('Spawning threads for pre-integration')
+        multiprocessing.set_start_method('spawn', force=True)
+        with multiprocessing.get_context('spawn').Pool(processes=n_proc) as pool:
+            pool.starmap(merge.pre_integration, join_args)
+            pool.close()
+            pool.join()
+        print('Joining threads from pre-integration')
 
-    config['MultiThreaded.MaxCores'] == 4
-    os.environ.pop('OPENBLAS_NUM_THREADS', None)
-    os.environ.pop('OMP_NUM_THREADS', None)
+        config['MultiThreaded.MaxCores'] == 4
+        os.environ.pop('OPENBLAS_NUM_THREADS', None)
+        os.environ.pop('OMP_NUM_THREADS', None)
 
-    # if not mtd.doesExist(tmp):   
+        # if not mtd.doesExist(tmp):   
 
-    if mtd.doesExist('sa'):
-        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
-        CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp+'_ellip')
-    else:
-        CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+        if mtd.doesExist('sa'):
+            CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
+            CreatePeaksWorkspace(InstrumentWorkspace='sa', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp+'_ellip')
+        else:
+            CreatePeaksWorkspace(InstrumentWorkspace='van', NumberOfPeaks=0, OutputType='Peak', OutputWorkspace=tmp)
 
-    CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
+        CreatePeaksWorkspace(NumberOfPeaks=0, OutputType='LeanElasticPeak', OutputWorkspace=tmp+'_lean')
 
-    CreateEmptyTableWorkspace(OutputWorkspace='run_info')
+        CreateEmptyTableWorkspace(OutputWorkspace='run_info')
 
-    mtd['run_info'].addColumn('Int', 'RunNumber')
-    mtd['run_info'].addColumn('Double', 'Scale')
+        mtd['run_info'].addColumn('Int', 'RunNumber')
+        mtd['run_info'].addColumn('Double', 'Scale')
 
-    for i in range(m_proc):
-        partname = outname+'_p{}'.format(i)
+        for i in range(m_proc):
+            partname = outname+'_p{}'.format(i)
 
-        LoadNexus(Filename=os.path.join(dbgdir, partname+'_log.nxs'), OutputWorkspace=partname+'_log')
-        for j in range(mtd[partname+'_log'].rowCount()):
-            items = mtd[partname+'_log'].row(j)
-            mtd['run_info'].addRow(list(items.values()))
-        DeleteWorkspace(partname+'_log')
+            LoadNexus(Filename=os.path.join(dbgdir, partname+'_log.nxs'), OutputWorkspace=partname+'_log')
+            for j in range(mtd[partname+'_log'].rowCount()):
+                items = mtd[partname+'_log'].row(j)
+                mtd['run_info'].addRow(list(items.values()))
+            DeleteWorkspace(partname+'_log')
 
-        LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
-        if mtd[partname+'_pk'].getNumberPeaks() > 0:
-            LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(dbgdir, partname+'.mat'))
-            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
-            LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, partname+'.mat'))
-        DeleteWorkspace(partname+'_pk')
+            LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk.nxs'), OutputWorkspace=partname+'_pk')
+            if mtd[partname+'_pk'].getNumberPeaks() > 0:
+                LoadIsawUB(InputWorkspace=partname+'_pk', Filename=os.path.join(dbgdir, partname+'.mat'))
+                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk', RHSWorkspace=tmp, OutputWorkspace=tmp)
+                LoadIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, partname+'.mat'))
+            DeleteWorkspace(partname+'_pk')
 
-        LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
-        if mtd[partname+'_pk_lean'].getNumberPeaks() > 0:
-            LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
-            CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
-            LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
-        DeleteWorkspace(partname+'_pk_lean')
+            LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_lean.nxs'), OutputWorkspace=partname+'_pk_lean')
+            if mtd[partname+'_pk_lean'].getNumberPeaks() > 0:
+                LoadIsawUB(InputWorkspace=partname+'_pk_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
+                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_lean', RHSWorkspace=tmp+'_lean', OutputWorkspace=tmp+'_lean')
+                LoadIsawUB(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, partname+'.mat'))
+            DeleteWorkspace(partname+'_pk_lean')
 
-        if os.path.exists(os.path.join(dbgdir, partname+'_pk_ellip.nxs')):
+            if os.path.exists(os.path.join(dbgdir, partname+'_pk_ellip.nxs')):
 
-            LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_ellip.nxs'), OutputWorkspace=partname+'_pk_ellip')
-            if mtd[partname+'_pk_ellip'].getNumberPeaks() > 0:
-                LoadIsawUB(InputWorkspace=partname+'_pk_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
-                CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_ellip', RHSWorkspace=tmp+'_ellip', OutputWorkspace=tmp+'_ellip')
-                LoadIsawUB(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
-            DeleteWorkspace(partname+'_pk_ellip')
+                LoadNexus(Filename=os.path.join(dbgdir, partname+'_pk_ellip.nxs'), OutputWorkspace=partname+'_pk_ellip')
+                if mtd[partname+'_pk_ellip'].getNumberPeaks() > 0:
+                    LoadIsawUB(InputWorkspace=partname+'_pk_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
+                    CombinePeaksWorkspaces(LHSWorkspace=partname+'_pk_ellip', RHSWorkspace=tmp+'_ellip', OutputWorkspace=tmp+'_ellip')
+                    LoadIsawUB(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, partname+'.mat'))
+                DeleteWorkspace(partname+'_pk_ellip')
 
-            os.remove(os.path.join(dbgdir, partname+'_pk_ellip.nxs'))
+                os.remove(os.path.join(dbgdir, partname+'_pk_ellip.nxs'))
 
-        os.remove(os.path.join(dbgdir, partname+'_log.nxs'))
-        os.remove(os.path.join(dbgdir, partname+'_pk_lean.nxs'))
-        os.remove(os.path.join(dbgdir, partname+'_pk.nxs'))
-        os.remove(os.path.join(dbgdir, partname+'.mat'))
-        
-    SaveNexus(InputWorkspace='run_info', Filename=os.path.join(dbgdir, tmp+'_log.nxs'))
-    SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, tmp+'_pk_lean.nxs'))
-    SaveNexus(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'_pk.nxs'))
-    SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'.mat'))
+            os.remove(os.path.join(dbgdir, partname+'_log.nxs'))
+            os.remove(os.path.join(dbgdir, partname+'_pk_lean.nxs'))
+            os.remove(os.path.join(dbgdir, partname+'_pk.nxs'))
+            os.remove(os.path.join(dbgdir, partname+'.mat'))
+
+        SaveNexus(InputWorkspace='run_info', Filename=os.path.join(dbgdir, tmp+'_log.nxs'))
+        SaveNexus(InputWorkspace=tmp+'_lean', Filename=os.path.join(dbgdir, tmp+'_pk_lean.nxs'))
+        SaveNexus(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'_pk.nxs'))
+        SaveIsawUB(InputWorkspace=tmp, Filename=os.path.join(dbgdir, tmp+'.mat'))
 
     if mtd.doesExist(tmp+'_ellip'):
         SaveNexus(InputWorkspace=tmp+'_ellip', Filename=os.path.join(dbgdir, tmp+'_pk_ellip.nxs'))
@@ -468,6 +472,18 @@ if __name__ == '__main__':
                         FilterValue=min_d,
                         Operator='>')
 
+        if sat_only:
+            FilterPeaks(InputWorkspace=opk.format(r),
+                        OutputWorkspace=opk.format(r),
+                        FilterVariable='m^2+n^2+p^2',
+                        FilterValue=0, 
+                        Operator='>')
+            FilterPeaks(InputWorkspace=opk.format(r),
+                        OutputWorkspace=opk.format(r),
+                        FilterVariable='DSpacing',
+                        FilterValue=min_d_sat, 
+                        Operator='>')
+
         if max_order > 0:
 
             ol = mtd[opk.format(r)].sample().getOrientedLattice()
@@ -483,57 +499,57 @@ if __name__ == '__main__':
             mod_UB = np.dot(UB, mod_HKL)
 
             ol.setModUB(mod_UB)
-
-            mod_1 = np.linalg.norm(mod_vector_1) > 0
-            mod_2 = np.linalg.norm(mod_vector_2) > 0
-            mod_3 = np.linalg.norm(mod_vector_3) > 0
-
-            ind_1 = np.arange(-max_order*mod_1,max_order*mod_1+1).tolist()
-            ind_2 = np.arange(-max_order*mod_2,max_order*mod_2+1).tolist()
-            ind_3 = np.arange(-max_order*mod_3,max_order*mod_3+1).tolist()
-
-            if cross_terms:
-                iter_mnp = list(itertools.product(ind_1,ind_2,ind_3))
-            else:
-                iter_mnp = list(set(list(itertools.product(ind_1,[0],[0]))\
-                                  + list(itertools.product([0],ind_2,[0]))\
-                                  + list(itertools.product([0],[0],ind_3))))
-
-            iter_mnp = [iter_mnp[s] for s in np.lexsort(np.array(iter_mnp).T, axis=0)]
-
-            for pn in range(mtd[opk.format(r)].getNumberPeaks()):
-                pk = mtd[opk.format(r)].getPeak(pn)
-                hkl = pk.getHKL()
-                for m, n, p in iter_mnp:
-                    d_hkl = m*np.array(mod_vector_1)\
-                          + n*np.array(mod_vector_2)\
-                          + p*np.array(mod_vector_3)
-                    HKL = np.round(hkl-d_hkl,4)
-                    mnp = [m,n,p]
-                    H, K, L = HKL
-                    h, k, l = int(H), int(K), int(L)
-                    if reflection_condition == 'Primitive':
-                        allowed = True
-                    elif reflection_condition == 'C-face centred':
-                        allowed = (h + k) % 2 == 0
-                    elif reflection_condition == 'A-face centred':
-                        allowed = (k + l) % 2 == 0
-                    elif reflection_condition == 'B-face centred':
-                        allowed = (h + l) % 2 == 0
-                    elif reflection_condition == 'Body centred':
-                        allowed = (h + k + l) % 2 == 0
-                    elif reflection_condition == 'All-face centred':
-                        allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
-                    elif reflection_condition == 'Rhombohedrally centred, obverse':
-                        allowed = (-h + k + l) % 3 == 0
-                    elif reflection_condition == 'Rhombohedrally centred, reverse':
-                        allowed = (h - k + l) % 3 == 0
-                    elif reflection_condition == 'Hexagonally centred, reverse':
-                        allowed = (h - k) % 3 == 0
-                    if np.isclose(np.linalg.norm(np.mod(HKL,1)), 0) and allowed:
-                        HKL = HKL.astype(int).tolist()
-                        pk.setIntMNP(V3D(*mnp))
-                        pk.setIntHKL(V3D(*HKL))
+# 
+#             mod_1 = np.linalg.norm(mod_vector_1) > 0
+#             mod_2 = np.linalg.norm(mod_vector_2) > 0
+#             mod_3 = np.linalg.norm(mod_vector_3) > 0
+# 
+#             ind_1 = np.arange(-max_order*mod_1,max_order*mod_1+1).tolist()
+#             ind_2 = np.arange(-max_order*mod_2,max_order*mod_2+1).tolist()
+#             ind_3 = np.arange(-max_order*mod_3,max_order*mod_3+1).tolist()
+# 
+#             if cross_terms:
+#                 iter_mnp = list(itertools.product(ind_1,ind_2,ind_3))
+#             else:
+#                 iter_mnp = list(set(list(itertools.product(ind_1,[0],[0]))\
+#                                   + list(itertools.product([0],ind_2,[0]))\
+#                                   + list(itertools.product([0],[0],ind_3))))
+# 
+#             iter_mnp = [iter_mnp[s] for s in np.lexsort(np.array(iter_mnp).T, axis=0)]
+# 
+#             for pn in range(mtd[opk.format(r)].getNumberPeaks()):
+#                 pk = mtd[opk.format(r)].getPeak(pn)
+#                 hkl = pk.getHKL()
+#                 for m, n, p in iter_mnp:
+#                     d_hkl = m*np.array(mod_vector_1)\
+#                           + n*np.array(mod_vector_2)\
+#                           + p*np.array(mod_vector_3)
+#                     HKL = np.round(hkl-d_hkl,4)
+#                     mnp = [m,n,p]
+#                     H, K, L = HKL
+#                     h, k, l = int(H), int(K), int(L)
+#                     if reflection_condition == 'Primitive':
+#                         allowed = True
+#                     elif reflection_condition == 'C-face centred':
+#                         allowed = (h + k) % 2 == 0
+#                     elif reflection_condition == 'A-face centred':
+#                         allowed = (k + l) % 2 == 0
+#                     elif reflection_condition == 'B-face centred':
+#                         allowed = (h + l) % 2 == 0
+#                     elif reflection_condition == 'Body centred':
+#                         allowed = (h + k + l) % 2 == 0
+#                     elif reflection_condition == 'All-face centred':
+#                         allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
+#                     elif reflection_condition == 'Rhombohedrally centred, obverse':
+#                         allowed = (-h + k + l) % 3 == 0
+#                     elif reflection_condition == 'Rhombohedrally centred, reverse':
+#                         allowed = (h - k + l) % 3 == 0
+#                     elif reflection_condition == 'Hexagonally centred, reverse':
+#                         allowed = (h - k) % 3 == 0
+#                     if np.isclose(np.linalg.norm(np.mod(HKL,1)), 0) and allowed:
+#                         HKL = HKL.astype(int).tolist()
+#                         pk.setIntMNP(V3D(*mnp))
+#                         pk.setIntHKL(V3D(*HKL))
 
         if mtd.doesExist('flux'):
             lamda_min = 2*np.pi/mtd['flux'].dataX(0).max()
@@ -542,7 +558,7 @@ if __name__ == '__main__':
             lamda_min = None
             lamda_max = None
 
-        print('Adding run {}'.format(opk.format(r)), cluster, lamda_min, lamda_max)
+        #print('Adding run {}'.format(opk.format(r)), cluster, lamda_min, lamda_max)
 
         peak_dictionary.add_peaks(opk.format(r), cluster, lamda_min, lamda_max)
 
@@ -593,7 +609,7 @@ if __name__ == '__main__':
     args = [ref_dict, int_list, filename, box_fit_size,
             spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
             outdir, dbgdir, directory, facility, instrument, ipts, runs,
-            split_angle, min_d, min_d_sat, a, b, c, alpha, beta, gamma, reflection_condition,
+            split_angle, min_d, min_d_sat, sat_only, a, b, c, alpha, beta, gamma, reflection_condition,
             mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
             chemical_formula, z_parameter, sample_mass, elastic, timing_offset, experiment, tmp, cluster]
 
@@ -649,6 +665,38 @@ if __name__ == '__main__':
             if os.path.exists(partfile):
                 os.remove(partfile)
 
+    merger = PdfFileMerger()
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'ind_'+outname+'_p{}'.format(i)+'.pdf')
+        if os.path.exists(partfile):
+            merger.append(partfile)
+
+    merger.write(os.path.join(outdir, outname+'_individual.pdf'))       
+    merger.close()
+
+    if os.path.exists(os.path.join(outdir, outname+'_individual.pdf')):
+        for i in range(n_proc):
+            partfile = os.path.join(dbgdir, 'ind_'+outname+'_p{}'.format(i)+'.pdf')
+            if os.path.exists(partfile):
+                os.remove(partfile)
+
+    merger = PdfFileMerger()
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'rej_ind_'+outname+'_p{}'.format(i)+'.pdf')
+        if os.path.exists(partfile):
+            merger.append(partfile)
+
+    merger.write(os.path.join(dbgdir, 'rejected_individual.pdf'))       
+    merger.close()
+
+    if os.path.exists(os.path.join(dbgdir, 'rejected_individual.pdf')):
+        for i in range(n_proc):
+            partfile = os.path.join(dbgdir, 'rej_ind_'+outname+'_p{}'.format(i)+'.pdf')
+            if os.path.exists(partfile):
+                os.remove(partfile)
+
     for i in range(n_proc):
         tmp_peak_dict = peak_dictionary.load_dictionary(os.path.join(dbgdir, outname+'_p{}.pkl'.format(i)))
 
@@ -691,7 +739,7 @@ if __name__ == '__main__':
     peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
     peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
     peak_dictionary.save_hkl(os.path.join(outdir, outname+'.int'), adaptive_scale=False, scale=scale)
-    peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), adaptive_scale=True)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), adaptive_scale=False, scale=scale)
 
     if sg is not None:
         peak_statistics = PeakStatistics(os.path.join(outdir, outname+'.hkl'), sg)
@@ -862,3 +910,61 @@ if __name__ == '__main__':
     excl_file.close()
 
     # ---
+
+    peak_file = open(os.path.join(outdir, outname+'_individual_stats.txt'), 'w')
+    excl_file = open(os.path.join(dbgdir, 'rejected_individual_stats.txt'), 'w')
+
+    peak_file.write(fmt_stats.format(*hdr_stats))
+    excl_file.write(fmt_stats.format(*hdr_stats))
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'ind_'+outname+'_p{}'.format(i)+'_stats.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                peak_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'rej_ind_'+outname+'_p{}'.format(i)+'_stats.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                excl_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    peak_file.close()
+    excl_file.close()
+
+    peak_file = open(os.path.join(outdir, outname+'_individual_params.txt'), 'w')
+    excl_file = open(os.path.join(dbgdir, 'rejected_individual_params.txt'), 'w')
+
+    peak_file.write(fmt_params.format(*hdr_params))
+    excl_file.write(fmt_params.format(*hdr_params))
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'ind_'+outname+'_p{}'.format(i)+'_params.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                peak_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    for i in range(n_proc):
+        partfile = os.path.join(dbgdir, 'rej_ind_'+outname+'_p{}'.format(i)+'_params.txt')
+        if os.path.exists(partfile):
+            tmp_file = open(partfile, 'r')
+            tmp_lines = tmp_file.readlines()
+            for tmp_line in tmp_lines:
+                excl_file.write(tmp_line)
+            tmp_file.close()
+            os.remove(partfile)
+
+    peak_file.close()
+    excl_file.close()

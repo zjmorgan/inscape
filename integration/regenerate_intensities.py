@@ -33,6 +33,10 @@ gamma = dictionary['gamma']
 adaptive_scale = dictionary.get('adaptive-scale')
 scale_factor = dictionary.get('scale-factor')
 
+min_I_sig = dictionary.get('minimum-signal-to-noise-ratio')
+if min_I_sig is None:
+    min_I_sig = 3
+
 group = dictionary['group']
 
 pgs = [pg.replace(' ', '') for pg in PointGroupFactory.getAllPointGroupSymbols()]
@@ -47,6 +51,9 @@ elif group in pgs:
     pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
 elif group in sgs:
     sg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getHMSymbol()
+
+if sg is None:
+    sg = 'P 1'
 
 if dictionary.get('chemical-formula') is not None:
     chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[A-Za-z]+|\d+', dictionary['chemical-formula'])]).lstrip(' ')
@@ -128,11 +135,11 @@ LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat
 
 peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
 peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
-scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'.hkl'), adaptive_scale=adaptive_scale, scale=scale)
-peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), adaptive_scale=False, scale=scale)
+scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=adaptive_scale, scale=scale)
+peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=False, scale=scale)
 
 if max_order == 0:
-    peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_norm.hkl'))
+    peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_norm.hkl'), sg)
     peak_prune.fit_peaks()
     peak_prune.write_intensity()
 
@@ -147,11 +154,12 @@ absorption_file = os.path.join(outdir, 'absorption.txt')
 if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
     peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
     peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
-    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
-    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_abs.hkl'), adaptive_scale=False, scale=scale)
+    peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing_w_abs.txt'))
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_abs.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_abs.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=False, scale=scale)
 
     if max_order == 0:
-        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_abs_norm.hkl'))
+        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_abs_norm.hkl'), sg)
         peak_prune.fit_peaks()
         peak_prune.write_intensity()
 
@@ -207,11 +215,11 @@ if os.path.exists(wobble_file):
 
                 peak.set_data_scale(scales*wobble_scale(omegas, lamdas, mu, alpha, a, b, c, e))
 
-    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
-    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_pre.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_pre.hkl'), min_sig_noise_ratio=min_I_sig, adaptive_scale=False, scale=scale)
 
     if max_order == 0:
-        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_pre_norm.hkl'))
+        peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_pre_norm.hkl'), sg)
         peak_prune.fit_peaks()
         peak_prune.write_intensity()
 

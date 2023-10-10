@@ -72,8 +72,9 @@ if os.path.splitext(peaks_workspace)[1] == '.nxs':
 else:
     LoadIsawPeaks(OutputWorkspace='peaks', 
                   Filename=os.path.join(directory,peaks_workspace))
-    ConvertPeaksWorkspace(PeakWorkspace='peaks', 
-                          OutputWorkspace='peaks')
+
+# ConvertPeaksWorkspace(PeakWorkspace='peaks', 
+#                       OutputWorkspace='peaks')
 
 sr_directory = '/SNS/{}/shared/SCDCalibration/'.format(instrument)
 sr_file = dictionary.get('superresolution-file') # 'CORELLI_Definition_2017-04-04_super_resolution.xml'
@@ -114,6 +115,8 @@ sr = set()
 
 for i in range(N):
     run = mtd['peaks'].getPeak(i).getRunNumber()
+    mtd['peaks'].getPeak(i).setIntensity(0)
+    mtd['peaks'].getPeak(i).setSigmaIntensity(0)
     sr.add(int(run))
 
 banks = list(set(banks))
@@ -368,6 +371,14 @@ with PdfPages(os.path.join(outdir, outname+'.pdf')) as pdf:
             ax[1,1].set_ylim(ylim_11)
             ax[1,2].set_ylim(ylim_12)
 
+        ax[0,0].minorticks_on()
+        ax[0,1].minorticks_on()
+        ax[0,2].minorticks_on()
+
+        ax[1,0].minorticks_on()
+        ax[1,1].minorticks_on()
+        ax[1,2].minorticks_on()
+
         pdf.savefig()
         plt.close()
 
@@ -448,6 +459,14 @@ ax[1,2].set_ylabel('\u03B3 [deg.]')
 ax[1,0].set_xlabel('Bank number')
 ax[1,1].set_xlabel('Bank number')
 ax[1,2].set_xlabel('Bank number')
+
+ax[0,0].minorticks_on()
+ax[0,1].minorticks_on()
+ax[0,2].minorticks_on()
+
+ax[1,0].minorticks_on()
+ax[1,1].minorticks_on()
+ax[1,2].minorticks_on()
 
 fig.savefig(os.path.join(directory, outname+'.pdf'))
 fig.show()

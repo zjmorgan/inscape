@@ -1,41 +1,41 @@
-# import mantid algorithms, numpy and matplotlib
 from mantid.simpleapi import *
-import matplotlib.pyplot as plt
 import numpy as np
+
+import matplotlib.pyplot as plt
+
+#import itertools
+
+import sys, os, re
 
 sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python310.zip')
 sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.10')
 sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.10/lib-dynload')
 sys.path.append('/opt/anaconda/envs/scd-reduction-tools-dev/lib/python3.10/site-packages')
 
-from matplotlib.backends.backend_pdf import PdfPages
-from itertools import cycle
-
-import sys, os, re
-
-directory = '/SNS/software/scd/reduction/inscape_dev/integration/'
+directory = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(directory)
 
 directory = os.path.abspath(os.path.join(directory, '..', 'reduction'))
 sys.path.append(directory)
 
-import parameters
+import imp 
+import merge, peak, parameters
 
-from peak import PeakDictionary, PeakStatistics, PeakFitPrune
+imp.reload(merge)
+imp.reload(peak)
+imp.reload(parameters)
 
-from mantid.geometry import PointGroupFactory, SpaceGroupFactory, CrystalStructure
+from peak import PeakDictionary, PeakFitPrune
 
 from mantid.kernel import V3D
 
-from scipy.optimize import minimize, least_squares, curve_fit
-#from lmfit import minimize, Parameters
-
+import scipy.spatial
+import scipy.optimize
 import copy
 
 _, filename, *ub_twin_list = sys.argv
 
-#filename = '/SNS/CORELLI/IPTS-31203/shared/test_integration_Sr4Ru3O10_SS2/Sr4Ru3O10_HHL_150K_0T_fix_int.inp'
-#filename = '/SNS/CORELLI/IPTS-31203/shared/final_integration_Sr4Ru3O10_SS2/Sr4Ru3O10_HHL_150K_0T_fix_int.inp'
+#filename, *ub_twin_list = '/SNS/CORELLI/IPTS-28114/shared/integration/Cr5Te8_170K_Hex_0914_int.inp', '/SNS/CORELLI/IPTS-28114/shared/scripts/Cr5Te8_170K_Hex_224116_224235_D2.mat'
 
 CreateSampleWorkspace(OutputWorkspace='sample')
 
@@ -48,35 +48,19 @@ alpha = dictionary['alpha']
 beta = dictionary['beta']
 gamma = dictionary['gamma']
 
+min_d = dictionary.get('minimum-d-spacing')
+
+if min_d is None:
+    min_d = 0.7
+
 adaptive_scale = dictionary.get('adaptive-scale')
 scale_factor = dictionary.get('scale-factor')
 
 if scale_factor is None:
     scale_factor = 1
 
-group = dictionary['group']
-
-pgs = [pg.replace(' ', '') for pg in PointGroupFactory.getAllPointGroupSymbols()]
-sgs = [sg.replace(' ', '') for sg in SpaceGroupFactory.getAllSpaceGroupSymbols()]
-
-sg = None
-pg = None
-
-if type(group) is int:
-    sg = SpaceGroupFactory.subscribedSpaceGroupSymbols(group)[0]
-elif group in pgs:
-    pg = PointGroupFactory.createPointGroup(PointGroupFactory.getAllPointGroupSymbols()[pgs.index(group)]).getPointGroup().getHMSymbol()
-elif group in sgs:
-    sg = SpaceGroupFactory.createSpaceGroup(SpaceGroupFactory.getAllSpaceGroupSymbols()[sgs.index(group)]).getHMSymbol()
-
-if sg is not None:
-    pg = PointGroupFactory.createPointGroupFromSpaceGroup(SpaceGroupFactory.createSpaceGroup(sg))
-
-if sg is None:
-    sg = 'P 1'
-
 if dictionary.get('chemical-formula') is not None:
-    chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[\(\)A-Za-z]+|[\d?\d.\d]+', dictionary['chemical-formula'])]).lstrip(' ')
+    chemical_formula = ''.join([' '+item if item.isalpha() else item for item in re.findall(r'[A-Za-z]+|\d+', dictionary['chemical-formula'])]).lstrip(' ')
 else:
     chemical_formula = None
 
@@ -112,6 +96,39 @@ mod_vector_3 = dictionary['modulation-vector-3']
 max_order = dictionary['max-order']
 cross_terms = dictionary['cross-terms']
 
+reflection_condition = dictionary.get('reflection-condition')
+centering = dictionary.get('centering')
+
+group = dictionary.get('group')
+
+if np.any([key in ['P', 'Primitive'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'Primitive'    
+    centering = 'P'
+elif np.any([key in ['F', 'All-face centred'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'All-face centred'
+    centering = 'F'
+elif np.any([key in ['I', 'Body centred'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'Body centred'
+    centering = 'I'
+elif np.any([key in ['A', 'A-face centred'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'A-face centred'
+    centering = 'A'
+elif np.any([key in ['B', 'B-face centred'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'B-face centred'
+    centering = 'B'
+elif np.any([key in ['C', 'C-face centred'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'C-face centred'
+    centering = 'C'
+elif np.any([key in ['R', 'Robv', 'Rhombohedrally centred, obverse'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'Rhombohedrally centred, obverse'
+    centering = 'R'
+elif np.any([key in ['Rrev', 'Rhombohedrally centred, reverse'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'Rhombohedrally centred, reverse'
+    centering = 'R'
+elif np.any([key in ['H', 'Hexagonally centred, reverse'] for key in [centering, reflection_condition]]):
+    reflection_condition = 'Hexagonally centred, reverse'
+    centering = 'H'
+
 if not all([a,b,c,alpha,beta,gamma]):
     if ub_file is not None:
         if type(ub_file) is list:
@@ -126,28 +143,107 @@ if not all([a,b,c,alpha,beta,gamma]):
         gamma = mtd['sample'].sample().getOrientedLattice().gamma()
 
 scale_constant = 1e+4
+scale_file = os.path.join(outdir, 'scale.txt')
 
-scale = np.loadtxt(os.path.join(outdir, 'scale.txt'))
+adaptive_scale = False
 
-cif_file = dictionary.get('cif-file')
+if scale_factor is None and os.path.exists(scale_file):
+    scale = np.loadtxt(scale_file)
+elif scale_factor is None:
+    scale = None
+    adaptive_scale = True
+else:
+    scale = scale_factor
 
 peak_dictionary = PeakDictionary(a, b, c, alpha, beta, gamma)
-
-if cif_file is not None:
-    peak_dictionary.load_cif(os.path.join(working_directory, cif_file))
-
 peak_dictionary.set_satellite_info(mod_vector_1, mod_vector_2, mod_vector_3, max_order)
-peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
+peak_dictionary.set_material_info(chemical_formula, z_parameter, 0)
 peak_dictionary.set_scale_constant(scale_constant)
-
 peak_dictionary.load(os.path.join(outdir, outname+'.pkl'))
-peak_dictionary.apply_spherical_correction(vanadium_mass, os.path.join(outdir, 'absorption.txt'))
+peak_dictionary.apply_spherical_correction(0)
+peak_dictionary.clear_peaks()
+peak_dictionary.repopulate_workspaces()
 
-#peak_dictionary.apply_ellipsoidal_correction(vanadium_mass, ratios=[4,1,2], omega=np.deg2rad(0), fname=os.path.join(outdir, 'absorption.txt'))
+LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat'))
 
-keys = list(peak_dictionary.peak_dict.keys())
+peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
+peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
 
-#pg = PointGroupFactory.createPointGroup('-1')
+scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'.hkl'), min_sig_noise_ratio=3, adaptive_scale=adaptive_scale, scale=scale)
+peak_dictionary.save_reflections(os.path.join(outdir, outname+'.hkl'), min_sig_noise_ratio=3, adaptive_scale=False, scale=scale)
+
+absorption_file = os.path.join(outdir, 'absorption.txt')
+
+if chemical_formula is not None and z_parameter > 0 and sample_mass > 0:
+    peak_dictionary.set_material_info(chemical_formula, z_parameter, sample_mass)
+    peak_dictionary.apply_spherical_correction(vanadium_mass, fname=absorption_file)
+    peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_abs.hkl'), min_sig_noise_ratio=3, adaptive_scale=False, scale=scale)
+    peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_abs.hkl'), min_sig_noise_ratio=3, adaptive_scale=False, scale=scale)
+
+d = mtd['cws'].column(6)
+
+min_d_spacing = np.min(d)*0.95
+max_d_spacing = np.max(d)*1.05
+
+ub_twin_list = [os.path.join(directory, ub_twin) for ub_twin in ub_twin_list]
+
+CloneWorkspace(InputWorkspace='iws', OutputWorkspace='ref')
+ClearUB(Workspace='ref')
+LoadIsawUB(InputWorkspace='ref', Filename=ub_file)
+
+UB = mtd['ref'].sample().getOrientedLattice().getUB()
+
+for i, ub_twin in enumerate(ub_twin_list):
+    CloneWorkspace(InputWorkspace='ref', OutputWorkspace='iws{}'.format(i))
+    ClearUB(Workspace='iws{}'.format(i))
+    LoadIsawUB(InputWorkspace='iws{}'.format(i), Filename=ub_twin)
+    #IndexPeaks(PeaksWorkspace='iws{}'.format(i), Tolerance=0.12)
+    PredictPeaks(InputWorkspace='iws{}'.format(i),
+                 MinDSpacing=min_d_spacing,
+                 MaxDSpacing=max_d_spacing,
+                 OutputType='LeanElasticPeak',
+                 CalculateWavelength=False,
+                 ReflectionCondition=reflection_condition if reflection_condition is not None else 'Primitive',
+                 OutputWorkspace='iws{}'.format(i))
+
+    Qx, Qy, Qz = np.array(mtd['iws{}'.format(i)].column(12)).T
+    points = np.c_[Qx, Qy, Qz]
+
+    tree = scipy.spatial.cKDTree(points)
+
+    for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+        pk = mtd['iws'].getPeak(pn)
+
+        h, k, l = pk.getIntHKL()
+        m, n, p = pk.getIntMNP()
+
+        dh, dk, dl = m*np.array(mod_vector_1)+n*np.array(mod_vector_2)+p*np.array(mod_vector_3)       
+        Q = 2*np.pi*np.dot(UB,[h+dh,k+dk,l+dl])
+        n = Q/np.linalg.norm(Q)
+
+        results = tree.query_ball_point(Q, 0.35)
+
+        for result in results:
+            if np.abs(np.dot(n, points[result]-Q)) < 0.2:
+                mtd['iws'].removePeak(pn)
+
+peak_dictionary.save_hkl(os.path.join(outdir, outname+'_twin.hkl'), adaptive_scale=False, scale=scale)
+peak_dictionary.save_reflections(os.path.join(outdir, outname+'_twin.hkl'), adaptive_scale=False, scale=scale)
+
+keys = []
+
+for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
+
+    pk = mtd['iws'].getPeak(pn)
+
+    h, k, l = pk.getIntHKL()
+    m, n, p = pk.getIntMNP()
+
+    key = int(h), int(k), int(l), int(m), int(n), int(p)
+
+    if key not in keys:
+        keys.append(key)
 
 symmetry = { }
 
@@ -157,9 +253,9 @@ for key in keys:
 
     if m**2+n**2+p**2 == 0:
 
-        equivalents = [[h,k,l,m,n,p],[-h,-k,-l,-m,-n,-p]]
+        equivalents = [[h,k,l,m,n,p], [-h,-k,-l,-m,-n,-p]]
 
-        symm_key = (int(h),int(k),int(l),int(m),int(n),int(p))
+        symm_key = int(h), int(k), int(l), int(m), int(n), int(p)
 
         if symmetry.get(symm_key) is None:
 
@@ -167,9 +263,9 @@ for key in keys:
 
                 h, k, l, m, n, p = equivalent 
 
-                equi_key = (int(h),int(k),int(l),int(m),int(n),int(p))
+                equi_key = int(h), int(k), int(l), int(m), int(n), int(p)
 
-                if peak_dictionary.peak_dict.get(equi_key) is not None:
+                if equi_key in keys: #peak_dictionary.peak_dict.get(equi_key) is not None and 
 
                     if symmetry.get(symm_key) is not None:
 
@@ -227,9 +323,6 @@ for key in symmetry.keys():
 
                 rot = peak.get_omega_angles()
 
-                #merge = peak.get_merged_intensity()
-                #error = peak.get_merged_intensity_error()
-
                 intens = peak.get_individual_intensity()
                 error = peak.get_individual_intensity_error()
 
@@ -260,7 +353,7 @@ for key in symmetry.keys():
 values = np.array(values)
 angles = np.array(angles)
 
-def scale(theta, wl, mu, alpha, beta, omega, a, bx, by, c, e):
+def scale_function(theta, wl, mu, alpha, beta, omega, a, bx, by, c, e):
 
     t = np.deg2rad(theta-mu)
 
@@ -286,19 +379,8 @@ def scale(theta, wl, mu, alpha, beta, omega, a, bx, by, c, e):
 
 def residual(x, ref_dict, keys):
 
-#     mu = params['mu']
-#     alpha = params['alpha']
-# 
-#     a = params['a']
-#     b = params['b']
-#     c = params['c']
-#     e = params['e']
-# 
-#     x = mu.value, alpha.value, a.value, b.value, c.value, e.value
-
     mu, alpha, beta, omega, a, bx, by, c, e = x
-
-    #print((6*'{:.4f} ').format(*x))
+    print(x)
 
     diff = []
 
@@ -312,8 +394,6 @@ def residual(x, ref_dict, keys):
         for peak_1 in peaks_1:
 
             if peak_1.is_peak_integrated() and len(peak_1.get_individual_bin_size()) > 0:
-                #peak_1.individual_integrate()
-                #peak_1.prune_peaks()
 
                 lamda_1 = peak_1.get_wavelengths().copy()
                 omega_1 = peak_1.get_omega_angles().copy()
@@ -342,8 +422,6 @@ def residual(x, ref_dict, keys):
                     for peak_2 in peaks_2:
 
                         if peak_2.is_peak_integrated() and len(peak_2.get_individual_bin_size()) > 0:
-                            #peak_2.individual_integrate()
-                            #peak_2.prune_peaks()
 
                             lamda_2 = peak_2.get_wavelengths().copy()
                             omega_2 = peak_2.get_omega_angles().copy()
@@ -373,9 +451,6 @@ def residual(x, ref_dict, keys):
                                 angle_2 = np.mod(omega_2, 180)
 
                                 inds = np.isclose(angle_1, angle_2[:,np.newaxis], atol=1e-1)
-                                #print(angle_1.round(2))
-                                #print(angle_2.round(2))
-                                #print(inds)
 
                                 i1, i2 = np.meshgrid(indices_1, indices_2, indexing='xy')
 
@@ -386,29 +461,8 @@ def residual(x, ref_dict, keys):
 
                                 if len(i1_inds) > 0 and len(i2_inds) > 0 and len(intens_1) > 0 and len(intens_2) > 0 and len(i1_inds) == len(i2_inds) and len(intens_1) == len(intens_2) and len(intens_1) > i1_inds.max():
 
-                                    s1 = scale(omega_1, lamda_1, mu, alpha, beta, omega, a, bx, by, c, e)
-                                    s2 = scale(omega_2, lamda_2, mu, alpha, beta, omega, a, bx, by, c, e)
-
-                                    #sig_intens_1 = peak_1.get_partial_merged_intensity_error(i1_inds, False)
-                                    #sig_intens_2 = peak_2.get_partial_merged_intensity_error(i2_inds, False)
-
-                                    #sig_intens_1 = peak_1.get_individual_intensity_error()
-                                    #sig_intens_2 = peak_2.get_individual_intensity_error()
-
-                                    #sig_intens_1 = np.sqrt(np.mean(sig_intens_1[i1_inds]**2))
-                                    #sig_intens_2 = np.sqrt(np.mean(sig_intens_2[i2_inds]**2))
-
-                                    #peak_1.set_data_scale(scales_1*s1)
-                                    #peak_2.set_data_scale(scales_2*s2)
-
-                                    #intens_1 = peak_1.get_partial_merged_intensity(i1_inds)
-                                    #intens_2 = peak_2.get_partial_merged_intensity(i2_inds)
-
-                                    #intens_1 = peak_1.get_individual_intensity()
-                                    #intens_2 = peak_2.get_individual_intensity()
-
-                                    #intens_1 = np.mean(intens_1[i1_inds])
-                                    #intens_2 = np.mean(intens_2[i2_inds])
+                                    s1 = scale_function(omega_1, lamda_1, mu, alpha, beta, omega, a, bx, by, c, e)
+                                    s2 = scale_function(omega_2, lamda_2, mu, alpha, beta, omega, a, bx, by, c, e)
 
                                     intens_1 = intens_1[i1_inds]
                                     intens_2 = intens_2[i2_inds]
@@ -421,40 +475,7 @@ def residual(x, ref_dict, keys):
 
                                     if len(intens_1) > 0 and len(intens_2) > 0:
 
-                                        #ave_intens_1 = np.sum(intens_1/sig_intens_1**2)/np.sum(1/sig_intens_2**2)
-                                        #ave_intens_2 = np.sum(intens_2/sig_intens_2**2)/np.sum(1/sig_intens_2**2)
-
-                                        #ave_sig_intens_1 = 1/np.sqrt(np.sum(1/sig_intens_1**2))
-                                        #ave_sig_intens_2 = 1/np.sqrt(np.sum(1/sig_intens_2**2))
-
-                                        #peak_1.set_data_scale(scales_1)
-                                        #peak_2.set_data_scale(scales_2)
-
-                                        #z = np.array([ave_intens_1,ave_intens_2])
-                                        #sig = np.array([ave_sig_intens_1,ave_sig_intens_2])
-
-                                        #z0 = np.sum(z/sig**2)/np.sum(1/sig**2)
-                                        #sig0 = 1/np.sqrt(np.sum(1/sig**2))
-
-                                        #x0 = intens_1/intens_2
-                                        #y0 = intens_2/intens_1
-                                        #x = s2/s1
-                                        #y = s1/s2
-                                        #sig = np.sqrt(sig_intens_1**2/intens_1**2+sig_intens_2**2/intens_2**2)
-
-                                        #diff += (np.abs(x0-x)/sig).tolist() #np.linalg.norm
-                                        #diff += (np.abs(y0-y)/sig).tolist() #np.linalg.norm
-
                                         diff += (intens_1*s1-intens_2*s2).tolist()
-                                        #diff += (1/intens_1/s1-1/intens_2/s2).tolist()
-
-                                        #z0 = np.diff(z)
-                                        #diff += ((intens_1-z0)/sig_intens_1).tolist()
-                                        #diff += ((intens_2-z0)/sig_intens_2).tolist()
-
-                                        #inv_z0 = np.diff(1/z)
-                                        #diff += ((1/intens_1-1/z0)*sig_intens_1).tolist()
-                                        #diff += ((1/intens_2-1/z0)*sig_intens_2).tolist()
 
                                         z += (intens_1*s1).tolist()
                                         z += (intens_2*s2).tolist()
@@ -462,15 +483,8 @@ def residual(x, ref_dict, keys):
                                         sig += (sig_intens_2).tolist()
 
         z, sig = np.array(z), np.array(sig)
-        #z0 = np.sum(z/sig**2)/np.sum(1/sig**2)
-        #sig0 = 1/np.sqrt(np.sum(1/sig**2))
 
-        #y0 = np.mean(y)
         z0 = np.mean(z)
-
-        #diff += ((y-y0)).tolist()
-        #diff += ((z-z0)).tolist()
-        #diff += ((1/z-1/z0)*sig0).tolist()
 
     return diff
 
@@ -480,7 +494,7 @@ def init(theta, mu, k):
 
 const = 1.5
 
-popt, pcov = curve_fit(init, angles, values, (0,0.1), bounds=([-180,0],[180,np.inf]), loss='soft_l1', verbose=2)
+popt, pcov = scipy.optimize.curve_fit(init, angles, values, (0,0.1), bounds=([-180,0],[180,np.inf]), loss='soft_l1', verbose=2)
 mu, k_const = popt
 
 sort = np.argsort(angles)
@@ -500,7 +514,7 @@ fig.savefig(os.path.join(outdir, 'wobble_uncorrected.pdf'))
 
 mask = (init(angles, mu, k_const)/const < values) & (values < init(angles, mu, k_const)*const)
 
-popt, pcov = curve_fit(init, angles[mask], values[mask], (0,0.1), bounds=([-180,0],[180,np.inf]), verbose=2)
+popt, pcov = scipy.optimize.curve_fit(init, angles[mask], values[mask], (0,0.1), bounds=([-180,0],[180,np.inf]), verbose=2)
 mu, k_const = popt
 
 sort = np.argsort(angles)
@@ -540,26 +554,8 @@ x0 = (mu, alpha, beta, omega, a, bx, by, c, e)
 args = (ref_dict, data)
 bounds = ([-180, -180, 0, -180, 0, 0, 0, 0, 0], [180, 180, 180, 180, np.inf, np.inf, np.inf, np.inf, 1])
 
-sol = least_squares(residual, x0, args=args, bounds=np.array(bounds), method='trf', verbose=2) #, method='trust-constr', loss='soft_l1'
+sol = scipy.optimize.least_squares(residual, x0, args=args, bounds=np.array(bounds), method='dogbox', verbose=2) #, method='trust-constr', loss='soft_l1'
 mu, alpha, beta, omega, a, bx, by, c, e = sol.x
-
-# params = Parameters()
-# params.add('mu', value=mu, min=-180, max=180)
-# params.add('alpha', value=alpha, min=-180, max=180)
-# params.add('a', value=a, min=0, max=np.inf)
-# params.add('b', value=b, min=0, max=np.inf)
-# params.add('c', value=c, min=0, max=np.inf)
-# params.add('e', value=e, min=0, max=1)
-# 
-# out = minimize(residual, params, args=(ref_dict, data))
-# 
-# mu = out.params['mu'].value
-# alpha = out.params['alpha'].value
-# 
-# a = out.params['a'].value
-# b = out.params['b'].value
-# c = out.params['c'].value
-# e = out.params['e'].value
 
 with open(os.path.join(outdir, 'wobble.txt'), 'w') as f:
 
@@ -572,11 +568,6 @@ with open(os.path.join(outdir, 'wobble.txt'), 'w') as f:
     f.write('off-centering mean y parameter: {:.4f} \n'.format(by))
     f.write('offcentering effective radius: {:.4f} \n'.format(c))
     f.write('eccentricity: {:.4f} \n'.format(e))
-
-# print(sol.x)
-# print(mu, alpha, a, b, c, e)
-# 
-# print(4*b*c-k_const)
 
 ratios = []
 angles = []
@@ -597,7 +588,7 @@ for key in peak_dictionary.peak_dict.keys():
             omegas = peak.get_omega_angles()
             lamdas = peak.get_wavelengths()
 
-            peak.set_data_scale(scales*scale(omegas, lamdas, mu, alpha, beta, omega, a, bx, by, c, e))
+            peak.set_data_scale(scales*scale_function(omegas, lamdas, mu, alpha, beta, omega, a, bx, by, c, e))
 
             corr = peak.get_individual_intensity()
 
@@ -635,9 +626,6 @@ ax2.set_ylim(0,1)
 
 ax1.minorticks_on()
 ax2.minorticks_on()
-
-# ax1.legend()
-# ax2.legend()
 
 fig1.savefig(os.path.join(outdir, 'wobble_polar.pdf'))
 fig2.savefig(os.path.join(outdir, 'wobble_angle.pdf'))
@@ -692,7 +680,7 @@ angles = np.array(angles)
 
 const = 1.5
 
-popt, pcov = curve_fit(init, angles, values, (0,0.1), bounds=([-180,0],[180,np.inf]), loss='soft_l1', verbose=2)
+popt, pcov = scipy.optimize.curve_fit(init, angles, values, (0,0.1), bounds=([-180,0],[180,np.inf]), loss='soft_l1', verbose=2)
 mu, k_const = popt
 
 sort = np.argsort(angles)
@@ -712,7 +700,7 @@ fig.savefig(os.path.join(outdir, 'wobble_corrected.pdf'))
 
 mask = (init(angles, mu, k_const)/const < values) & (values < init(angles, mu, k_const)*const)
 
-popt, pcov = curve_fit(init, angles[mask], values[mask], (0,0.1), bounds=([-180,0],[180,np.inf]), verbose=2)
+popt, pcov = scipy.optimize.curve_fit(init, angles[mask], values[mask], (0,0.1), bounds=([-180,0],[180,np.inf]), verbose=2)
 mu, k = popt
 
 sort = np.argsort(angles)
@@ -730,107 +718,15 @@ ax.set_ylabel('Ratio')
 ax.minorticks_on()
 fig.savefig(os.path.join(outdir, 'wobble_corrected_prune.pdf'))
 
-# for key in peak_dictionary.peak_dict.keys():
-#     h, k, l, m, n, p = key
-#     pair = (-h,-k,-l,-m,-n,-p)
-#     peaks = peak_dictionary.peak_dict[key]
-#     # if peak_dictionary.peak_dict.get(pair) is None:
-#     #     for peak in peaks:
-#     #         scale = peak.get_data_scale().copy()
-#     #         peak.set_data_scale(0*scale)
-#     # else:
-#     metric = 0
-#     pairs = peak_dictionary.peak_dict[pair]
-#     for peak in pairs:
-#         metric += peak.get_merged_intensity()
-#     metric /= len(pairs)
-#     for peak in peaks:
-#         rot = peak.get_omega_angles()
-#         value = peak.get_merged_intensity()
-#         angle = np.rad2deg(np.angle(np.sum(np.exp(1j*np.deg2rad(rot)))))
-#         if metric*init(angle, mu, k_const)/const > value or value > metric*init(angle, mu, k_const)*const:
-#             scale = peak.get_data_scale().copy()
-#             peak.set_data_scale(0*scale)
-
-scale_constant = 1e+4
-scale_file = os.path.join(outdir, 'scale.txt')
-
-adaptive_scale = False
-
-if scale_factor is None and os.path.exists(scale_file):
-    scale = np.loadtxt(scale_file)
-elif scale_factor is None:
-    scale = None
-    adaptive_scale = True
-else:
-    scale = scale_factor
-
-LoadIsawUB(InputWorkspace='cws', Filename=os.path.join(outdir, outname+'_cal.mat'))
-
-peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
-peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
-
-for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
-
-    pk = mtd['cws'].getPeak(pn)
-
-    h, k, l = pk.getIntHKL()
-    m, n, p = pk.getIntMNP()
-
-    if (np.array([h,k,l,m,n,p]) == 0).all():
-        mtd['iws'].removePeak(pn)
-        mtd['cws'].removePeak(pn)
-
-ub_twin_list = [os.path.abspath(os.path.join(directory, ub_twin)) for ub_twin in ub_twin_list]
-
-for i, ub_twin in enumerate(ub_twin_list):
-    CloneWorkspace(InputWorkspace='cws', OutputWorkspace='cws{}'.format(i))
-    LoadIsawUB(InputWorkspace='cws{}'.format(i), Filename=ub_twin)
-    IndexPeaks(PeaksWorkspace='cws{}'.format(i), Tolerance=0.12)
-
-for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
-
-    pk = mtd['iws'].getPeak(pn)
-
-    h, k, l = pk.getIntHKL()
-    m, n, p = pk.getIntMNP()
-
-    for i, ub_twin in enumerate(ub_twin_list):
-        pk_twin = mtd['cws{}'.format(i)].getPeak(pn)
-        H, K, L = pk_twin.getHKL()
-        if not np.allclose([H,K,L],0):
-            h, k, l = 0, 0, 0
-            m, n, p = 0, 0, 0
-
-    dh, dk, dl = (m*np.array(mod_vector_1)+n*np.array(mod_vector_2)+p*np.array(mod_vector_3)).astype(float)
-
-    pk.setHKL(h+dh,k+dk,l+dl)
-    pk.setIntHKL(V3D(h,k,l))
-    pk.setIntMNP(V3D(m,n,p))
-
-for pn in range(mtd['iws'].getNumberPeaks()-1,-1,-1):
-
-    pk = mtd['iws'].getPeak(pn)
-
-    h, k, l = pk.getIntHKL()
-    m, n, p = pk.getIntMNP()
-
-    if (np.array([h,k,l,m,n,p]) == 0).all():
-        mtd['iws'].removePeak(pn)
-
-# peak_dictionary.save_calibration(os.path.join(outdir, outname+'_cal.nxs'))
-# peak_dictionary.recalculate_hkl(fname=os.path.join(outdir, 'indexing.txt'))
 scale = peak_dictionary.save_hkl(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=adaptive_scale, scale=scale)
 peak_dictionary.save_reflections(os.path.join(outdir, outname+'_w_pre.hkl'), adaptive_scale=False, scale=scale)
 peak_dictionary.save(os.path.join(outdir, outname+'_corr.pkl'))
 
-if max_order == 0:
-    peak_prune = PeakFitPrune(os.path.join(outdir, outname+'_w_pre_norm.hkl'), sg)
-    peak_prune.fit_peaks()
-    peak_prune.write_intensity()
-
-if sg is not None:
-    peak_statistics = PeakStatistics(os.path.join(outdir, outname+'_w_pre.hkl'), sg)
-    peak_statistics.prune_outliers()
-    peak_statistics.write_statisics()
-    peak_statistics.write_intensity() 
+for corr in ['', '_w_abs', '_twin', '_w_pre']:
+    for app in ['', '_nuc', '_sat']:
+        outfile = os.path.join(outdir,outname+corr+'_norm'+app+'.hkl')
+        print(outfile)
+        if os.path.exists(outfile):
+            peak_prune = PeakFitPrune(outfile, mod_vector_1, mod_vector_2, mod_vector_3, max_order)
+            peak_prune.fit_peaks()
+            peak_prune.write_intensity()

@@ -13,6 +13,7 @@ from mantid import config
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
@@ -25,6 +26,8 @@ plt.rcParams['font.size'] = 8
 
 import numpy as np
 import scipy.interpolate
+import scipy.integrate
+import scipy.special
 import scipy.optimize
 import scipy.spatial
 import scipy.signal
@@ -42,6 +45,8 @@ import pprint
 import dill as pickle
 
 from lmfit import Parameters, Minimizer, report_fit
+
+import re
 
 #import numba as nb
 #@nb.jit(nopython=True)
@@ -635,6 +640,9 @@ class PeakEnvelope:
             self.ax_Qu2_fit.set_title('\u03D5 = {:.1f}\u00B0'.format(az_phi[0]))
 
             self.ax_Qv.set_title('1 orientation')
+        
+        self.ax_Qu2.set_title('')
+        self.ax_Qv2.set_title('')
 
         self.ax_Qv_fit.set_title('')
         self.ax_Qv2_fit.set_title('')
@@ -1581,10 +1589,42 @@ class PeakEnvelope:
 
             if self.__show_plots: self.fig.show()
 
+    def update_individual(self, ind, no, lamda, two_theta, az_phi, run, bank):
+
+        if type(lamda) is list:
+            self.ax_Qu2.set_title('')
+            self.ax_Qv2.set_title('')
+
+            if np.isclose(lamda[0],lamda[1]):
+                self.ax_Qu.set_title('\u03BB = {:.3f} \u212B'.format(lamda[0]))
+            else:
+                self.ax_Qu.set_title('\u03BB = {:.3f}-{:.3f} \u212B'.format(*lamda))
+
+            if np.isclose(two_theta[0],two_theta[1]):
+                self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}\u00B0'.format(two_theta[0]))
+            else:
+                self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}-{:.1f}\u00B0'.format(*two_theta))
+
+            if np.isclose(az_phi[0],az_phi[1]):
+                self.ax_Qu2_fit.set_title('\u03D5 = {:.1f}\u00B0'.format(az_phi[0]))
+            else:
+                self.ax_Qu2_fit.set_title('\u03D5 = {:.1f}-{:.1f}\u00B0'.format(*az_phi))
+
+            self.ax_Qv.set_title('{} orientations'.format(no))
+        else:
+            self.ax_Qu2.set_title('{}'.format(run))
+            self.ax_Qv2.set_title('Bank {}'.format(bank))
+
+            self.ax_Qu.set_title('\u03BB = {:.3f} \u212B'.format(lamda))
+            self.ax_Qu_fit.set_title('2\u03B8 = {:.1f}\u00B0'.format(two_theta))
+            self.ax_Qu2_fit.set_title('\u03D5 = {:.1f}\u00B0'.format(az_phi))
+
+            self.ax_Qv.set_title('{}/{}'.format(1+ind,no))
+
     def write_figure(self, figname):
 
         try:
-            self.fig.savefig(figname, facecolor='white', transparent=False)
+            self.fig.savefig(figname, dpi=100, facecolor='white', transparent=False)
         except:
             pass
 
@@ -1664,6 +1704,34 @@ class PeakInformation:
         self.__sat_keys = []
         self.__sat_Q = []
 
+        # ---
+
+        self.__ind_bin_size = []
+
+        self.__ind_pk_data = []
+        self.__ind_pk_norm = []
+
+        self.__ind_bkg_data = []
+        self.__ind_bkg_norm = []
+
+        self.__ind_mu_x_3d = []
+        self.__ind_mu_y_3d = []
+        self.__ind_mu_z_3d = []
+        self.__ind_sigma_x_3d = []
+        self.__ind_sigma_y_3d = []
+        self.__ind_sigma_z_3d = []
+        self.__ind_rho_yz_3d = []
+        self.__ind_rho_xz_3d = []
+        self.__ind_rho_xy_3d = []
+
+        self.__ind_pk_Q0 = []
+        self.__ind_pk_Q1 = []
+        self.__ind_pk_Q2 = []
+
+        self.__ind_bkg_Q0 = []
+        self.__ind_bkg_Q1 = []
+        self.__ind_bkg_Q2 = []
+
     def get_Q(self):
 
         return self.__Q
@@ -1707,9 +1775,9 @@ class PeakInformation:
 
         return self.__bin_size
 
-    def set_data_scale(self, corr_scale):
+    def get_individual_bin_size(self):
 
-        self.__data_scale = np.array(corr_scale)
+        return self.__ind_bin_size
 
     def set_transmission_coefficient(self, T):
 
@@ -1740,10 +1808,14 @@ class PeakInformation:
         else:
             return np.ones_like(self.__norm_scale)
 
+    def set_data_scale(self, corr_scale):
+
+        self.__data_scale = np.array(corr_scale)
+
     def get_data_scale(self):
 
-        if not hasattr(self, '_PeakInformation__data_scale'):
-           self.__data_scale = np.ones_like(self.__norm_scale)
+        #if not hasattr(self, '_PeakInformation__data_scale'):
+        #   self.__data_scale = np.ones_like(self.__norm_scale)
 
         return self.__data_scale
 
@@ -1831,9 +1903,9 @@ class PeakInformation:
 
         return self.__merge_intensity()
 
-    def get_merged_intensity_error(self, fit_contrib=True):
+    def get_merged_intensity_error(self, contrib=True):
 
-        return self.__merge_intensity_error(fit_contrib)
+        return self.__merge_intensity_error(contrib)
 
     def get_partial_merged_peak_volume_fraction(self, indices):
 
@@ -1847,9 +1919,9 @@ class PeakInformation:
 
         return self.__partial_merge_intensity(indices)
 
-    def get_partial_merged_intensity_error(self, indices, fit_contrib=True):
+    def get_partial_merged_intensity_error(self, indices, contrib=True):
 
-        return self.__partial_merge_intensity_error(indices, fit_contrib)
+        return self.__partial_merge_intensity_error(indices, contrib)
 
     def get_peak_volume_fraction(self):
 
@@ -2019,11 +2091,15 @@ class PeakInformation:
               'Ellispoid': self.__round(self.get_A()[np.triu_indices(3)],2),
               'BinSize': self.__round(self.__bin_size,3),
               'Q': self.__round(self.__Q,3),
-              'PeakQFit': self.__round(self.__peak_fit,2),
-              'PeakBackgroundRatio': self.__round(self.__peak_bkg_ratio,2),
-              'PeakScore2D': self.__round(self.__peak_score,2),
+              'PeakQFit1d': self.__round(self.__peak_fit,2),
+              'PeakQFit2d': self.__round(self.__peak_fit2d,2),
+              'PeakBackgroundRatio1d': self.__round(self.__peak_bkg_ratio,2),
+              'PeakBackgroundRatio2d': self.__round(self.__peak_bkg_ratio2d,2),
+              'PeakScore1D': self.__round(self.__peak_score,2),
+              'PeakScore2D': self.__round(self.__peak_score2d,2),
               'Intensity': self.__round(self.__intensity(),2),
               'IntensitySigma': self.__round(self.__intensity_error(),2),
+              'Indices': self.__good_intensities(),
               'VolumeRatio': self.__round(self.__pk_bkg_ratio(),2),
               'PeakVolumeFraction': self.__round(self.__pk_vol_fract(),2),
               'BackgroundVolumeFraction': self.__round(self.__bkg_vol_fract(),2),
@@ -2041,7 +2117,13 @@ class PeakInformation:
               'GoniometerChiAngle': self.__round(self.__chi,2),
               'GoniometerOmegaAngle': self.__round(self.__omega,2),
               'EstimatedIntensity': self.__round(self.__est_int,2),
-              'EstimatedSigma': self.__round(self.__est_int_err,2) }
+              'EstimatedSigma': self.__round(self.__est_int_err,2),
+              'IndividualIntensity': self.__round(self.get_individual_intensity(),2),
+              'IndividualIntensitySigma': self.__round(self.get_individual_intensity_error(),2),
+              'IndividualFittedIntensity': self.__round(self.get_individual_fitted_intensity(),2),
+              'IndividualFittedIntensitySigma': self.__round(self.get_individual_fitted_intensity_error(),2),
+              'IndividualBinSize': self.__round(self.get_individual_bin_size(),3),
+            }
 
         return d
 
@@ -2132,6 +2214,50 @@ class PeakInformation:
         self.__peak_bkg_ratio = peak_bkg_ratio
         self.__peak_score = peak_score
 
+    def add_individual_integration(self, pk_bkg, cntrs):
+
+        pk_data, pk_norm, bkg_data, bkg_norm, bin_size = pk_bkg
+
+        self.__ind_pk_data += pk_data
+        self.__ind_pk_norm += pk_norm
+
+        self.__ind_bkg_data += bkg_data
+        self.__ind_bkg_norm += bkg_norm
+
+        self.__ind_bin_size.append(bin_size)
+
+        pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2 = cntrs
+
+        self.__ind_pk_Q0.append(pk_Q0)
+        self.__ind_pk_Q1.append(pk_Q1)
+        self.__ind_pk_Q2.append(pk_Q2)
+
+        self.__ind_bkg_Q0.append(bkg_Q0)
+        self.__ind_bkg_Q1.append(bkg_Q1)
+        self.__ind_bkg_Q2.append(bkg_Q2)
+
+    def update_individual_integration(self, pk_bkg, cntrs):
+
+        pk_data, pk_norm, bkg_data, bkg_norm, bin_size = pk_bkg
+
+        self.__ind_pk_data[-1] = pk_data[0]
+        self.__ind_pk_norm[-1] = pk_norm[0]
+
+        self.__ind_bkg_data[-1] = bkg_data[0]
+        self.__ind_bkg_norm[-1] = bkg_norm[0]
+
+        self.__ind_bin_size[-1] = bin_size
+
+        pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2 = cntrs
+
+        self.__ind_pk_Q0[-1] = pk_Q0
+        self.__ind_pk_Q1[-1] = pk_Q1
+        self.__ind_pk_Q2[-1] = pk_Q2
+
+        self.__ind_bkg_Q0[-1] = bkg_Q0
+        self.__ind_bkg_Q1[-1] = bkg_Q1
+        self.__ind_bkg_Q2[-1] = bkg_Q2
+
     def add_fit(self, fit_1d, fit_2d, fit_3d, chi_sq):
 
         mu_1d, sigma_1d = fit_1d 
@@ -2161,10 +2287,40 @@ class PeakInformation:
 
         if len(delta) == 0:
             self.__delta = None
+            self.__scale = None
         else:
             self.__delta = delta[0]
+            self.__scale = delta[1]
 
         self.__chi_sq = chi_sq
+
+    def add_individual_fit(self, fit_3d):
+
+        mu_x_3d, mu_y_3d, mu_z_3d, sigma_x_3d, sigma_y_3d, sigma_z_3d, rho_yz_3d, rho_xz_3d, rho_xy_3d = fit_3d
+
+        self.__ind_mu_x_3d.append(mu_x_3d)
+        self.__ind_mu_y_3d.append(mu_y_3d)
+        self.__ind_mu_z_3d.append(mu_z_3d)
+        self.__ind_sigma_x_3d.append(sigma_x_3d)
+        self.__ind_sigma_y_3d.append(sigma_y_3d)
+        self.__ind_sigma_z_3d.append(sigma_z_3d)
+        self.__ind_rho_yz_3d.append(rho_yz_3d)
+        self.__ind_rho_xz_3d.append(rho_xz_3d)
+        self.__ind_rho_xy_3d.append(rho_xy_3d)
+
+    def update_individual_fit(self, fit_3d):
+
+        mu_x_3d, mu_y_3d, mu_z_3d, sigma_x_3d, sigma_y_3d, sigma_z_3d, rho_yz_3d, rho_xz_3d, rho_xy_3d = fit_3d
+
+        self.__ind_mu_x_3d[-1] = mu_x_3d
+        self.__ind_mu_y_3d[-1] = mu_y_3d
+        self.__ind_mu_z_3d[-1] = mu_z_3d
+        self.__ind_sigma_x_3d[-1] = sigma_x_3d
+        self.__ind_sigma_y_3d[-1] = sigma_y_3d
+        self.__ind_sigma_z_3d[-1] = sigma_z_3d
+        self.__ind_rho_yz_3d[-1] = rho_yz_3d
+        self.__ind_rho_xz_3d[-1] = rho_xz_3d
+        self.__ind_rho_xy_3d[-1] = rho_xy_3d
 
     def get_fitted_intensity(self):
 
@@ -2176,11 +2332,11 @@ class PeakInformation:
 
     def get_individual_fitted_intensity(self):
 
-        return self.__intens_ind_fit
+        return np.array(self.__ind_intens_fit)
 
     def get_individual_fitted_intensity_error(self):
 
-        return self.__sig_ind_fit
+        return np.array(self.__ind_sig_fit)
 
     def __covariance_matrix(self, sig0, sig1, sig2, rho12, rho02, rho01):
 
@@ -2204,6 +2360,7 @@ class PeakInformation:
         rho12, rho02, rho01 = self.__rho_yz_3d, self.__rho_xz_3d, self.__rho_xy_3d
 
         delta = self.__delta
+        scale = self.__scale
 
         S = self.__covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
 
@@ -2234,27 +2391,21 @@ class PeakInformation:
         bkg_data = self.__get_background_data_arrays()[indices]
         bkg_norm = self.__get_background_norm_arrays()[indices]
 
-        scale_data = self.get_data_scale()[indices][:,np.newaxis]
-        scale_norm = self.get_norm_scale()[indices][:,np.newaxis]
+        scale_data = self.get_data_scale()[indices]
+        scale_norm = self.get_norm_scale()[indices]
 
         constant = self.get_peak_constant()
 
-        data_scale = np.multiply(data, scale_data)
-        norm_scale = np.multiply(norm, scale_norm)
-
-        bkg_data_scale = np.multiply(bkg_data, scale_data*0+1)
-        bkg_norm_scale = np.multiply(bkg_norm, scale_norm*0+1)
-
-        data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)
-        bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)
+        data_norm = np.nansum(data*scale_data[:,np.newaxis], axis=0)/np.nansum(norm*scale_norm[:,np.newaxis], axis=0)
+        bkg_data_norm = np.nansum(bkg_data, axis=0)/np.nansum(bkg_norm, axis=0)
 
         data_norm[~np.isfinite(data_norm)] = np.nan
         bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
 
         y = np.concatenate((data_norm,bkg_data_norm))
 
-        data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
-        bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
+        data_norm = np.nansum(data*scale_data[:,np.newaxis], axis=0)/np.nansum(norm*scale_norm[:,np.newaxis], axis=0)**2
+        bkg_data_norm = np.nansum(bkg_data, axis=0)/np.nansum(bkg_norm, axis=0)**2
 
         data_norm[~np.isfinite(data_norm)] = np.nan
         bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
@@ -2278,10 +2429,12 @@ class PeakInformation:
                      +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm
 
         if delta is not None:
-            x_0 = np.exp(-0.5*(inv_S[0,0]*x0**2        +inv_S[1,1]*x1**2        +inv_S[2,2]*(x2-delta)**2\
-                           +2*(inv_S[1,2]*x1*(x2-delta)+inv_S[0,2]*x0*(x2-delta)+inv_S[0,1]*x0*x1)))/norm
-            x_2 = np.exp(-0.5*(inv_S[0,0]*x0**2        +inv_S[1,1]*x1**2        +inv_S[2,2]*(x2+delta)**2\
-                           +2*(inv_S[1,2]*x1*(x2+delta)+inv_S[0,2]*x0*(x2+delta)+inv_S[0,1]*x0*x1)))/norm
+            factor = scale**3
+            inv_s = inv_S/scale**2
+            x_0 = np.exp(-0.5*(inv_s[0,0]*x0**2        +inv_s[1,1]*x1**2        +inv_s[2,2]*(x2-delta)**2\
+                           +2*(inv_s[1,2]*x1*(x2-delta)+inv_s[0,2]*x0*(x2-delta)+inv_s[0,1]*x0*x1)))/norm/factor
+            x_2 = np.exp(-0.5*(inv_s[0,0]*x0**2        +inv_s[1,1]*x1**2        +inv_s[2,2]*(x2+delta)**2\
+                           +2*(inv_s[1,2]*x1*(x2+delta)+inv_s[0,2]*x0*(x2+delta)+inv_s[0,1]*x0*x1)))/norm/factor
 
         if delta is None:
             A = (np.array([x[mask], np.ones_like(x[mask]), x0[mask], x1[mask], x2[mask]])/e[mask]).T
@@ -2330,95 +2483,98 @@ class PeakInformation:
         else:
             values = intens_0, intens, intens_2, b, c0, c1, c2
 
-#         self.__intens_ind_fit = []
-#         self.__sig_ind_fit = []
-# 
-#         self.__sat_intens_ind_fit = []
-#         self.__sat_sig_ind_fit = []
-# 
-#         clusters = self.get_peak_clusters()
-# 
-#         for cluster in clusters:
-# 
-#             data = self.__get_partial_merged_peak_data_arrays(cluster)
-#             norm = self.__get_partial_merged_peak_norm_arrays(cluster)
-# 
-#             bkg_data = self.__get_partial_merged_background_data_arrays(cluster)
-#             bkg_norm = self.__get_partial_merged_background_norm_arrays(cluster)
-# 
-#             scale_data = self.get_partial_merged_data_scale(cluster)[:,np.newaxis]
-#             scale_norm = self.get_partial_merged_norm_scale(cluster)[:,np.newaxis]
-# 
-#             constant = self.get_peak_constant()
-# 
-#             data_scale = np.multiply(data, scale_data)
-#             norm_scale = np.multiply(norm, scale_norm)
-# 
-#             bkg_data_scale = np.multiply(bkg_data, scale_data)
-#             bkg_norm_scale = np.multiply(bkg_norm, scale_norm)
-# 
-#             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)
-#             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)
-# 
-#             data_norm[~np.isfinite(data_norm)] = np.nan
-#             bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
-# 
-#             y = np.concatenate((data_norm,bkg_data_norm))
-# 
-#             data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
-#             bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
-# 
-#             data_norm[~np.isfinite(data_norm)] = np.nan
-#             bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
-# 
-#             e = np.sqrt(np.concatenate((data_norm,bkg_data_norm)))
-# 
-#             mask = np.isfinite(y) & np.isfinite(e) & (e > 0)
-# 
-#             if delta is None:
-#                 A = (np.array([x[mask], np.ones_like(x[mask])])/e[mask]).T
-#             else:
-#                 A = (np.array([x_0[mask], x[mask], x_2[mask], np.ones_like(x[mask])])/e[mask]).T
-# 
-#             b = y[mask]/e[mask]
-# 
-#             if np.sum(mask) > 11 and np.all(np.isfinite(A)) and np.all(np.positive(x[mask])) and np.all(np.isfinite(b)):
-#                 coeff, rnorm = scipy.optimize.nnls(A, b)
-#             else:
-#                 if delta is None:
-#                     coeff = [0, 0]
-#                 else:
-#                     coeff = [0, 0, 0, 0]
-# 
-#             if delta is None:
-#                 intens, b = coeff
-#             else:
-#                 intens_0, intens, intens_2, b = coeff
-# 
-#             cov = np.dot(A.T, A)
-# 
-#             if delta is None:
-#                 det = np.linalg.det(cov)
-#                 if det > 0 and not np.isclose(det,0):
-#                     sig = np.sqrt(np.linalg.inv(cov)[0,0])
-#                 else:
-#                     sig = intens
-#             else:
-#                 det = np.linalg.det(cov)
-#                 if det > 0 and not np.isclose(det,0):
-#                     inv_cov = np.linalg.inv(cov)
-#                     sig_0, sig, sig_2 = np.sqrt(inv_cov[0,0]), np.sqrt(inv_cov[1,1]), np.sqrt(inv_cov[2,2])
-#                 else:
-#                     sig_0, sig, sig_2 = intens_0, intens, intens_2
-# 
-#             self.__intens_ind_fit.append(intens*constant)
-#             self.__sig_ind_fit.append(sig*constant)
-# 
-#             if delta is not None:
-#                 self.__sat_intens_ind_fit.append([intens_0*constant, intens_2*constant])
-#                 self.__sat_sig_ind_fit.append([sig_0*constant, sig_2*constant])
-
         return values
+        
+    def individual_integrate(self):
+
+        self.__ind_intens_fit = []
+        self.__ind_sig_fit = []
+
+        mu0, mu1, mu2 = self.__ind_mu_x_3d, self.__ind_mu_y_3d, self.__ind_mu_z_3d
+        sig0, sig1, sig2 = self.__ind_sigma_x_3d, self.__ind_sigma_y_3d, self.__ind_sigma_z_3d
+        rho12, rho02, rho01 = self.__ind_rho_yz_3d, self.__ind_rho_xz_3d, self.__ind_rho_xy_3d
+        
+        data = self.__get_individual_peak_data_arrays()
+        norm = self.__get_individual_peak_norm_arrays()
+
+        bkg_data = self.__get_individual_background_data_arrays()
+        bkg_norm = self.__get_individual_background_norm_arrays()
+
+        scale_data = self.get_data_scale()
+        scale_norm = self.get_norm_scale()
+
+        constant = self.get_peak_constant()
+        
+        data_Q0, data_Q1, data_Q2 = self.__get_individual_peak_bin_centers()
+        bkg_data_Q0, bkg_data_Q1, bkg_data_Q2 = self.__get_individual_background_bin_centers()
+        
+        intensities, bs, c0s, c1s, c2s = [], [], [], [], []
+
+        #I_est = self.get_individual_intensity()
+        #sig_est = self.get_individual_intensity_error()
+
+        for j in range(len(mu0)):
+
+            S = self.__covariance_matrix(sig0[j], sig1[j], sig2[j], rho12[j], rho02[j], rho01[j])
+
+            if np.linalg.det(S) > 0:
+                inv_S = np.linalg.inv(S)
+            else:
+                inv_S = np.zeros((3,3))
+                S = np.eye(3)
+
+            data_norm = data[j]*scale_data[j]/(norm[j]*scale_norm[j])
+            bkg_data_norm = bkg_data[j]*scale_data[j]/(bkg_norm[j]*scale_norm[j])
+
+            y = np.concatenate((data_norm,bkg_data_norm))
+
+            data_norm = data[j]*scale_data[j]/(norm[j]*scale_norm[j])**2
+            bkg_data_norm = bkg_data[j]*scale_data[j]/(bkg_norm[j]*scale_norm[j])**2
+
+            e = np.sqrt(np.concatenate((data_norm,bkg_data_norm)))
+
+            Q0 = np.concatenate((data_Q0[j],bkg_data_Q0[j]))
+            Q1 = np.concatenate((data_Q1[j],bkg_data_Q1[j]))
+            Q2 = np.concatenate((data_Q2[j],bkg_data_Q2[j]))
+
+            x0, x1, x2 = Q0-mu0[j], Q1-mu1[j], Q2-mu2[j]
+
+            norm_sig = np.sqrt(np.linalg.det(2*np.pi*S))
+
+            mask = np.isfinite(y) & np.isfinite(e) & (e > 0)
+
+            x = np.exp(-0.5*(inv_S[0,0]*x0**2+inv_S[1,1]*x1**2+inv_S[2,2]*x2**2\
+                         +2*(inv_S[1,2]*x1*x2+inv_S[0,2]*x0*x2+inv_S[0,1]*x0*x1)))/norm_sig
+
+            A = (np.array([x[mask], np.ones_like(x[mask])])/e[mask]).T #, x0[mask], x1[mask], x2[mask]
+            b = y[mask]/e[mask]
+
+            if np.sum(mask) > 11 and np.all(np.isfinite(A)) and np.all(np.positive(x[mask])):
+                coeff, r, rank, s = np.linalg.lstsq(A, b, rcond=None)
+            else:
+                coeff = [0, 0] #, 0, 0, 0
+
+            # intens, b, c0, c1, c2 = coeff
+            intens, b = coeff
+            c0, c1, c2 = 0, 0, 0
+
+            cov = np.dot(A.T, A)
+
+            if np.linalg.det(cov) > 0:
+                sig = np.sqrt(np.linalg.inv(cov)[0,0])
+            else:
+                sig = intens
+                
+            self.__ind_intens_fit.append(intens*constant)
+            self.__ind_sig_fit.append(sig*constant)
+
+            intensities.append(intens)
+            bs.append(b)
+            c0s.append(c0)
+            c1s.append(c1)
+            c2s.append(c2)
+
+        return intensities, bs, c0s, c1s, c2s
 
     def get_close_satellite_fit(self):
 
@@ -2455,9 +2611,9 @@ class PeakInformation:
 
         return self.__partial_merge_intensity(self.__good_intensities())
 
-    def __merge_intensity_error(self, fit_contrib=True):
+    def __merge_intensity_error(self, contrib=True):
 
-        return self.__partial_merge_intensity_error(self.__good_intensities(), fit_contrib)
+        return self.__partial_merge_intensity_error(self.__good_intensities(), contrib)
 
     # ---
 
@@ -2516,6 +2672,22 @@ class PeakInformation:
 
             return pk_vol/bkg_vol
 
+    def partial_merge_sum(self, indices):
+
+        if not self.__is_peak_integrated() or len(indices) == 0:
+
+            return 0.0
+
+        else:
+
+            data = self.__get_partial_merged_peak_data_arrays(indices)
+            norm = self.__get_partial_merged_peak_norm_arrays(indices)
+
+            data[~np.isfinite(data)] = np.nan
+            norm[~np.isfinite(norm)] = np.nan
+
+            return np.nansum(data)/np.nansum(norm)
+
     def __partial_merge_intensity(self, indices):
 
         if not self.__is_peak_integrated() or len(indices) == 0:
@@ -2530,48 +2702,40 @@ class PeakInformation:
             bkg_data = self.__get_partial_merged_background_data_arrays(indices)
             bkg_norm = self.__get_partial_merged_background_norm_arrays(indices)
 
-            scale_data = self.get_partial_merged_data_scale(indices)[:,np.newaxis]*self.get_partial_merged_extinction_scale(indices)[:,np.newaxis]
-            scale_norm = self.get_partial_merged_norm_scale(indices)[:,np.newaxis]
-
-            # volume_ratio = self.__partial_merge_pk_bkg_ratio(indices)
-
-            # pk_vol_fract = self.__partial_merge_pk_vol_fract(indices)
-            # bkg_vol_fract = self.__partial_merge_bkg_vol_fract(indices)
+            scale_data = self.get_partial_merged_data_scale(indices)*self.get_partial_merged_extinction_scale(indices)
+            scale_norm = self.get_partial_merged_norm_scale(indices)
 
             constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
-            data_scale = np.multiply(data, scale_data)
-            norm_scale = np.multiply(norm, scale_norm)
+            data[data <= 0] = np.nan
+            norm[norm <= 0] = np.nan
 
-            bkg_data_scale = np.multiply(bkg_data, scale_data*0+1)
-            bkg_norm_scale = np.multiply(bkg_norm, scale_norm*0+1)
+            bkg_data[bkg_data <= 0] = np.nan
+            bkg_norm[bkg_norm <= 0] = np.nan
 
-            data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)
-            bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)
+            data_norm = np.nansum(data*scale_data[:,np.newaxis], axis=0)/np.nansum(norm*scale_norm[:,np.newaxis], axis=0)
+            bkg_data_norm = np.nansum(bkg_data*scale_data[:,np.newaxis], axis=0)/np.nansum(bkg_norm*scale_norm[:,np.newaxis], axis=0)
 
             data_norm[~np.isfinite(data_norm)] = np.nan
             bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
 
-            if len(bkg_data_norm) > 0:
-
-                Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
-                mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
-
-                bkg_data_norm[mask] = np.nan
-                bkg_data_norm[:] = np.nanmean(bkg_data_norm)
+#             if len(bkg_data_norm) > 0:
+# 
+#                 Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
+#                 mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
+# 
+#                 bkg_data_norm[mask] = np.nan
 
             pk_vol_fract = np.isfinite(data_norm).sum()/data_norm.size
 
-            volume_ratio = np.isfinite(data_norm).sum()/np.isfinite(bkg_data_norm).sum()
+            pk_vol = np.sum(np.isfinite(data_norm))
+            bkg_vol = np.sum(np.isfinite(bkg_data_norm))
 
-            intens = np.nansum(data_norm)/pk_vol_fract
-            bkg_intens = np.nansum(bkg_data_norm)
+            vol_ratio = pk_vol/bkg_vol
 
-            intensity = (intens-bkg_intens*volume_ratio)*constant
+            return (np.nansum(data_norm)-vol_ratio*np.nanmean(bkg_data_norm)*bkg_vol)*constant#/pk_vol_fract
 
-            return intensity
-
-    def __partial_merge_intensity_error(self, indices, fit_contrib=True):
+    def __partial_merge_intensity_error(self, indices, contrib=True):
 
         if not self.__is_peak_integrated() or len(indices) == 0:
 
@@ -2579,8 +2743,8 @@ class PeakInformation:
 
         else:
 
-            sig_fit = self.__sig_fit if fit_contrib else 0
-            intens_fit = self.__intens_fit if fit_contrib else 0
+            sig_fit = self.__sig_fit if contrib else 0
+            intens_fit = self.__intens_fit if contrib else 0
 
             data = self.__get_partial_merged_peak_data_arrays(indices)
             norm = self.__get_partial_merged_peak_norm_arrays(indices)
@@ -2588,61 +2752,59 @@ class PeakInformation:
             bkg_data = self.__get_partial_merged_background_data_arrays(indices)
             bkg_norm = self.__get_partial_merged_background_norm_arrays(indices)
 
-            scale_data = self.get_partial_merged_data_scale(indices)[:,np.newaxis]*self.get_partial_merged_extinction_scale(indices)[:,np.newaxis]
-            scale_norm = self.get_partial_merged_norm_scale(indices)[:,np.newaxis]
-
-            # volume_ratio = self.__partial_merge_pk_bkg_ratio(indices)
-
-            # pk_vol_fract = self.__partial_merge_pk_vol_fract(indices)
-            # bkg_vol_fract = self.__partial_merge_bkg_vol_fract(indices)
+            scale_data = self.get_partial_merged_data_scale(indices)*self.get_partial_merged_extinction_scale(indices)
+            scale_norm = self.get_partial_merged_norm_scale(indices)
 
             constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
-            data_scale = np.multiply(data, scale_data)
-            norm_scale = np.multiply(norm, scale_norm)
+            data[data <= 0] = np.nan
+            norm[norm <= 0] = np.nan
 
-            bkg_data_scale = np.multiply(bkg_data, scale_data*0+1)
-            bkg_norm_scale = np.multiply(bkg_norm, scale_norm*0+1)
+            bkg_data[bkg_data <= 0] = np.nan
+            bkg_norm[bkg_norm <= 0] = np.nan
 
-            data_norm = np.nansum(data_scale, axis=0)/np.nansum(norm_scale, axis=0)**2
-            bkg_data_norm = np.nansum(bkg_data_scale, axis=0)/np.nansum(bkg_norm_scale, axis=0)**2
+            data_norm = np.nansum(data*scale_data[:,np.newaxis], axis=0)/np.nansum(norm*scale_norm[:,np.newaxis], axis=0)**2
+            bkg_data_norm = np.nansum(bkg_data*scale_data[:,np.newaxis], axis=0)/np.nansum(bkg_norm*scale_norm[:,np.newaxis], axis=0)**2
 
             data_norm[~np.isfinite(data_norm)] = np.nan
             bkg_data_norm[~np.isfinite(bkg_data_norm)] = np.nan
 
-            if len(bkg_data_norm) > 0:
-
-                Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
-                mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
-
-                bkg_data_norm[mask] = np.nan
-                bkg_data_norm[:] = np.nanmean(bkg_data_norm)
+#             if len(bkg_data_norm) > 0:
+# 
+#                 Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75])
+#                 mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
+# 
+#                 bkg_data_norm[mask] = np.nan
 
             pk_vol_fract = np.isfinite(data_norm).sum()/data_norm.size
 
-            volume_ratio = np.isfinite(data_norm).sum()/np.isfinite(bkg_data_norm).sum()
-
-            intens = np.nansum(data_norm)/pk_vol_fract**2
-            bkg_intens = np.nansum(bkg_data_norm)
-
             ind_intens = np.concatenate((self.__intensity()[indices], [intens_fit]))
 
-            if len(ind_intens) > 0:
+            if contrib:
 
-                Q1, Q2, Q3 = np.nanpercentile(ind_intens, [25,50,75])
-                IQR = Q3-Q1
-                outlier = (ind_intens > Q3+1.5*IQR) | (ind_intens < Q1-1.5*IQR)
+#                 if len(ind_intens) > 0:
+# 
+#                     Q1, Q2, Q3 = np.nanpercentile(ind_intens, [25,50,75])
+#                     IQR = Q3-Q1
+#                     outlier = (ind_intens > Q3+1.5*IQR) | (ind_intens < Q1-1.5*IQR)
+# 
+#                     ind_intens[outlier] = np.nan
 
-                ind_intens[outlier] = np.nan
+                var_ind = np.nanvar(ind_intens)
 
-            var_ind = np.nanvar(ind_intens)
+                if np.isfinite(ind_intens).sum() > 1:
+                   var_ind /= np.isfinite(ind_intens).sum()
 
-            if np.isfinite(outlier).sum() > 1:
-               var_ind /= np.isfinite(outlier).sum()
+            else:
 
-            intensity = np.sqrt((intens+bkg_intens*volume_ratio**2)*constant**2+sig_fit**2+var_ind) #
+                var_ind = 0
 
-            return intensity
+            pk_vol = np.sum(np.isfinite(data_norm))
+            bkg_vol = np.sum(np.isfinite(bkg_data_norm))
+
+            vol_ratio =  pk_vol/bkg_vol
+
+            return np.sqrt((np.nansum(data_norm)+vol_ratio**2*np.nansum(bkg_data_norm))*constant**2+sig_fit**2+var_ind)
 
     # ---
 
@@ -2709,37 +2871,37 @@ class PeakInformation:
             bkg_data = self.__get_background_data_arrays()
             bkg_norm = self.__get_background_norm_arrays()
 
-            scale_data = self.get_data_scale()[:,np.newaxis]*self.get_ext_scale()[:,np.newaxis]
-            scale_norm = self.get_norm_scale()[:,np.newaxis]
-
-            volume_ratio = self.__pk_bkg_ratio()
+            scale_data = self.get_data_scale()*self.get_ext_scale()
+            scale_norm = self.get_norm_scale()
 
             pk_vol_fract = self.__pk_vol_fract()
-            # bkg_vol_fract = self.__bkg_vol_fract()
 
             constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
-            data_scale = np.multiply(data, scale_data)
-            norm_scale = np.multiply(norm, scale_norm)
+            data_norm = (data*scale_data[:,np.newaxis])/(norm*scale_norm[:,np.newaxis])
+            bkg_data_norm = (bkg_data*scale_data[:,np.newaxis])/(bkg_norm*scale_norm[:,np.newaxis])
 
-            bkg_data_scale = np.multiply(bkg_data, scale_data*0+1)
-            bkg_norm_scale = np.multiply(bkg_norm, scale_norm*0+1)
+            data_norm[data_norm <= 0] = np.nan
+            bkg_data_norm[bkg_data_norm <= 0] = np.nan
 
-            data_norm = data_scale/norm_scale
-            bkg_data_norm = bkg_data_scale/bkg_norm_scale
+#             if bkg_data_norm.shape[1] > 0:
+# 
+#                 Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75], axis=0)
+#                 mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
+# 
+#                 bkg_data_norm[mask] = np.nan
+#                 # bkg_data_norm[:,:] = np.nanmean(bkg_data_norm, axis=0)
 
-            if bkg_data_norm.shape[1] > 0:
+            intens = np.nansum(data_norm, axis=1)#/pk_vol_fract
 
-                Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75], axis=0)
-                mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
+            pk_vol = np.sum(np.isfinite(data_norm), axis=1)
+            bkg_vol = np.sum(np.isfinite(bkg_data_norm), axis=1)
 
-                bkg_data_norm[mask] = np.nan
-                bkg_data_norm[:,:] = np.nanmean(bkg_data_norm, axis=0)
+            bkg_intens = np.nanmean(bkg_data_norm, axis=1)*bkg_vol
 
-            intens = np.nansum(data_norm, axis=1)/pk_vol_fract
-            bkg_intens = np.nansum(bkg_data_norm, axis=1)
+            vol_ratio =  pk_vol/bkg_vol
 
-            intensity = (intens-np.multiply(bkg_intens,volume_ratio))*constant
+            intensity = (intens-np.multiply(bkg_intens,vol_ratio))*constant#/pk_vol_fract
 
             return intensity
 
@@ -2757,41 +2919,143 @@ class PeakInformation:
             bkg_data = self.__get_background_data_arrays()
             bkg_norm = self.__get_background_norm_arrays()
 
-            scale_data = self.get_data_scale()[:,np.newaxis]*self.get_ext_scale()[:,np.newaxis]
-            scale_norm = self.get_norm_scale()[:,np.newaxis]
-
-            volume_ratio = self.__pk_bkg_ratio()
+            scale_data = self.get_data_scale()*self.get_ext_scale()
+            scale_norm = self.get_norm_scale()
 
             pk_vol_fract = self.__pk_vol_fract()
-            # bkg_vol_fract = self.__bkg_vol_fract()
 
             constant = self.get_peak_constant()*np.prod(self.get_bin_size())
 
-            data_scale = np.multiply(data, scale_data)
-            norm_scale = np.multiply(norm, scale_norm)
+            data_norm = (data*scale_data[:,np.newaxis])/(norm*scale_norm[:,np.newaxis])**2
+            bkg_data_norm = (bkg_data*scale_data[:,np.newaxis])/(bkg_norm*scale_norm[:,np.newaxis])**2
 
-            bkg_data_scale = np.multiply(bkg_data, scale_data*0+1)
-            bkg_norm_scale = np.multiply(bkg_norm, scale_norm*0+1)
+            data_norm[data_norm <= 0] = np.nan
+            bkg_data_norm[bkg_data_norm <= 0] = np.nan
 
-            data_norm = data_scale/norm_scale**2
-            bkg_data_norm = bkg_data_scale/bkg_norm_scale**2
+#             if bkg_data_norm.shape[1] > 0:
+# 
+#                 Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75], axis=0)
+#                 mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
+# 
+#                 bkg_data_norm[mask] = np.nan
+#                 # bkg_data_norm[:,:] = np.nanmean(bkg_data_norm, axis=0)
 
-            if bkg_data_norm.shape[1] > 0:
-
-                Q1, Q2, Q3 = np.nanpercentile(bkg_data_norm, [25,50,75], axis=0)
-                mask = (bkg_data_norm > Q3) | (bkg_data_norm < Q1)
-
-                bkg_data_norm[mask] = np.nan
-                bkg_data_norm[:,:] = np.nanmean(bkg_data_norm, axis=0)
-
-            intens = np.nansum(data_norm, axis=1)/pk_vol_fract**2
+            intens = np.nansum(data_norm, axis=1)#/pk_vol_fract**2
             bkg_intens = np.nansum(bkg_data_norm, axis=1)
 
-            intensity = np.sqrt(intens+np.multiply(bkg_intens,volume_ratio**2))*constant
+            pk_vol = np.sum(np.isfinite(data_norm), axis=1)
+            bkg_vol = np.sum(np.isfinite(bkg_data_norm), axis=1)
+
+            vol_ratio =  pk_vol/bkg_vol
+
+            intensity = np.sqrt(intens+np.multiply(bkg_intens,vol_ratio**2))*constant#/pk_vol_fract
 
             return intensity
 
-    def __pk_data_sum(self):
+    def get_individual_intensity(self):
+
+        if not self.__is_peak_integrated() or np.prod(np.shape(self.get_individual_bin_size())) == 0:
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_individual_peak_data_arrays()
+            norm = self.__get_individual_peak_norm_arrays()
+
+            bkg_data = self.__get_individual_background_data_arrays()
+            bkg_norm = self.__get_individual_background_norm_arrays()
+
+            scale_data = self.get_data_scale()
+            scale_norm = self.get_norm_scale()
+
+            constant = self.get_peak_constant()*np.prod(self.get_individual_bin_size(), axis=1)
+
+            data_norm = [d*sd/(n*sn) for d, n, sd, sn in zip(data, norm, scale_data, scale_norm)]
+            bkg_data_norm = [d*sd/(n*sn) for d, n, sd, sn in zip(bkg_data, bkg_norm, scale_data, scale_norm)]
+
+            intens = np.array([np.nansum(dn) for dn in data_norm])
+            #bkg_intens = np.array([np.nanpercentile(dn, 15)*np.isfinite(dn).sum() for dn in bkg_data_norm])
+            bkg_intens = np.array([np.nansum(dn) for dn in bkg_data_norm])
+
+            pk_vol = np.array([np.isfinite(dn).sum() for dn in data_norm])
+            bkg_vol = np.array([np.isfinite(dn).sum() for dn in bkg_data_norm])
+
+            vol_ratio = pk_vol/bkg_vol
+
+            intensity = (intens-bkg_intens*vol_ratio)*constant
+
+            return intensity
+
+    def get_individual_intensity_error(self):
+
+        if not self.__is_peak_integrated() or np.prod(np.shape(self.get_individual_bin_size())) == 0:
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_individual_peak_data_arrays()
+            norm = self.__get_individual_peak_norm_arrays()
+
+            bkg_data = self.__get_individual_background_data_arrays()
+            bkg_norm = self.__get_individual_background_norm_arrays()
+
+            scale_data = self.get_data_scale()
+            scale_norm = self.get_norm_scale()
+
+            constant = self.get_peak_constant()*np.prod(self.get_individual_bin_size(), axis=1)
+
+            data_norm = [d*sd/(n*sn)**2 for d, n, sd, sn in zip(data, norm, scale_data, scale_norm)]
+            bkg_data_norm = [d*sd/(n*sn)**2 for d, n, sd, sn in zip(bkg_data, bkg_norm, scale_data, scale_norm)]
+
+            intens = np.array([np.nansum(dn) for dn in data_norm])
+            bkg_intens = np.array([np.nansum(dn) for dn in bkg_data_norm])
+
+            pk_vol = np.array([np.isfinite(dn).sum() for dn in data_norm])
+            bkg_vol = np.array([np.isfinite(dn).sum() for dn in bkg_data_norm])
+
+            vol_ratio = pk_vol/bkg_vol
+
+            pk_vol_fract = np.array([np.sum(np.isfinite(dn))/dn.size for dn in data_norm])
+
+            intensity = np.sqrt(intens+bkg_intens*vol_ratio**2)*constant
+
+            return intensity
+
+    def get_individual_peak_volume_fraction(self):
+
+        if not self.__is_peak_integrated() or np.prod(np.shape(self.get_individual_bin_size())) == 0:
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_individual_peak_data_arrays()
+            norm = self.__get_individual_peak_norm_arrays()
+
+            data_norm = [d/n for d, n in zip(data, norm)]
+            fract = np.array([np.sum(np.isfinite(dn))/dn.size for dn in data_norm])
+
+            return fract
+
+    def get_individual_background_volume_fraction(self):
+
+        if not self.__is_peak_integrated() or np.prod(np.shape(self.get_individual_bin_size())) == 0:
+
+            return np.array([])
+
+        else:
+
+            data = self.__get_individual_background_data_arrays()
+            norm = self.__get_individual_background_norm_arrays()
+
+            data_norm = [d/n for d, n in zip(data, norm)]
+            fract = np.array([np.sum(np.isfinite(dn))/dn.size for dn in data_norm])
+
+            return fract
+
+    def __pk_data_sum(self, indices=None):
 
         if not self.__is_peak_integrated():
 
@@ -2879,7 +3143,7 @@ class PeakInformation:
 
             return intens
 
-    def get_peak_clusters(self, step=1.5):
+    def get_peak_clusters(self, step=0.5):
 
         indices = self.__good_intensities()
 
@@ -2921,21 +3185,47 @@ class PeakInformation:
 
         return not (self.__peak_num == 0 or self.__pk_norm is None)
 
-    def __good_intensities(self, min_vol_fract=0.5):
+    def prune_peaks(self, min_vol_fract=0.6):
 
-        pk_vol_fract = np.array(self.__pk_vol_fract())
+        self.__good_indices = np.arange(len(self.get_wavelengths()))
 
-        intens = np.array(self.__intensity())
+        if len(self.__ind_bin_size) > 0 and len(self.__ind_bin_size) == len(self.__good_indices):
 
-        indices = np.arange(len(pk_vol_fract))
+            intens = np.array(self.get_intensity())
+            sig_intens = np.array(self.get_intensity_error())
 
-        merge_intens = np.array(self.__partial_merge_intensity(indices))
+            #ind_intens = np.array(self.get_individual_intensity())
+            #ind_sig_intens = np.array(self.get_individual_intensity_error())
 
-        if len(intens) > 1:
+            pk_vol_fract = np.array(self.__pk_vol_fract())
 
-            indices = indices[np.logical_and(intens > merge_intens/3, intens < 3*merge_intens)]
+            #fit_ind_intens = np.array(self.get_individual_fitted_intensity())
+            #fit_ind_sig_intens = np.array(self.get_individual_fitted_intensity_error())
 
-        return np.array([ind for ind in indices if pk_vol_fract[ind] > min_vol_fract])
+            indices = np.arange(len(pk_vol_fract))
+
+#             if np.allclose([len(intens),len(sig_intens)],len(pk_vol_fract)): #,len(ind_intens),len(ind_sig_intens),len(fit_ind_intens),len(fit_ind_sig_intens)
+# 
+#                 mask = (pk_vol_fract > min_vol_fract) & (intens > 0*sig_intens) #& (ind_intens > 3*ind_sig_intens) & (fit_ind_intens > 3*fit_ind_sig_intens) & (sig_intens > 0) & np.isfinite(sig_intens)
+# 
+#                 indices = indices[mask]
+# 
+#             else:
+# 
+#                 indices = np.array([])
+
+            self.__good_indices = indices
+
+    def good_indices(self):
+
+        return self.__good_intensities()
+
+    def __good_intensities(self):
+
+        if not hasattr(self, '_PeakInformation__good_indices'):
+            self.prune_peaks()
+
+        return self.__good_indices
 
     def __dbscan_1d(self, array, eps=0.5):
 
@@ -3115,6 +3405,32 @@ class PeakInformation:
 
         return self.__bkg_Q0, self.__bkg_Q1, self.__bkg_Q2
 
+    # ---
+
+    def __get_individual_peak_data_arrays(self):
+
+        return self.__ind_pk_data
+
+    def __get_individual_peak_norm_arrays(self):
+
+        return self.__ind_pk_norm
+
+    def __get_individual_background_data_arrays(self):
+
+        return self.__ind_bkg_data
+
+    def __get_individual_background_norm_arrays(self):
+
+        return self.__ind_bkg_norm
+        
+    def __get_individual_peak_bin_centers(self):
+
+        return self.__ind_pk_Q0, self.__ind_pk_Q1, self.__ind_pk_Q2
+
+    def __get_individual_background_bin_centers(self):
+
+        return self.__ind_bkg_Q0, self.__ind_bkg_Q1, self.__ind_bkg_Q2
+    
 class PeakDictionary:
 
     def __init__(self, a=5, b=5, c=5, alpha=90, beta=90, gamma=90, sample=None):
@@ -3297,6 +3613,9 @@ class PeakDictionary:
         mod_vec_2 = ol.getModVec(1)
         mod_vec_3 = ol.getModVec(2)
 
+        self.iws.run().getGoniometer().setR(np.eye(3))
+        pk = self.iws.createPeakHKL(V3D(0,0,0))
+
         for key in self.peak_dict.keys():
 
             peaks = self.peak_dict.get(key)
@@ -3304,6 +3623,11 @@ class PeakDictionary:
             h, k, l, m, n, p = key
 
             for peak in peaks:
+
+                if peak.is_peak_integrated():
+                    peak.individual_integrate()
+                    peak.prune_peaks()
+                    peak.integrate()
 
                 peak_num = peak.get_peak_number()
                 intens = peak.get_merged_intensity()
@@ -3313,12 +3637,10 @@ class PeakDictionary:
 
                 R = peak.get_goniometers()[0]
 
-                self.iws.run().getGoniometer().setR(R)
-
                 dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
 
-                pk = self.iws.createPeakHKL(V3D(h+dh,k+dk,l+dl))
                 pk.setGoniometerMatrix(R)
+                pk.setHKL(h+dh,k+dk,l+dl)
                 pk.setIntHKL(V3D(h,k,l))
                 pk.setIntMNP(V3D(m,n,p))
                 pk.setIntensity(intens)
@@ -3853,7 +4175,84 @@ class PeakDictionary:
         pk.setRunNumber(run_num)
         self.cws.addPeak(pk)
 
-    def save_hkl(self, filename, min_signal_noise_ratio=3,
+    def save_envelopes(self, filename='envelopes.txt', min_sig_noise_ratio=3, min_pk_vol_fract=0.85, min_bkg_vol_fract=0.15):
+
+        SortPeaksWorkspace(self.iws, ColumnNameToSortBy='l', SortAscending=False, OutputWorkspace=self.iws)
+        SortPeaksWorkspace(self.iws, ColumnNameToSortBy='k', SortAscending=False, OutputWorkspace=self.iws)
+        SortPeaksWorkspace(self.iws, ColumnNameToSortBy='h', SortAscending=False, OutputWorkspace=self.iws)
+        SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)
+
+        ol = self.iws.sample().getOrientedLattice()
+
+        mod_vec_1 = ol.getModVec(0)
+        mod_vec_2 = ol.getModVec(1)
+        mod_vec_3 = ol.getModVec(2)
+
+        key_set = {}
+
+        for pn in range(self.iws.getNumberPeaks()):
+
+            pk = self.iws.getPeak(pn)
+
+            h, k, l = pk.getIntHKL()
+            m, n, p = pk.getIntMNP()
+
+            h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
+
+            key = (h, k, l, m, n, p)
+
+            key_set[key] = key
+
+        keys = list(key_set.keys())
+
+        env_format = 3*'{:8.3f}'+'{:8.4f}'+3*'{:9.5f}'+3*'{:9.2f}'+9*'{:9.5f}'+6*'{:8.4f}'+'{:4.0f}'+'\n'
+
+        with open(filename, 'w') as f:
+
+            hdr_env = ['#      h', '       k', '       l', '    d-sp',
+                       '      mu1','      mu2','      mu3',
+                       '       D1','       D2','       D3',
+                       '      W11','      W12','      W13',
+                       '      W21','      W22','      W23',
+                       '      W31','      W32','      W33',
+                       '  min-wl','  max-wl','  min-tt','  max-tt','  min-az','  max-az','   n']
+            fmt_env = 4*'{:8}'+15*'{:9}'+6*'{:8}'+'{:4}'+'\n'
+
+            f.write(fmt_env.format(*hdr_env))
+
+            for key in keys:
+
+                peaks = self.peak_dict.get(key)
+
+                h, k, l, m, n, p = key
+
+                for peak in peaks:
+
+                    if peak.is_peak_integrated():
+
+                        pk_vol_fract = peak.get_merged_peak_volume_fraction()
+                        bkg_vol_fract = peak.get_merged_background_volume_fraction()
+
+                        intens = peak.get_merged_intensity()
+                        sig_intens = peak.get_merged_intensity_error()
+                        
+                        lamda = peak.get_wavelengths()
+                        az_phi = peak.get_azimuthal_angles()
+                        two_theta = peak.get_scattering_angles()
+
+                        if (intens > 0 and sig_intens > 0 and intens > min_sig_noise_ratio*sig_intens and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
+
+                            dh, dk, dl = m*np.array(mod_vec_1)+n*np.array(mod_vec_2)+p*np.array(mod_vec_3)
+
+                            d_spacing = ol.d(V3D(h+dh,k+dk,l+dl))
+
+                            Q = peak.get_Q()
+                            D = peak.get_D()
+                            W = peak.get_W()
+
+                            f.write(env_format.format(*[h+dh,k+dk,l+dl,d_spacing,*Q,*np.diagonal(D),*W.flatten(),lamda.min(),lamda.max(),two_theta.min(),two_theta.max(),az_phi.min(),az_phi.max(),len(lamda)]))
+
+    def save_hkl(self, filename, min_sig_noise_ratio=3,
                        min_pk_vol_fract=0.85, min_bkg_vol_fract=0.15,
                        adaptive_scale=True, scale=1, cross_terms=False):
 
@@ -3875,7 +4274,7 @@ class PeakDictionary:
 
         satellite = True if max_order > 0 else False
 
-        key_set = set()
+        key_set = {}
 
         for pn in range(self.iws.getNumberPeaks()):
 
@@ -3884,11 +4283,16 @@ class PeakDictionary:
             h, k, l = pk.getIntHKL()
             m, n, p = pk.getIntMNP()
 
+            pk_no = pk.getPeakNumber()
+
             h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
 
             key = (h, k, l, m, n, p)
 
-            key_set.add(key)
+            if key_set.get(key) is None:
+                key_set[key] = [pk_no]
+            else:
+                key_set[key].append(pk_no)
 
         for int_type in ['est']: # 'fit'
 
@@ -3898,7 +4302,7 @@ class PeakDictionary:
             peak_info = []
             wavelength_info = []
 
-            keys = set(key_set)
+            keys = list(key_set.keys())
 
             I_max = None
 
@@ -3908,7 +4312,7 @@ class PeakDictionary:
 
                 for peak in peaks:
 
-                    if peak.is_peak_integrated():
+                    if peak.is_peak_integrated() and peak.get_peak_number() in key_set[key]:
 
                         # peak.integrate()
 
@@ -3934,7 +4338,7 @@ class PeakDictionary:
 
                         for intens, sig_intens, (h,k,l,m,n,p) in zip(I, sig, indices):
 
-                            if (intens > 0 and sig_intens > 0 and intens > min_signal_noise_ratio*sig_intens and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
+                            if (intens > 0 and sig_intens > 0 and intens > min_sig_noise_ratio*sig_intens and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
 
                                 if int_type == 'est':
 
@@ -4050,11 +4454,11 @@ class PeakDictionary:
                             f.write(hkl_format.format(*[*hkl_intensity[i],1,peak_info[i]]))
 
                 if not cross_terms:
-                    with open(fname+app+'.int', 'w') as f:
+                    with open(fname+app+'_sat.int', 'w') as f:
                         hkl_format = '{:4.0f}{:4.0f}{:4.0f}{:4.0f}{:8.2f}{:8.2f}{:5.0f}{:8.4f}\n'
                         f.write('Single crystal integrated intensity file\n')
                         f.write('(4i4,2f8.2,i5,2f8.2)\n')
-                        f.write('  0 0 0\n')
+                        f.write('  1 0 0\n')
                         f.write('           {}\n'.format(2*n_mod))
                         for i, mod_vec in enumerate(mod_vecs):
                             x, y, z = mod_vec
@@ -4062,7 +4466,17 @@ class PeakDictionary:
                             f.write('       {}{: >13.6f}{: >13.6f}{: >13.6f}\n'.format(2*i+2,-x,-y,-z))
                         f.write('#  h   k   l   m    Fsqr s(Fsqr)  Cod       d\n')
                         for i in sort:
-                            f.write(hkl_format.format(*[*hkl_intensity[i][:-2],sat_info[i][-1],*hkl_intensity[i][-2:],1,peak_info[i]]))
+                            if not np.all(np.array(sat_info[i][:-1]) == 0):
+                                f.write(hkl_format.format(*[*hkl_intensity[i][:-2],sat_info[i][-1],*hkl_intensity[i][-2:],1,peak_info[i]]))
+
+        # SortPeaksWorkspace(InputWorkspace=self.iws,
+        #                    ColumnNameToSortBy='PeakNumber',
+        #                    SortAscending=True,
+        #                    OutputWorkspace=ws)
+        # SortPeaksWorkspace(InputWorkspace=self.cws,
+        #                    ColumnNameToSortBy='PeakNumber',
+        #                    SortAscending=True,
+        #                    OutputWorkspace=ws)
 
         return scale
 
@@ -4098,6 +4512,7 @@ class PeakDictionary:
         pk_info_1 = []
         pk_info_2 = []
         sat_info = []
+        sup_info = []
 
         run_bank_dict = {}
         bank_run_dict = {}
@@ -4115,11 +4530,16 @@ class PeakDictionary:
             h, k, l = pk.getIntHKL()
             m, n, p = pk.getIntMNP()
 
+            pk_no = pk.getPeakNumber()
+
             h, k, l, m, n, p = int(h), int(k), int(l), int(m), int(n), int(p)
 
             key = (h, k, l, m, n, p)
 
-            key_set[key] = 1
+            if key_set.get(key) is None:
+                key_set[key] = [pk_no]
+            else:
+                key_set[key].append(pk_no)
 
         keys = list(key_set.keys())
 
@@ -4135,15 +4555,15 @@ class PeakDictionary:
 
             for peak in peaks:
 
-                if peak.is_peak_integrated():
+                if peak.is_peak_integrated() and peak.get_peak_number() in key_set[key]:
 
-                    intens = peak.get_merged_intensity()
-                    sig_intens = peak.get_merged_intensity_error()
+                    intens_merge = peak.get_merged_intensity()
+                    sig_intens_merge = peak.get_merged_intensity_error()
 
-                    pk_vol_fract = peak.get_merged_peak_volume_fraction()
-                    bkg_vol_fract = peak.get_merged_background_volume_fraction()
+                    pk_vol_fract_merge = peak.get_merged_peak_volume_fraction()
+                    bkg_vol_fract_merge = peak.get_merged_background_volume_fraction()
 
-                    if (intens > 0 and sig_intens > 0 and intens > min_sig_noise_ratio*sig_intens and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
+                    if (intens_merge > 0 and sig_intens_merge > 0 and intens_merge > min_sig_noise_ratio*sig_intens_merge and pk_vol_fract_merge > min_pk_vol_fract and bkg_vol_fract_merge > min_bkg_vol_fract):
 
                         rows = peak.get_rows()
                         cols = peak.get_cols()
@@ -4157,33 +4577,65 @@ class PeakDictionary:
                         two_theta = peak.get_scattering_angles()
                         az_phi = peak.get_azimuthal_angles()
 
+                        omega = peak.get_omega_angles()
+                        chi = peak.get_chi_angles()
+                        phi = peak.get_phi_angles()
+
                         T = peak.get_transmission_coefficient()
                         Tbar = peak.get_weighted_mean_path_length()
 
                         R = peak.get_goniometers()
                         R = np.array(R)
 
-                        clusters = peak.get_peak_clusters()
+                        # clusters = peak.get_peak_clusters()
 
-                        for cluster in clusters:
+                        ind_intens = peak.get_individual_intensity()
+                        ind_sig_intens = peak.get_individual_intensity_error()
 
-                            intens = peak.get_partial_merged_intensity(cluster)
-                            sig_intens = peak.get_partial_merged_intensity_error(cluster)
+                        ind_fit_intens = peak.get_individual_fitted_intensity()
+                        ind_fit_sig_intens = peak.get_individual_fitted_intensity_error()
 
-                            pk_vol_fract = peak.get_partial_merged_peak_volume_fraction(cluster)
-                            bkg_vol_fract = peak.get_partial_merged_background_volume_fraction(cluster)
+                        ind_pk_vol_fract = peak.get_individual_peak_volume_fraction()
+                        ind_bkg_vol_fract = peak.get_individual_background_volume_fraction()
 
-                            if (intens > 0 and sig_intens > 0 and intens > min_sig_noise_ratio*sig_intens and pk_vol_fract > min_pk_vol_fract and bkg_vol_fract > min_bkg_vol_fract):
+                        intens = peak.get_intensity()
+                        sig_intens = peak.get_intensity_error()
+
+                        fit_intens = peak.get_fitted_intensity()
+                        fit_sig_intens = peak.get_fitted_intensity_error()
+
+                        pk_vol_fract = peak.get_peak_volume_fraction()
+                        bkg_vol_fract = peak.get_background_volume_fraction()
+
+                        n_ind = len(ind_intens)
+
+                        for ind in range(n_ind):
+
+                            sig_prop = np.sqrt(ind_sig_intens[ind]**2+ind_fit_sig_intens[ind]**2+sig_intens_merge**2)
+
+                            good = False
+                            if (intens[ind] > 0 and sig_intens[ind] > 0 and intens[ind] > min_sig_noise_ratio*sig_prop and \
+                                ind_intens[ind] > 0 and ind_sig_intens[ind] > 0 and ind_intens[ind] > min_sig_noise_ratio*sig_prop and \
+                                fit_intens > min_sig_noise_ratio*fit_sig_intens and pk_vol_fract[ind] > min_pk_vol_fract and \
+                                ind_fit_intens[ind] > min_sig_noise_ratio*ind_fit_sig_intens[ind] and ind_pk_vol_fract[ind] > min_pk_vol_fract and \
+                                bkg_vol_fract[ind] > min_bkg_vol_fract and \
+                                ind_bkg_vol_fract[ind] > min_bkg_vol_fract):
+                                good = True
+
+                            intensity = ind_intens[ind]
+
+                            if good:
+                            #if (intens[ind] > 0 and sig_intens[ind] > 0 and intens[ind] > min_sig_noise_ratio*sig_intens[ind] and pk_vol_fract[ind] > min_pk_vol_fract and bkg_vol_fract[ind] > min_bkg_vol_fract):
 
                                 if I_max is None: 
-                                    I_max = intens#[i].copy()
-                                elif intens > I_max: 
-                                    I_max = intens#[i].copy()
+                                    I_max = intensity#[i].copy()
+                                elif intens[ind] > I_max: 
+                                    I_max = intensity#[i].copy()
 
                                 ki_norm = np.array([0, 0, 1])
-                                kf_norm = np.array([np.cos(az_phi[cluster][0])*np.sin(two_theta[cluster][0]),
-                                                    np.sin(az_phi[cluster][0])*np.sin(two_theta[cluster][0]),
-                                                    np.cos(two_theta[cluster][0])])
+                                kf_norm = np.array([np.cos(az_phi[ind])*np.sin(two_theta[ind]),
+                                                    np.sin(az_phi[ind])*np.sin(two_theta[ind]),
+                                                    np.cos(two_theta[ind])])
 
                                 # RU = np.dot(R[cluster][0],U)
                                 # 
@@ -4198,8 +4650,8 @@ class PeakDictionary:
                                 t2 /= np.linalg.norm(t2)
                                 t3 /= np.linalg.norm(t3)
 
-                                up = np.dot(R[cluster][0].T, -ki_norm)
-                                us = np.dot(R[cluster][0].T, +kf_norm)
+                                up = np.dot(R[ind].T, -ki_norm)
+                                us = np.dot(R[ind].T, +kf_norm)
 
                                 incident = np.dot(up,t1), np.dot(up,t2), np.dot(up,t3)
                                 reflected = np.dot(us,t1), np.dot(us,t2), np.dot(us,t3)
@@ -4208,19 +4660,21 @@ class PeakDictionary:
 
                                 d = ol.d(V3D(h+dh,k+dk,l+dl))
 
-                                hkl_intensity.append([h, k, l, intens, sig_intens])
+                                hkl_intensity.append([h, k, l, intensity, sig_prop])
                                 mnp_vector.append([m, n, p])
 
-                                run = runs[cluster][0]
-                                bank = banks[cluster][0]
+                                run = runs[ind]
+                                bank = banks[ind]
 
                                 if run_min is None:
                                     run_min = run
                                 elif run < run_min: 
                                     run_min = run
 
-                                pk_info_1.append([lamda[cluster].mean(), Tbar[cluster].mean(), incident[0], reflected[0], incident[1], reflected[1], incident[2], reflected[2], run])
-                                pk_info_2.append([T[cluster].mean(), bank, two_theta[cluster].mean(), d, cols[cluster][0], rows[cluster][0]])
+                                pk_info_1.append([lamda[ind], Tbar[ind], incident[0], reflected[0], incident[1], reflected[1], incident[2], reflected[2], run])
+                                pk_info_2.append([T[ind], bank, two_theta[ind], d, cols[ind], rows[ind]])
+
+                                sup_info.append([az_phi[ind], omega[ind], phi[ind], chi[ind]])
 
                                 mv = 0
                                 mnp = []
@@ -4242,27 +4696,27 @@ class PeakDictionary:
                                 if run_bank_dict.get(sort_key) is None:
                                     run_bank_dict[sort_key] = [j]
                                 else:
-                                    ind = run_bank_dict[sort_key]
-                                    ind.append(j)
-                                    run_bank_dict[sort_key] = ind
+                                    index = run_bank_dict[sort_key]
+                                    index.append(j)
+                                    run_bank_dict[sort_key] = index
 
                                 sort_key = (bank)
 
                                 if bank_run_dict.get(sort_key) is None:
                                     bank_run_dict[sort_key] = [j]
                                 else:
-                                    ind = bank_run_dict[sort_key]
-                                    ind.append(j)
-                                    bank_run_dict[sort_key] = ind
+                                    index = bank_run_dict[sort_key]
+                                    index.append(j)
+                                    bank_run_dict[sort_key] = index
 
                                 sort_key = (h,k,l,m,n,p)
 
                                 if key_dict.get(sort_key) is None:
                                     key_dict[sort_key] = [j]
                                 else:
-                                    ind = key_dict[sort_key]
-                                    ind.append(j)
-                                    key_dict[sort_key] = ind
+                                    index = key_dict[sort_key]
+                                    index.append(j)
+                                    key_dict[sort_key] = index
 
                                 j += 1
 
@@ -4285,32 +4739,44 @@ class PeakDictionary:
 
             pk_num = 0
 
-            keys = list(key_dict.keys())
-            sort = np.argsort([pk_info_2[i][3] for i in range(len(keys))])[::-1]
-            keys = [keys[i] for i in sort]
+            sort = np.argsort([pk_info_2[i][3] for i in range(len(pk_info_2))])[::-1]
 
-            for j, (key) in enumerate(keys):
+            for i in sort:
 
                 seq_num = 1
 
-                for i in key_dict[(key)]:
+                pk_info_1[i][-1] -= (run_min-1)
 
-                    pk_info_1[i][-1] -= (run_min-1)
+                hkl_intensity[i][3] *= scale
+                hkl_intensity[i][4] *= scale
 
-                    hkl_intensity[i][3] *= scale
-                    hkl_intensity[i][4] *= scale
+                if max_order == 0:
+                    f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
+                else:
+                    f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
 
-                    if max_order == 0:
-                        f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
-                    else:
-                        f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
-
-                    pk_num += 1
+                pk_num += 1
 
             if max_order > 0:
                 f.write(hkl_fmt.format(*[0]*25))
             else:
                 f.write(hkl_fmt.format(*[0]*22))
+
+        with open(filename+'_norm.csv', 'w') as f:
+
+            if max_order == 0:
+                hkl_fmt = 3*'{:4d},'+2*'{:8.2f},'+6*'{:8.5f},'+'{:8.5f}\n'
+            else:
+                hkl_fmt = 6*'{:4d},'+2*'{:8.2f},'+6*'{:8.5f},'+'{:8.5f}\n'
+
+            # sort = np.argsort([pk_info_2[i][3] for i in range(len(pk_info_2))])[::-1]
+
+            for i in sort:
+
+                if max_order == 0:
+                    f.write(hkl_fmt.format(*[*hkl_intensity[i], pk_info_2[i][3], pk_info_1[i][0], np.rad2deg(pk_info_2[i][2]), np.rad2deg(sup_info[i][0]), *sup_info[i][1:]]))
+                else:
+                    f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], pk_info_2[i][3], pk_info_1[i][0], np.rad2deg(pk_info_2[i][2]), np.rad2deg(sup_info[i][0]), *sup_info[i][1:]]))
 
         if max_order == 0:
 
@@ -4326,7 +4792,7 @@ class PeakDictionary:
                     seq_num = 1
 
                     for i in run_bank_dict[(run)]:
-                        
+
                         f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
 
                         pk_num += 1
@@ -4358,34 +4824,20 @@ class PeakDictionary:
                 hkl_fmt = 3*'{:4d}'+2*'{:8.2f}'+'{:4d}'+2*'{:8.5f}'+6*'{:9.5f}'+\
                           '{:6d}{:7d}{:7.4f}{:4d}{:9.5f}{:8.4f}'+2*'{:7.2f}'+'\n'
                 pk_num = 0
-                keys = list(key_dict.keys())
-                sort = np.argsort([pk_info_2[i][3] for i in range(len(keys))])[::-1]
-                keys = [keys[i] for i in sort]
-                for j, (key) in enumerate(keys):
-                    seq_num = 1
-                    for i in key_dict[(key)]:
-                        hkl_intensity[i][3] *= scale
-                        hkl_intensity[i][4] *= scale
-                        if np.all(np.array(sat_info[i][:-1]) == 0):
-                            f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
-                            pk_num += 1
+                for i in sort:
+                    if np.all(np.array(sat_info[i][:-1]) == 0):
+                        f.write(hkl_fmt.format(*[*hkl_intensity[i], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
+                        pk_num += 1
                 f.write(hkl_fmt.format(*[0]*22))
 
             with open(filename+'_norm_sat.hkl', 'w') as f:
                 hkl_fmt = 6*'{:4d}'+2*'{:8.2f}'+'{:4d}'+2*'{:8.5f}'+6*'{:9.5f}'+\
                           '{:6d}{:7d}{:7.4f}{:4d}{:9.5f}{:8.4f}'+2*'{:7.2f}'+'\n'
                 pk_num = 0
-                keys = list(key_dict.keys())
-                sort = np.argsort([pk_info_2[i][3] for i in range(len(keys))])[::-1]
-                keys = [keys[i] for i in sort]
-                for j, (key) in enumerate(keys):
-                    seq_num = 1
-                    for i in key_dict[(key)]:
-                        hkl_intensity[i][3] *= scale
-                        hkl_intensity[i][4] *= scale
-                        if not np.all(np.array(sat_info[i][:-1]) == 0):
-                            f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
-                            pk_num += 1
+                for i in sort:
+                    if not np.all(np.array(sat_info[i][:-1]) == 0):
+                        f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], seq_num, *pk_info_1[i], pk_num, *pk_info_2[i]]))
+                        pk_num += 1
                 f.write(hkl_fmt.format(*[0]*25))
 
             with open(filename+'_norm_nuc.int', 'w') as f:
@@ -4397,6 +4849,8 @@ class PeakDictionary:
                 for i in sort:
                     if np.all(np.array(sat_info[i][:-1]) == 0):
                         f.write(hkl_format.format(*[*hkl_intensity[i][:-2],*hkl_intensity[i][-2:],1,pk_info_1[i][0]]))
+
+            # sort = np.argsort([pk_info_2[i][3] for i in range(len(pk_info_2))])[::-1]
 
             if not cross_terms:
                 with open(filename+'_norm.int', 'w') as f:
@@ -4412,6 +4866,28 @@ class PeakDictionary:
                         f.write('#  h   k   l   m    Fsqr s(Fsqr)  Cod  Lambda\n')
                     for i in sort:
                         f.write(hkl_format.format(*[*hkl_intensity[i][:-2],*sat_info[i][:-1],*hkl_intensity[i][-2:],1,pk_info_1[i][0]]))
+
+                with open(filename+'_norm_nuc.csv', 'w') as f:
+                    hkl_fmt = 3*'{:4d},'+2*'{:8.2f},'+6*'{:8.5f},'+'{:8.5f}\n'
+                    for i in sort:
+                        if np.all(np.array(sat_info[i][:-1]) == 0):
+                            f.write(hkl_fmt.format(*[*hkl_intensity[i], pk_info_2[i][3], pk_info_1[i][0], np.rad2deg(pk_info_2[i][2]), np.rad2deg(sup_info[i][0]), *sup_info[i][1:]]))
+
+                with open(filename+'_norm_sat.csv', 'w') as f:
+                    hkl_fmt = 6*'{:4d},'+2*'{:8.2f},'+6*'{:8.5f},'+'{:8.5f}\n'
+                    for i in sort:
+                        if not np.all(np.array(sat_info[i][:-1]) == 0):
+                            f.write(hkl_fmt.format(*[*hkl_intensity[i][:3], *mnp_vector[i], *hkl_intensity[i][3:], pk_info_2[i][3], pk_info_1[i][0], np.rad2deg(pk_info_2[i][2]), np.rad2deg(sup_info[i][0]), *sup_info[i][1:]]))
+
+
+        SortPeaksWorkspace(InputWorkspace=self.iws,
+                           ColumnNameToSortBy='PeakNumber',
+                           SortAscending=True,
+                           OutputWorkspace=self.iws)
+        SortPeaksWorkspace(InputWorkspace=self.cws,
+                           ColumnNameToSortBy='PeakNumber',
+                           SortAscending=True,
+                           OutputWorkspace=self.cws)
 
         return scale
 
@@ -4502,7 +4978,7 @@ class PeakDictionary:
             theta = np.arccos(uz)
             phi = np.arctan2(uy,ux)
 
-            sol = scipy.optimize.least_squares(self.__res, x0=x0+(phi,theta,omega), args=(hkl,Q,fun), method='lm')
+            sol = scipy.optimize.least_squares(self.__res, x0=x0+(phi,theta,omega), args=(hkl,Q,fun)) #, method='lm'
 
             a, b, c, alpha, beta, gamma, phi, theta, omega = fun(sol.x)
 
@@ -4543,14 +5019,14 @@ class PeakDictionary:
             mtd['cal'].sample().getOrientedLattice().setError(sig_a, sig_b, sig_c, sig_alpha, sig_beta, sig_gamma)
 
             self.__set_satellite_info(cal, mod_vec_1, mod_vec_2, mod_vec_3, max_order)
-            SaveIsawUB(InputWorkspace='cal', Filename=filename.replace('nxs','mat'))
 
         SaveNexus(InputWorkspace='cal', Filename=filename)
+        SaveIsawUB(InputWorkspace='cal', Filename=filename.replace('nxs','mat'))
 
-        if n_pks <= 20:
+        #if n_pks <= 20:
 
-            if mtd.doesExist('cal'):
-                DeleteWorkspace('cal')
+            # if mtd.doesExist('cal'):
+            #     DeleteWorkspace('cal')
 
     def recalculate_hkl(self, tol=0.08, fname=None):
 
@@ -4796,6 +5272,9 @@ class PeakDictionary:
 
                 peak_num = peak.get_peak_number()
 
+                #peak.integrate()
+                peak.individual_integrate()
+
                 intens = peak.get_merged_intensity()
                 sig_intens = peak.get_merged_intensity_error()
 
@@ -4810,7 +5289,7 @@ class PeakDictionary:
 
                 if peak.is_peak_integrated():
 
-                    peak_num = self.iws.getNumberPeaks()+1
+                    peak_num = peak.get_peak_number()
 
                     self.cws.run().getGoniometer().setR(R)
                     self.iws.run().getGoniometer().setR(R)
@@ -4821,7 +5300,7 @@ class PeakDictionary:
                     pk.setGoniometerMatrix(R)
                     pk.setIntHKL(V3D(h,k,l))
                     pk.setIntMNP(V3D(m,n,p))
-                    # pk.setQSampleFrame(V3D(Qx,Qy,Qz))
+                    #pk.setQSampleFrame(V3D(Qx,Qy,Qz))
                     pk.setPeakNumber(peak_num)
                     pk.setIntensity(intens)
                     pk.setSigmaIntensity(sig_intens)
@@ -4844,8 +5323,8 @@ class PeakDictionary:
                     pk.setRunNumber(run)
                     self.cws.addPeak(pk)
 
-        SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)
-        SortPeaksWorkspace(self.cws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.cws)
+        #SortPeaksWorkspace(self.iws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.iws)
+        #SortPeaksWorkspace(self.cws, ColumnNameToSortBy='DSpacing', SortAscending=False, OutputWorkspace=self.cws)
 
     def clear_peaks(self):
 
@@ -4863,7 +5342,9 @@ class PeakDictionary:
 
             mat_dict = self.__material_constants()
 
-            atms = [atm.rstrip('1234567890.') for atm in chemical_formula.split(' ')]
+            atms = [atm.replace('(','').replace(')','').rstrip('1234567890.') for atm in chemical_formula.split(' ')]
+            pres = [re.findall('(?:\d+)', atm)[0] if '(' in atm else '' for atm in chemical_formula.split(' ')]
+            atms = [pre+atm for pre, atm in zip(pres,atms)]
             n_atms = [float(atm.replace(atm.rstrip('1234567890.'), '')) for atm in chemical_formula.split(' ')]
 
             amu = [mat_dict[atm][2] for atm in atms]
@@ -4926,7 +5407,9 @@ class PeakDictionary:
 
             mat_dict = self.__material_constants()
 
-            atms = [atm.rstrip('1234567890.') for atm in chemical_formula.split(' ')]
+            atms = [atm.replace('(','').replace(')','').rstrip('1234567890.') for atm in chemical_formula.split(' ')]
+            pres = [re.findall('(?:\d+)', atm)[0] if '(' in atm else '' for atm in chemical_formula.split(' ')]
+            atms = [pre+atm for pre, atm in zip(pres,atms)]
             n_atms = [float(atm.replace(atm.rstrip('1234567890.'), '')) for atm in chemical_formula.split(' ')]
 
             x_tot = [mat_dict[atm][0] for atm in atms]
@@ -5048,6 +5531,213 @@ class PeakDictionary:
 
             self.clear_peaks()
             self.repopulate_workspaces()
+
+    def apply_ellipsoidal_correction(self, vanadium_mass=0, ratios=[1,1,1], polar=np.pi/2, azimuthal=np.pi/2, omega=0, fname=None):
+
+        if fname is not None:
+            absorption_file = open(fname, 'w')
+
+        chemical_formula = self.chemical_formula
+
+        if chemical_formula is not None:
+
+            mat_dict = self.__material_constants()
+
+            atms = [atm.replace('(','').replace(')','').rstrip('1234567890.') for atm in chemical_formula.split(' ')]
+            pres = [re.findall('(?:\d+)', atm)[0] if '(' in atm else '' for atm in chemical_formula.split(' ')]
+            atms = [pre+atm for pre, atm in zip(pres,atms)]
+            n_atms = [float(atm.replace(atm.rstrip('1234567890.'), '')) for atm in chemical_formula.split(' ')]
+
+            x_tot = [mat_dict[atm][0] for atm in atms]
+            x_abs = [mat_dict[atm][1] for atm in atms]
+
+            chemical_formula = '-'.join(chemical_formula.split(' '))
+
+            m, M, n, N, rho, V, R = self.__equivalent_sphere()
+
+            sigma_a = np.dot(n_atms, x_abs)/N
+            sigma_s = np.dot(n_atms, x_tot)/N
+
+            ratios = np.array(ratios)/ratios[0]
+
+            a1 = R/np.cbrt(ratios[1]*ratios[2])
+            a2 = ratios[1]*a1
+            a3 = ratios[2]*a1
+
+            if fname is not None:
+
+                absorption_file.write('{}\n'.format(chemical_formula))
+                absorption_file.write('absoption cross section: {:.4f} barn\n'.format(sigma_a))
+                absorption_file.write('scattering cross section: {:.4f} barn\n'.format(sigma_s))
+
+                absorption_file.write('linear absorption coefficient: {:.4f} 1/cm\n'.format(n*sigma_a))
+                absorption_file.write('linear scattering coefficient: {:.4f} 1/cm\n'.format(n*sigma_s))
+
+                absorption_file.write('mass: {:.4f} g\n'.format(m))
+                absorption_file.write('density: {:.4f} g/cm^3\n'.format(rho))
+
+                absorption_file.write('volume: {:.4f} cm^3\n'.format(V))
+                absorption_file.write('radius: {:.4f} cm\n'.format(R))
+
+                absorption_file.write('a1: {:.4f} cm\n'.format(a1))
+                absorption_file.write('a2: {:.4f} cm\n'.format(a2))
+                absorption_file.write('a3: {:.4f} cm\n'.format(a3))
+
+                absorption_file.write('total atoms: {:.4f}\n'.format(N))
+                absorption_file.write('molar mass: {:.4f} g/mol\n'.format(M))
+                absorption_file.write('number density: {:.4f} 1/A^3\n'.format(n))
+
+            van = self.nws.sample().getMaterial()
+
+            van_sigma_a = van.absorbXSection()
+            van_sigma_s = van.totalScatterXSection()
+
+            van_M = van.relativeMolecularMass()
+            van_n = van.numberDensityEffective # A^-3
+            van_N = van.totalAtoms 
+
+            van_rho = (van_n/van_N)/0.6022*van_M
+            van_V = vanadium_mass/van_rho
+
+            van_R = np.cbrt(0.75/np.pi*van_V)
+
+            van_mu_s = van_n*van_sigma_s
+            van_mu_a = van_n*van_sigma_a
+
+            Uiso = float(self.nws.sample().getCrystalStructure().getScatterers()[0].split(' ')[-1])
+
+            if fname is not None:
+
+                absorption_file.write('\nV\n')
+                absorption_file.write('absoption cross section: {:.4f} barn\n'.format(van_sigma_a))
+                absorption_file.write('scattering cross section: {:.4f} barn\n'.format(van_sigma_s))
+
+                absorption_file.write('linear absorption coefficient: {:.4f} 1/cm\n'.format(van_n*van_sigma_a))
+                absorption_file.write('linear scattering coefficient: {:.4f} 1/cm\n'.format(van_n*van_sigma_s))
+
+                absorption_file.write('mass: {:.4f} g\n'.format(vanadium_mass))
+                absorption_file.write('density: {:.4f} g/cm^3\n'.format(van_rho))
+
+                absorption_file.write('volume: {:.4f} cm^3\n'.format(van_V))
+                absorption_file.write('radius: {:.4f} cm\n'.format(van_R))
+
+                absorption_file.write('total atoms: {:.4f}\n'.format(van_N))
+                absorption_file.write('molar mass: {:.4f} g/mol\n'.format(van_M))
+                absorption_file.write('number density: {:.4f} 1/A^3\n'.format(van_n))
+                absorption_file.write('isotropic displacement parameter: {:.4f} A^2\n'.format(Uiso))
+
+                absorption_file.close()
+
+            ux = np.cos(azimuthal)*np.sin(polar)
+            uy = np.sin(azimuthal)*np.sin(polar)
+            uz = np.cos(polar)
+
+            U = np.array([[np.cos(omega)+ux**2*(1-np.cos(omega)), ux*uy*(1-np.cos(omega))-uz*np.sin(omega), ux*uz*(1-np.cos(omega))+uy*np.sin(omega)],
+                          [uy*ux*(1-np.cos(omega))+uz*np.sin(omega), np.cos(omega)+uy**2*(1-np.cos(omega)), uy*uz*(1-np.cos(omega))-ux*np.sin(omega)],
+                          [uz*ux*(1-np.cos(omega))-uy*np.sin(omega), uz*uy*(1-np.cos(omega))+ux*np.sin(omega), np.cos(omega)+uz**2*(1-np.cos(omega))]])
+
+            for key in self.peak_dict.keys():
+
+                peaks = self.peak_dict.get(key)
+
+                for peak in peaks:
+
+                    wls = peak.get_wavelengths()
+                    two_thetas = peak.get_scattering_angles()
+                    az_phis = peak.get_azimuthal_angles()
+                    
+                    Rs = np.array(peak.get_goniometers())
+
+                    kx_hat = np.sin(two_thetas)*np.cos(az_phis)
+                    ky_hat = np.sin(two_thetas)*np.sin(az_phis)
+                    kz_hat = np.cos(two_thetas)-1
+
+                    ix = np.zeros_like(kx_hat)
+                    iy = np.zeros_like(ky_hat)
+                    iz = np.ones_like(kz_hat)
+
+                    fx = -(ix+kx_hat)
+                    fy = -(iy+ky_hat)
+                    fz = -(iz+kz_hat)
+
+                    i1, i2, i3 = np.einsum('kji,jk->ik', Rs, np.einsum('ji,jk->ik', U, [ix, iy, iz])) 
+                    f1, f2, f3 = np.einsum('kji,jk->ik', Rs, np.einsum('ji,jk->ik', U, [fx, fy, fz]))
+
+                    mu = n*(sigma_s+sigma_a*wls/1.8)
+
+                    T, Tbar = self.__ellipsoid_absorption(mu, a1, a2, a3, i1, i2, i3, f1, f2, f3)
+
+                    Astar = 1/T
+
+                    Astar_van = Astar*0+1
+
+                    peak.set_data_scale(Astar)
+                    peak.set_norm_scale(Astar_van)
+
+                    peak.set_transmission_coefficient(T)
+                    peak.set_weighted_mean_path_length(Tbar)
+
+            self.clear_peaks()
+            self.repopulate_workspaces()
+
+    def __volume_integral(self, f, p1, alpha, R):
+
+        return scipy.integrate.simpson(scipy.integrate.simpson(scipy.integrate.simpson(f*R.reshape(-1,1)**2*np.sin(p1.reshape(-1,1,1)), R, axis=2), p1, axis=1), alpha, axis=0)
+
+    def __ellipsoid_absorption(self, mu, a1, a2, a3, i1, i2, i3, f1, f2, f3, N=12):
+
+        I1, I2, I3 = i1/a1, i2/a2, i3/a3
+        F1, F2, F3 = f1/a1, f2/a2, f3/a3
+
+        I = np.sqrt(I1**2+I2**2+I3**2)
+        F = np.sqrt(F1**2+F2**2+F3**2)
+
+        phi = np.arccos(-(I1*F1+I2*F2+I3*F3)/I/F)
+
+        R = np.linspace(0,1,11)
+        p1 = np.linspace(0,np.pi,31)
+        alpha = np.linspace(0,2*np.pi,61)
+
+        p2 = np.zeros_like(R.reshape(-1,1))+np.arccos(np.cos(p1.reshape(-1,1,1))*np.cos(np.pi-phi)+np.sin(p1.reshape(-1,1,1))*np.sin(np.pi-phi)*np.cos(alpha.reshape(-1,1,1,1)))
+
+        f1 = R.reshape(-1,1)*np.cos(p1.reshape(-1,1,1))+np.sqrt(1-R.reshape(-1,1)**2*np.sin(p1.reshape(-1,1,1))**2)+np.zeros_like(alpha.reshape(-1,1,1,1))
+        f2 = R.reshape(-1,1)*np.cos(p2                )+np.sqrt(1-R.reshape(-1,1)**2*np.sin(p2                )**2)+np.zeros_like(alpha.reshape(-1,1,1,1))
+
+        n = 1
+        if np.size(phi) > 1:
+            n = np.size(phi)
+        else:
+            n = np.size(mu)
+
+        a = np.zeros((N+1,n))
+        t = np.zeros((N+1,n))
+
+        for j in range(N+1):
+            f = 0
+            for p in range(j+1):
+                f += scipy.special.comb(j,p)/I**p/F**(j-p)*f1**p*f2**(j-p)
+            a[j,:] = 3/4/np.pi/scipy.special.factorial(j)*mu**j*self.__volume_integral(f, p1, alpha, R)
+            t[j,:] = a[j,:]*j/mu
+
+        da = np.zeros((N+1,N+1,n))
+        dt = np.zeros((N+1,N+1,n))
+
+        da[0,:,:] = +np.cumsum(((-1)**np.arange(N+1)*a.T).T, axis=0)
+        dt[0,:,:] = -np.cumsum(((-1)**np.arange(N+1)*t.T).T, axis=0)
+
+        for j in range(1,N+1):
+            da[j,:-j,:] = (da[j-1,1:(N+2-j),:]+da[j-1,:-j,:])/2
+            dt[j,:-j,:] = (dt[j-1,1:(N+2-j),:]+dt[j-1,:-j,:])/2
+
+        #A = da[2*N//3,N//3,:]
+        #Tbar = dt[2*N//3,N//3,:]
+
+        A = da[-1,0,:]
+        Tbar = dt[-1,0,:]
+
+        Tbar /= A
+
+        return A, Tbar
 
     def __spherical_extinction(self, model):
 
@@ -6195,18 +6885,20 @@ class PeakStatistics:
         n_pk = len(d)
         n_sp = np.min([n_pk,20])
 
-        split = np.array_split(np.arange(len(d)), n_sp)
+        if n_pk > 0:
 
-        for s in split:
+            split = np.array_split(np.arange(len(d)), n_sp)
 
-            d_min, d_max = d[s].min(), d[s].max()
+            for s in split:
 
-            comp = 100*n[s].sum()/r[s].sum()
+                d_min, d_max = d[s].min(), d[s].max()
 
-            R_merge = 100*I_mae[s].sum()/I_sum[s].sum()
-            R_pim = 100*(np.sqrt(1/(n[s]-1))*I_mae[s]).sum()/I_sum[s].sum()
+                comp = 100*n[s].sum()/r[s].sum()
 
-            f.write('{:6.3f}-{:6.3f} | {:6.2f}% | {:6.2f}% | {:6.2f}%\n'.format(d_max,d_min,comp,R_merge,R_pim))
+                R_merge = 100*I_mae[s].sum()/I_sum[s].sum()
+                R_pim = 100*(np.sqrt(1/(n[s]-1))*I_mae[s]).sum()/I_sum[s].sum()
+
+                f.write('{:6.3f}-{:6.3f} | {:6.2f}% | {:6.2f}% | {:6.2f}%\n'.format(d_max,d_min,comp,R_merge,R_pim))
 
     def write_intensity(self):
 
@@ -6222,14 +6914,28 @@ class PeakStatistics:
 
 class PeakFitPrune:
 
-    def __init__(self, filename):
+    def __init__(self, filename, mod_vec1=[0,0,0], mod_vec2=[0,0,0], mod_vec3=[0,0,0], max_order=0):
 
         self.filename = filename
-        self.data = np.genfromtxt(filename, delimiter=(4,4,4,8,8,4,8,8,9,9,9,9,9,9,6,7,7,4,9,8,7,7))
+
+        if (max_order == 0 or '_nuc' in filename) and ('_sat' not in filename):
+            self.sat = False
+        else:
+            self.sat = True
+
+        delim = (4,4,4) if self.sat else () 
+        delim += (4,4,4,8,8,4,8,8,9,9,9,9,9,9,6,7,7,4,9,8,7,7)
+
+        data = np.genfromtxt(filename, delimiter=delim, skip_footer=1)
+        self.data = data.reshape(-1,len(delim))
+        
+        self.mod_vec1 = np.array(mod_vec1)
+        self.mod_vec2 = np.array(mod_vec2)
+        self.mod_vec3 = np.array(mod_vec3)
 
     def func(self, x, a, b, c):
 
-        return a*x**2+b*x+c
+        return a*np.exp(-b*x)+c
 
     def fit_peaks(self):
 
@@ -6237,58 +6943,109 @@ class PeakFitPrune:
 
         for line in self.data:
 
-            h, k, l, I, sig, seq, wl, *info = line
+            if self.sat:
+                h, k, l, m, n, p, I, sig, seq, wl, *info, d, row, col = line
+            else:
+                h, k, l, I, sig, seq, wl, *info, d, row, col = line
+                m = n = p = 0
 
-            key = (int(h), int(k), int(l))
+            hkl = np.array([h,k,l])+m*self.mod_vec1+n*self.mod_vec2+p*self.mod_vec3
+
+            HKL = np.column_stack([hkl,-hkl])
+
+            sort = np.lexsort(HKL, axis=0)
+
+            key = tuple(HKL[:,sort[0]].tolist())
 
             if dictionary.get(key) is None:
-                dictionary[key] = [I], [sig], [wl]
+                dictionary[key] = [I], [sig], [wl], [d]
             else:
-                I_list, sig_list, wl_list = dictionary.get(key)
+                I_list, sig_list, wl_list, d_list = dictionary.get(key)
                 I_list.append(I)
                 sig_list.append(sig)
                 wl_list.append(wl)
-                dictionary[key] = I_list, sig_list, wl_list
+                d_list.append(d)
+                dictionary[key] = I_list, sig_list, wl_list, d_list
 
         self.fitted_band = {}
 
-        for key in dictionary.keys():
+        fname, ext = os.path.splitext(self.filename)
 
-            I_list, sig_list, wl_list = dictionary.get(key)
+        with PdfPages(fname+'_prune'+'.pdf') as pdf:
 
-            x, y, e = np.array(wl_list), np.array(I_list), np.array(sig_list)+0.001
+            for key in dictionary.keys():
 
-            if len(x) > 3:
+                I_list, sig_list, wl_list, d_list = dictionary.get(key)
 
-                popt, pcov = scipy.optimize.curve_fit(self.func, x, y, sigma=e, method='trf', loss='soft_l1')
+                x, y, e = np.array(wl_list), np.array(I_list), np.array(sig_list)+0.001
 
-                self.fitted_band[key] = popt
+                sort = np.argsort(x)
 
+                x, y, e = x[sort], y[sort], e[sort]
+
+                if len(x) >= 4:
+
+                    popt, pcov = scipy.optimize.curve_fit(self.func, x-x.min(), y, sigma=e, p0=[y.max()-y.min(),0,y.min()], method='trf', bounds=([0,0,0],[np.inf,np.inf,np.inf]), loss='soft_l1')
+
+                    y_hat = self.func(x-x.min(), *popt)-y
+
+                    mu = np.mean(y_hat) #np.sum(I/sig**2)/np.sum(1/sig**2)
+                    sigma = np.std(y_hat) #1/np.sqrt(np.sum(1/sig**2))
+
+                    self.fitted_band[key] = popt, x.min(), mu, sigma
+
+                    fig, ax = plt.subplots(1,1)
+                    ax.errorbar(x, y, yerr=e, fmt='o', color='C0')
+                    ax.minorticks_on()
+                    ax.plot(x, self.func(x-x.min(), *popt), linestyle='-', color='C1')
+                    ax.errorbar(x, y_hat, yerr=e, fmt='o', color='C2')
+                    ax.plot(x, x*0, linestyle='--', color='C3' )
+                    ax.set_xlabel('Wavelength [ang.]')
+                    ax.set_ylabel('Intensity [arb. unit]')
+                    ax.set_title('({:4.2f} {:4.2f} {:4.2f}) d = {:8.2f} ang.'.format(*[*key,np.mean(d_list).round(4)]))
+                    pdf.savefig()
+                    plt.close()
+                        
     def write_intensity(self):
 
         fname, ext = os.path.splitext(self.filename)
 
-        hkl_fmt = 3*'{:4.0f}'+2*'{:8.2f}'+'{:4.0f}'+2*'{:8.5f}'+6*'{:9.5f}'+\
+        cols = 6 if self.sat else 3
+
+        hkl_fmt = cols*'{:4.0f}'+2*'{:8.2f}'+'{:4.0f}'+2*'{:8.5f}'+6*'{:9.5f}'+\
                 '{:6.0f}{:7.0f}{:7.4f}{:4.0f}{:9.5f}{:8.4f}'+2*'{:7.2f}'+'\n'
 
         with open(fname+'_prune'+ext, 'w') as f:
 
             for line in self.data:
 
-                h, k, l, I, sig, seq, wl, *info = line
+                if self.sat:
+                    h, k, l, m, n, p, I, sig, seq, wl, *info = line
+                else:
+                    h, k, l, I, sig, seq, wl, *info = line
+                    m = n = p = 0
 
-                key = (int(h), int(k), int(l))
+                hkl = np.array([h,k,l])+m*self.mod_vec1+n*self.mod_vec2+p*self.mod_vec3
 
-                write = True
+                HKL = np.column_stack([hkl,-hkl])
+
+                sort = np.lexsort(HKL, axis=0)
+
+                key = tuple(HKL[:,sort[0]].tolist())
 
                 if self.fitted_band.get(key) is not None:
 
-                    popt = self.fitted_band[key]
+                    popt, wl0, mu, sigma = self.fitted_band[key]
 
-                    if np.abs(self.func(wl, *popt)/I-1) >= 0.25:
+                    y_hat = self.func(wl-wl0, *popt)-I
 
-                        write = False
+                    z = (y_hat-mu)/sigma # z score
 
-                if write:
+                    if np.abs(z) < 3:
 
-                    f.write(hkl_fmt.format(h,k,l,I,sig,seq,wl,*info))
+                        if self.sat:
+                            f.write(hkl_fmt.format(h,k,l,m,n,p,I,sig,seq,wl,*info))
+                        else:
+                            f.write(hkl_fmt.format(h,k,l,I,sig,seq,wl,*info))
+
+            f.write(hkl_fmt.format(*[0]*len(hkl_fmt.split('}{'))))

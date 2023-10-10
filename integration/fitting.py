@@ -4,7 +4,7 @@ from lmfit import Minimizer, Parameters, fit_report
 
 class Ellipsoid:
 
-    def __init__(self, Qx, Qy, Qz, data, norm, Q0, size=1, n_std=3, scale=3, rotation=False):
+    def __init__(self, Q0, size=1, n_std=3, scale=3, rotation=False):
 
         self.Q0 = Q0
 
@@ -19,12 +19,14 @@ class Ellipsoid:
 
         self.mu_x, self.mu_y, self.rho = 0, 0, 0
 
-        self.Qx, self.Qy, self.Qz = Qx.copy(), Qy.copy(), Qz.copy()
+    def update_data(self, Qx, Qy, Qz, data, norm):
 
-        self.transform()
+        self.Qx, self.Qy, self.Qz = Qx.copy(), Qy.copy(), Qz.copy()
 
         self.data = data.copy()
         self.norm = norm.copy()
+
+        self.transform()
 
     def transform(self):
 
@@ -39,12 +41,16 @@ class Ellipsoid:
 
         self.Qp = Qx*n[0]+Qy*n[1]+Qz*n[2]
 
+    def recenter(self, Q0):
+
+        self.Q0 = Q0
+
+        self.mu = np.dot(self.Q0, self.n)
+
     def reset_axes(self, k0):
 
         self.n = k0/np.linalg.norm(k0)
         self.u, self.v = self.projection_axes(self.n)
-
-        self.transform()
 
         self.mu = np.dot(self.Q0, self.n)
 
@@ -132,7 +138,7 @@ class Ellipsoid:
 
         D = np.diag(1/np.array([ru,rv,rp])**2)
 
-        return Q, W, D
+        return Q.copy(), W.copy(), D.copy()
 
     def sig(self):
 
@@ -574,7 +580,7 @@ class Profile:
             params.add('b', value=b, min=min_b, max=max_b)
             params.add('c', value=c, min=min_c, max=max_c)
 
-            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='omit') #
+            out = Minimizer(self.residual, params, fcn_args=(args), Dfun=self.gradient, col_deriv=True, nan_policy='omit', reduce_fcn='negentropy') #
 
             result = out.minimize(method='leastsq')
 
@@ -1014,7 +1020,7 @@ class Projection:
 
             # reduce_fcn = None if not robust else self.loss
 
-            out = Minimizer(self.residual, params, fcn_args=(args)) #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
+            out = Minimizer(self.residual, params, fcn_args=(args), reduce_fcn='negentropy') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
             result = out.minimize(method='leastsq')
 
             params = result.params['a'].value, \
@@ -1302,7 +1308,7 @@ class LineCut(Profile):
             params.add('mu0', expr='mu1-delta')
             params.add('mu2', expr='mu1+delta')
 
-            out = Minimizer(self.residual, params, fcn_args=(args), nan_policy='omit') #, col_deriv=True, Dfun=self.gradient
+            out = Minimizer(self.residual, params, fcn_args=(args), nan_policy='omit', reduce_fcn='negentropy') #, col_deriv=True, Dfun=self.gradient
 
             result = out.minimize(method='leastsq')
 
@@ -1353,7 +1359,7 @@ class LineCut(Profile):
 
         self.y_sub, self.e_sub = y_sub.copy(), e_sub.copy()
         self.y_bkg, self.y_fit = y_bkg.copy(), y_fit.copy()
-       
+
         a = np.array([a0,a1,a2])
         err_a = np.array([err_a0,err_a1,err_a2])
         mu = np.array([mu0,mu1,mu2])
@@ -1372,7 +1378,7 @@ class LineCut(Profile):
 
 class GaussianFit3D:
 
-    def __init__(self, x, y, e, mu, sigma):
+    def __init__(self, x, y, e, mu, sigma, merge=True):
 
         params = Parameters()
 
@@ -1388,20 +1394,28 @@ class GaussianFit3D:
 
         y_range = y_max-y_min
 
-        params.add('A', value=y_range, min=0.001*y_range, max=1000*y_range)
-        params.add('B', value=y_min, min=y_min-100*y_range, max=y_max+100*y_range)
+        params.add('A', value=y_range, min=0.01*y_range, max=100*y_range)
+        params.add('B', value=y_min, min=y_min-10*y_range, max=y_max+10*y_range)
 
-        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range)
-        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range)
-        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range)
+        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range, vary=merge)
+        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range, vary=merge)
+        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range, vary=merge)
 
-        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
-        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
-        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
+        params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1, vary=merge)
+        params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1, vary=merge)
+        params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1, vary=merge)
 
-        params.add('sigma0', value=sigma[0], min=0.25*sigma[0], max=2*sigma[0])
-        params.add('sigma1', value=sigma[1], min=0.25*sigma[1], max=2*sigma[1])
-        params.add('sigma2', value=sigma[2], min=0.25*sigma[2], max=2*sigma[2])
+        min_sig0, max_sig0 = 0.2*sigma[0], 2*sigma[0]
+        min_sig1, max_sig1 = 0.2*sigma[1], 2*sigma[1]
+        min_sig2, max_sig2 = 0.2*sigma[2], 2*sigma[2]
+
+        # if max_sig0 < 0.05: max_sig0 *= 2
+        # if max_sig1 < 0.05: max_sig1 *= 2
+        # if max_sig2 < 0.05: max_sig2 *= 2
+
+        params.add('sigma0', value=sigma[0], min=min_sig0, max=max_sig0)
+        params.add('sigma1', value=sigma[1], min=min_sig1, max=max_sig1)
+        params.add('sigma2', value=sigma[2], min=min_sig2, max=max_sig2)
 
         params.add('phi', value=0, min=-np.pi/2, max=np.pi/2)
         params.add('theta', value=np.pi/2, min=np.pi/4, max=3*np.pi/4)
@@ -1525,14 +1539,13 @@ class GaussianFit3D:
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit', reduce_fcn='negentropy') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
         result = out.minimize(method='leastsq')
 
         #result = out.prepare_fit()
+        #print(fit_report(result))
 
         self.params = result.params
-
-        # report_fit(result)
 
         A = result.params['A'].value
         B = result.params['B'].value
@@ -1723,9 +1736,9 @@ class GaussianFit3D:
         boundary = np.isclose(mu0, mu0_min, rtol=1e-3) | np.isclose(mu0, mu0_max, rtol=1e-3) \
                  | np.isclose(mu1, mu1_min, rtol=1e-3) | np.isclose(mu1, mu1_max, rtol=1e-3) \
                  | np.isclose(mu2, mu2_min, rtol=1e-3) | np.isclose(mu2, mu2_max, rtol=1e-3) \
-                 | np.isclose(sigma0, sigma0_min, rtol=1e-3) | np.isclose(sigma0, sigma0_max, rtol=1e-3) \
-                 | np.isclose(sigma1, sigma1_min, rtol=1e-3) | np.isclose(sigma1, sigma1_max, rtol=1e-3) \
-                 | np.isclose(sigma2, sigma2_min, rtol=1e-3) | np.isclose(sigma2, sigma2_max, rtol=1e-3)
+                 | np.isclose(sigma0, sigma0_min, rtol=1e-5) | np.isclose(sigma0, sigma0_max, rtol=1e-4) \
+                 | np.isclose(sigma1, sigma1_min, rtol=1e-5) | np.isclose(sigma1, sigma1_max, rtol=1e-4) \
+                 | np.isclose(sigma2, sigma2_min, rtol=1e-5) | np.isclose(sigma2, sigma2_max, rtol=1e-4)
 
         return boundary
 
@@ -1740,6 +1753,12 @@ class GaussianFit3D:
         S = np.dot(np.dot(sig, rho), sig)
 
         return S
+
+    def integral(self, A, sig0, sig1, sig2, rho12, rho02, rho01):
+
+        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+
+        return A*np.sqrt(np.linalg.det(2*np.pi*S))
 
     def model(self, x, A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01):
 
@@ -1775,21 +1794,22 @@ class SatelliteGaussianFit3D(GaussianFit3D):
 
         y_range = y_max-y_min
 
-        params.add('A0', value=y_range, min=0.001*y_range, max=1000*y_range)
-        params.add('A1', value=y_range, min=0.001*y_range, max=1000*y_range)
+        params.add('A0', value=y_range, min=0.01*y_range, max=100*y_range)
+        params.add('A1', value=y_range, min=0.01*y_range, max=100*y_range)
         params.add('A2', expr='A0')
 
         params.add('B', value=y_min, min=y_min-100*y_range, max=y_max+100*y_range)
 
-        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range)
-        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range)
-        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range)
+        params.add('C0', value=0, min=-10*y_range/x0_range, max=10*y_range/x0_range, vary=False)
+        params.add('C1', value=0, min=-10*y_range/x1_range, max=10*y_range/x1_range, vary=False)
+        params.add('C2', value=0, min=-10*y_range/x2_range, max=10*y_range/x2_range, vary=False)
 
         params.add('mu0', value=mu[0], min=mu[0]-0.1, max=mu[0]+0.1)
         params.add('mu1', value=mu[1], min=mu[1]-0.1, max=mu[1]+0.1)
         params.add('mu2', value=mu[2], min=mu[2]-0.1, max=mu[2]+0.1)
 
-        params.add('delta', value=delta, min=0.5*delta, max=2*delta)
+        params.add('delta', value=delta, min=0.8*abs(delta), max=1.25*abs(delta))
+        params.add('scale', value=0.8, min=0.5, max=1)
 
         params.add('sigma0', value=sigma[0], min=0.25*sigma[0], max=2*sigma[0])
         params.add('sigma1', value=sigma[1], min=0.25*sigma[1], max=2*sigma[1])
@@ -1824,6 +1844,7 @@ class SatelliteGaussianFit3D(GaussianFit3D):
         mu2 = params['mu2']
 
         delta = params['delta']
+        scale = params['scale']
 
         sigma0 = params['sigma0']
         sigma1 = params['sigma1']
@@ -1833,7 +1854,7 @@ class SatelliteGaussianFit3D(GaussianFit3D):
         theta = params['theta']
         omega = params['omega']
 
-        args = Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sigma0, sigma1, sigma2, phi, theta, omega
+        args = Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sigma0, sigma1, sigma2, phi, theta, omega
 
         yfit = self.func(*args)
 
@@ -1844,17 +1865,17 @@ class SatelliteGaussianFit3D(GaussianFit3D):
 
         return obj
 
-    def func(self, Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sigma0, sigma1, sigma2, phi, theta, omega):
+    def func(self, Q0, Q1, Q2, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sigma0, sigma1, sigma2, phi, theta, omega):
 
-        args0 = Q0, Q1, Q2, A0, mu0, mu1, mu2-delta, sigma0, sigma1, sigma2, phi, theta, omega
-        args1 = Q0, Q1, Q2, A1, mu0, mu1, mu2,       sigma0, sigma1, sigma2, phi, theta, omega
-        args2 = Q0, Q1, Q2, A2, mu0, mu1, mu2+delta, sigma0, sigma1, sigma2, phi, theta, omega
+        args0 = Q0, Q1, Q2, A0, mu0, mu1, mu2-delta, sigma0*scale, sigma1*scale, sigma2*scale, phi, theta, omega
+        args1 = Q0, Q1, Q2, A1, mu0, mu1, mu2,       sigma0,       sigma1,       sigma2,       phi, theta, omega
+        args2 = Q0, Q1, Q2, A2, mu0, mu1, mu2+delta, sigma0*scale, sigma1*scale, sigma2*scale, phi, theta, omega
 
         return self.gaussian(*args0)+self.gaussian(*args1)+self.gaussian(*args2)+B+C0*Q0+C1*Q1+C2*Q2
 
     def fit(self):
 
-        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
+        out = Minimizer(self.residual, self.params, fcn_args=(self.x, self.y, self.e), nan_policy='omit', reduce_fcn='negentropy') #, Dfun=self.gradient, col_deriv=True, nan_policy='omit'
         result = out.minimize(method='leastsq')
 
         #result = out.prepare_fit()
@@ -1878,6 +1899,7 @@ class SatelliteGaussianFit3D(GaussianFit3D):
         mu2 = result.params['mu2'].value
 
         delta = result.params['delta'].value
+        scale = result.params['scale'].value
 
         sigma0 = result.params['sigma0'].value
         sigma1 = result.params['sigma1'].value
@@ -1901,7 +1923,7 @@ class SatelliteGaussianFit3D(GaussianFit3D):
         sig0, sig1, sig2 = sig[0], sig[1], sig[2]
         rho12, rho02, rho01 = rho[1,2], rho[0,2], rho[0,1]
 
-        return A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01, boundary
+        return A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sig0, sig1, sig2, rho12, rho02, rho01, boundary
 
     def check_outside(self, A0, A1, A2, B, mu0, mu1, mu2, sigma0, sigma1, sigma2, params):
 
@@ -1953,11 +1975,12 @@ class SatelliteGaussianFit3D(GaussianFit3D):
 
         return boundary
 
-    def model(self, x, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01):
+    def model(self, x, A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sig0, sig1, sig2, rho12, rho02, rho01):
 
-        S = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
+        S  = self.covariance_matrix(sig0, sig1, sig2, rho12, rho02, rho01)
 
         inv_S = np.linalg.inv(S)
+        inv_s = inv_S/scale**2
 
         x0, x1, x2_1 = x[0]-mu0, x[1]-mu1, x[2]-mu2
 
@@ -1965,10 +1988,11 @@ class SatelliteGaussianFit3D(GaussianFit3D):
         x2_2 = x2_1+delta
 
         norm = np.sqrt(np.linalg.det(2*np.pi*S))
+        factor = scale**3
 
-        return (A0*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_0**2\
-                            +2*(inv_S[1,2]*x1*x2_0+inv_S[0,2]*x0*x2_0+inv_S[0,1]*x0*x1)))\
+        return (A0*np.exp(-0.5*(inv_s[0,0]*x0**2  +inv_s[1,1]*x1**2  +inv_s[2,2]*x2_0**2\
+                            +2*(inv_s[1,2]*x1*x2_0+inv_s[0,2]*x0*x2_0+inv_s[0,1]*x0*x1)))/factor\
                +A1*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_1**2\
                             +2*(inv_S[1,2]*x1*x2_1+inv_S[0,2]*x0*x2_1+inv_S[0,1]*x0*x1)))\
-               +A2*np.exp(-0.5*(inv_S[0,0]*x0**2  +inv_S[1,1]*x1**2  +inv_S[2,2]*x2_2**2\
-                            +2*(inv_S[1,2]*x1*x2_2+inv_S[0,2]*x0*x2_2+inv_S[0,1]*x0*x1))))/norm+B+C0*x0+C1*x1+C2*x2_1
+               +A2*np.exp(-0.5*(inv_s[0,0]*x0**2  +inv_s[1,1]*x1**2  +inv_s[2,2]*x2_2**2\
+                            +2*(inv_s[1,2]*x1*x2_2+inv_s[0,2]*x0*x2_2+inv_s[0,1]*x0*x1)))/factor)/norm+B+C0*x0+C1*x1+C2*x2_1

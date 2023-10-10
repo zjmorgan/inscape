@@ -33,7 +33,7 @@ def load_input_file(filename):
                         val = True
                     elif val.count(';') > 0:
                         if val.count(',') > 0 and val.count('-') == 0:
-                            val = [[int(x) for x in v.split(',')] for v in val.split(';')]
+                            val = [[int(x) if x.isdigit() else float(x) for x in v.split(',')] for v in val.split(';')]
                         elif val.count(',') > 0 and val.count('-') > 0:
                             val = [[np.arange(*[int(y)+i%2 for i, y in enumerate(x.replace(':','-').split('-'))]).tolist() if x.count('-') > 0 and x[0] != '-' else \
                                    float(x) for x in v.split(',')] if not v.isdigit() else

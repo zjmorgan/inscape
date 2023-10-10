@@ -5,6 +5,7 @@ from mantid.geometry import Goniometer
 
 import os
 import re
+import glob
 import psutil
 import itertools
 
@@ -23,7 +24,34 @@ import img2pdf
 import fitting
 from fitting import Ellipsoid, Profile, Projection, LineCut, GaussianFit3D, SatelliteGaussianFit3D
 
-def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, key, binsize=0.01, radius=0.15, exp=None, close=False):
+def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, n, u, v, key, binsize=0.01, radius=0.15, exp=None, close=False):
+
+    W = np.column_stack((u,v,n))
+
+    Q_rot = np.dot(W.T, Q0)
+
+    if close:
+        dQ = np.array([radius,radius,radius+np.linalg.norm(delta_Q0)])
+    else:
+        dQ = np.array([radius,radius,radius])
+
+    dQp = np.array([binsize,binsize,binsize])
+
+    extents = [[Q_rot[0]-dQ[0],Q_rot[0]+dQ[0]],
+               [Q_rot[1]-dQ[1],Q_rot[1]+dQ[1]],
+               [Q_rot[2]-dQ[2],Q_rot[2]+dQ[2]]]
+
+    bins = [int(round(2*dQ[0]/dQp[0]))+1,
+            int(round(2*dQ[1]/dQp[1]))+1,
+            int(round(2*dQ[2]/dQp[2]))+1]
+
+    steps = [(extents[0][1]-extents[0][0])/bins[0],
+             (extents[1][1]-extents[1][0])/bins[1],
+             (extents[2][1]-extents[2][0])/bins[2]]
+
+    Q0_bin = [extents[0][0],steps[0],extents[0][1]]
+    Q1_bin = [extents[1][0],steps[1],extents[1][1]]
+    Q2_bin = [extents[2][0],steps[2],extents[2][1]]
 
     for j, (r, b, i) in enumerate(zip(runs, banks, indices)):
 
@@ -38,54 +66,6 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
             ows = '{}_{}_{}_{}'.format(instrument,exp,r,i)
 
         omd = ows+'_md'
-
-        if j == 0:
-
-            if close:
-                n = delta_Q0/np.linalg.norm(delta_Q0)
-            else:
-                n = Q0/np.linalg.norm(Q0)
-
-            n_ind = np.argmin(np.abs(n))
-
-            u = np.zeros(3)
-            u[n_ind] = 1
-
-            u = np.cross(n, u)
-            u /= np.linalg.norm(u)
-
-            v = np.cross(n, u)
-            v *= np.sign(np.dot(np.cross(u, n), v))
-
-            if np.abs(u[1]) > np.abs(v[1]):
-                u, v = v, -u
-
-            W = np.column_stack((u,v,n))
-
-            Q_rot = np.dot(W.T, Q0)
-
-            if close:
-                dQ = np.array([radius,radius,radius])
-            else:
-                dQ = np.array([radius,radius,radius])
-
-            dQp = np.array([binsize,binsize,binsize])
-
-            extents = [[Q_rot[0]-dQ[0],Q_rot[0]+dQ[0]],
-                       [Q_rot[1]-dQ[1],Q_rot[1]+dQ[1]],
-                       [Q_rot[2]-dQ[2],Q_rot[2]+dQ[2]]]
-
-            bins = [int(round(2*dQ[0]/dQp[0]))+1,
-                    int(round(2*dQ[1]/dQp[1]))+1,
-                    int(round(2*dQ[2]/dQp[2]))+1]
-
-            steps = [(extents[0][1]-extents[0][0])/bins[0],
-                     (extents[1][1]-extents[1][0])/bins[1],
-                     (extents[2][1]-extents[2][0])/bins[2]]
-
-            Q0_bin = [extents[0][0],steps[0],extents[0][1]]
-            Q1_bin = [extents[1][0],steps[1],extents[1][1]]
-            Q2_bin = [extents[2][0],steps[2],extents[2][1]]
 
         ws = omd if facility == 'SNS' else ows
 
@@ -106,11 +86,9 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
                    Dimension0Binning='{},{},{}'.format(*Q0_bin),
                    Dimension1Binning='{},{},{}'.format(*Q1_bin),
                    Dimension2Binning='{},{},{}'.format(*Q2_bin),
-                   OutputWorkspace='normDataMD',
+                   OutputWorkspace='normDataMD_{}'.format(j),
                    OutputDataWorkspace='tmpDataMD_{}'.format(j),
                    OutputNormalizationWorkspace='tmpNormMD_{}'.format(j))
-
-            DeleteWorkspace('normDataMD')
 
         else:
 
@@ -161,6 +139,31 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
             scale = float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('Sum of Counts').value)
             mtd['tmpNormMD_{}'.format(j)] /= scale
 
+            DivideMD(LHSWorkspace='tmpDataMD_{}'.format(j), RHSWorkspace='tmpNormMD_{}'.format(j), OutputWorkspace='normDataMD_{}'.format(j))
+
+        values  = mtd['tmpDataMD_{}'.format(j)].getSignalArray().copy()
+        weights = mtd['tmpNormMD_{}'.format(j)].getSignalArray().copy()
+
+        mask = (weights > 0)*1
+
+#         l0, r0 = np.cumsum(mask, axis=0) == 1, np.cumsum(mask[::-1,:,:], axis=0)[::-1,:,:] == 1
+#         l1, r1 = np.cumsum(mask, axis=1) == 1, np.cumsum(mask[:,::-1,:], axis=1)[:,::-1,:] == 1
+#         l2, r2 = np.cumsum(mask, axis=2) == 1, np.cumsum(mask[:,:,::-1], axis=2)[:,:,::-1] == 1
+# 
+#         weights[l0] = 0
+#         weights[l1] = 0
+#         weights[l2] = 0
+# 
+#         weights[r0] = 0
+#         weights[r1] = 0
+#         weights[r2] = 0
+
+        mask = ~(weights > 0)
+        values[mask] = 0
+
+        mtd['tmpDataMD_{}'.format(j)].setSignalArray(values)
+        mtd['tmpNormMD_{}'.format(j)].setSignalArray(weights)
+
         if j == 0:
             CloneMDWorkspace(InputWorkspace='tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
             CloneMDWorkspace(InputWorkspace='tmpNormMD_{}'.format(j), OutputWorkspace='normMD')
@@ -168,8 +171,8 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
             PlusMD(LHSWorkspace='dataMD', RHSWorkspace='tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
             PlusMD(LHSWorkspace='normMD', RHSWorkspace='tmpNormMD_{}'.format(j), OutputWorkspace='normMD')
 
-            # DeleteWorkspace('tmpDataMD_{}'.format(j))
-            # DeleteWorkspace('tmpNormMD_{}'.format(j))
+        # DeleteWorkspace('tmpDataMD_{}'.format(j))
+        # DeleteWorkspace('tmpNormMD_{}'.format(j))
 
     DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normDataMD')
 
@@ -181,9 +184,9 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
     mtd['normMD'].clearOriginalWorkspaces()
     mtd['normDataMD'].clearOriginalWorkspaces()
 
-    #SaveMD(InputWorkspace='dataMD', Filename='/tmp/dataMD_'+str(key)+'.nxs')
-    #SaveMD(InputWorkspace='normMD', Filename='/tmp/normMD_'+str(key)+'.nxs')
-    #SaveMD(InputWorkspace='normDataMD', Filename='/tmp/normDataMD_'+str(key)+'.nxs')
+    # SaveMD(InputWorkspace='dataMD', Filename='/tmp/dataMD_'+str(key)+'.nxs')
+    # SaveMD(InputWorkspace='normMD', Filename='/tmp/normMD_'+str(key)+'.nxs')
+    # SaveMD(InputWorkspace='normDataMD', Filename='/tmp/normDataMD_'+str(key)+'.nxs')
 
     QXaxis = mtd['normDataMD'].getXDimension()
     QYaxis = mtd['normDataMD'].getYDimension()
@@ -203,7 +206,9 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
     Q1 = W[1,0]*Qx+W[1,1]*Qy+W[1,2]*Qz
     Q2 = W[2,0]*Qx+W[2,1]*Qy+W[2,2]*Qz
 
-    mask = mtd['normMD'].getSignalArray() > 0
+    weights = mtd['normMD'].getSignalArray().copy()
+
+    mask = weights > 0
 
     Q = np.sqrt(Q0**2+Q1**2+Q2**2)
 
@@ -212,7 +217,7 @@ def box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, 
     data = mtd['dataMD'].getSignalArray().copy()[mask]
     norm = mtd['normMD'].getSignalArray().copy()[mask]
 
-    return Q, Q0, Q1, Q2, data, norm
+    return Q, Q0, Q1, Q2, data, norm, mask
 
 def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
@@ -237,8 +242,8 @@ def partial_integration(signal, Q0, Q1, Q2, Q_rot, D_pk, D_bkg_in, D_bkg_out):
 
     return pk, bkg, pk_Q0, pk_Q1, pk_Q2, bkg_Q0, bkg_Q1, bkg_Q2 
 
-def norm_integrator_fast(runs, Q0, delta_Q0, Q1, D, W, bin_size=0.025, box_size=2.0, peak_ellipsoid=1.26,
-                         inner_bkg_ellipsoid=1.59, outer_bkg_ellipsoid=2.0, bins=[11,11,11], exp=None, close=False):
+def norm_integrator_fast(runs, Q0, delta_Q0, Q1, D, W, bin_size=0.025, box_size=2.4, peak_ellipsoid=1.26,
+                         inner_bkg_ellipsoid=1.59, outer_bkg_ellipsoid=2.0, bins=[13,13,13], exp=None, close=False):
 
     if close:
         n = delta_Q0/np.linalg.norm(delta_Q0)
@@ -386,7 +391,7 @@ def norm_integrator_fast(runs, Q0, delta_Q0, Q1, D, W, bin_size=0.025, box_size=
     return Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg_data_norm, pk_bkg_cntrs
 
 def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, D, W, bin_size=0.025,
-                    box_size=2.0, peak_ellipsoid=1.26, inner_bkg_ellipsoid=1.59, outer_bkg_ellipsoid=2.0, bins=[11,11,11], exp=None, close=False):
+                    box_size=2.4, peak_ellipsoid=1.26, inner_bkg_ellipsoid=1.59, outer_bkg_ellipsoid=2.0, bins=[13,13,13], exp=None, close=False):
 
     Q_radii = 1/np.sqrt(D.diagonal())
 
@@ -394,23 +399,39 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
 
     dQp = np.array([bin_size,bin_size,bin_size])
 
+    # if close:
+    #     bins[2] *= 3
+
     D_pk = D/peak_ellipsoid**2
     D_bkg_in = D/inner_bkg_ellipsoid**2
     D_bkg_out = D/outer_bkg_ellipsoid**2
 
-    Q_rot = np.dot(W.T,Q0)
+    Q_rot = np.dot(W.T, Q0)
 
     Q_min, Q_max = Q_rot-dQ, Q_rot+dQ
 
-    ext = np.isclose(Q_min, Q_max)
+    min_ext = ~np.isfinite(Q_min)
+    max_ext = ~np.isfinite(Q_max)
 
+    if min_ext.any():
+        Q_min[min_ext] = -0.01
+    if max_ext.any():
+        Q_max[max_ext] = +0.01
+
+    ext = Q_max-Q_min <= 0
     if ext.any():
-        Q_min[ext] -= 0.05
-        Q_max[ext] += 0.05
+        Q_min[ext] = -0.01
+        Q_max[ext] = +0.01
 
     _, Q0_bin_size = np.linspace(Q_min[0], Q_max[0], bins[0], retstep=True)
     _, Q1_bin_size = np.linspace(Q_min[1], Q_max[1], bins[1], retstep=True)
     _, Q2_bin_size = np.linspace(Q_min[2], Q_max[2], bins[2], retstep=True)
+    
+    ext = Q_max-Q_min <= 1e-4
+
+    if ext.any():
+        Q_min[ext] -= 0.01
+        Q_max[ext] += 0.01
 
     if not np.isclose(Q0_bin_size, 0):
         dQp[0] = np.min([Q0_bin_size,bin_size])
@@ -419,11 +440,19 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
     if not np.isclose(Q2_bin_size, 0):
         dQp[2] = np.min([Q2_bin_size,bin_size])
 
-    Qbins = np.round(2*dQ/dQp).astype(int)+1
+    dQp[:] = [Q0_bin_size,Q1_bin_size,Q2_bin_size]
 
-    Q0_bin = [Q_min[0],dQp[0],Q_max[0]]
-    Q1_bin = [Q_min[1],dQp[1],Q_max[1]]
-    Q2_bin = [Q_min[2],dQp[2],Q_max[2]]
+    # dQ = Q_max-Q_min
+
+    # if dQ[0] <= dQp[0]:
+    #     dQp[0] = Q0_bin_size
+    # if dQ[1] <= dQp[1]:
+    #     dQp[1] = Q1_bin_size
+    # if dQ[2] <= dQp[2]:
+    #     dQp[2] = Q2_bin_size
+
+    Qbins = np.round(np.abs(2*dQ/dQp)).astype(int)+1
+    Qbins[Qbins <=0] = 2
 
     box_data, box_norm = [], []
 
@@ -448,6 +477,10 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
 
         SetUB(Workspace=ws, UB=np.eye(3)/(2*np.pi)) # hack to transform axes
 
+        Q0_bin = [Q_min[0],dQp[0],Q_max[0]]
+        Q1_bin = [Q_min[1],dQp[1],Q_max[1]]
+        Q2_bin = [Q_min[2],dQp[2],Q_max[2]]
+
         if facility == 'SNS':
 
             MDNorm(InputWorkspace=omd,
@@ -463,11 +496,9 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
                    Dimension0Binning='{},{},{}'.format(*Q0_bin),
                    Dimension1Binning='{},{},{}'.format(*Q1_bin),
                    Dimension2Binning='{},{},{}'.format(*Q2_bin),
-                   OutputWorkspace='normDataMD',
+                   OutputWorkspace='normDataMD_{}'.format(j),
                    OutputDataWorkspace='tmpDataMD_{}'.format(j),
                    OutputNormalizationWorkspace='tmpNormMD_{}'.format(j))
-
-            DeleteWorkspace('normDataMD')
 
         else:
 
@@ -486,9 +517,9 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
                               Uproj='{},{},{}'.format(*W[:,0]),
                               Vproj='{},{},{}'.format(*W[:,1]),
                               Wproj='{},{},{}'.format(*W[:,2]),
-                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],bins[0]),
-                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],bins[1]),
-                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
+                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],Qbins[0]),
+                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],Qbins[1]),
+                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],Qbins[2]))
 
             DeleteWorkspace('tmp')
             DeleteWorkspace('tmp_normalization')
@@ -506,9 +537,9 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
                               Uproj='{},{},{}'.format(*W[:,0]),
                               Vproj='{},{},{}'.format(*W[:,1]),
                               Wproj='{},{},{}'.format(*W[:,2]),
-                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],bins[0]),
-                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],bins[1]),
-                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],bins[2]))
+                              BinningDim0='{},{},{}'.format(Q0_bin[0],Q0_bin[2],Qbins[0]),
+                              BinningDim1='{},{},{}'.format(Q1_bin[0],Q1_bin[2],Qbins[1]),
+                              BinningDim2='{},{},{}'.format(Q2_bin[0],Q2_bin[2],Qbins[2]))
 
             DeleteWorkspace('tmp')
             DeleteWorkspace('tmp_normalization')
@@ -517,6 +548,31 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
 
             scale = float(mtd['van_'+ows].getExperimentInfo(0).run().getProperty('Sum of Counts').value)
             mtd['tmpNormMD_{}'.format(j)] /= scale
+
+            DivideMD(LHSWorkspace='tmpDataMD_{}'.format(j), RHSWorkspace='tmpNormMD_{}'.format(j), OutputWorkspace='normDataMD_{}'.format(j))
+
+        values  = mtd['tmpDataMD_{}'.format(j)].getSignalArray().copy()
+        weights = mtd['tmpNormMD_{}'.format(j)].getSignalArray().copy()
+
+#         mask = (weights > 0)*1
+# 
+#         l0, r0 = np.cumsum(mask, axis=0) == 1, np.cumsum(mask[::-1,:,:], axis=0)[::-1,:,:] == 1
+#         l1, r1 = np.cumsum(mask, axis=1) == 1, np.cumsum(mask[:,::-1,:], axis=1)[:,::-1,:] == 1
+#         l2, r2 = np.cumsum(mask, axis=2) == 1, np.cumsum(mask[:,:,::-1], axis=2)[:,:,::-1] == 1
+# 
+#         weights[l0] = 0
+#         weights[l1] = 0
+#         weights[l2] = 0
+# 
+#         weights[r0] = 0
+#         weights[r1] = 0
+#         weights[r2] = 0
+
+        mask = ~(weights > 0)
+        values[mask] = 0
+
+        mtd['tmpDataMD_{}'.format(j)].setSignalArray(values)
+        mtd['tmpNormMD_{}'.format(j)].setSignalArray(weights)
 
         if j == 0:
             CloneMDWorkspace(InputWorkspace='tmpDataMD_{}'.format(j), OutputWorkspace='dataMD')
@@ -542,6 +598,10 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
             Qy = 0.5*(Qy[1:]+Qy[:-1])
             Qz = 0.5*(Qz[1:]+Qz[:-1])
 
+            dQpx = np.diff(Qx).mean()
+            dQpy = np.diff(Qy).mean()
+            dQpz = np.diff(Qz).mean()
+
             Q0_bin_grid, Q1_bin_grid, Q2_bin_grid = np.meshgrid(Qx, Qy, Qz, indexing='ij')
 
         signal = bin_data/bin_norm
@@ -560,14 +620,26 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
         pk_norm.append(pk)
         bkg_norm.append(bkg)
 
-        DeleteWorkspace('tmpDataMD_{}'.format(j))
-        DeleteWorkspace('tmpNormMD_{}'.format(j))
+        # DeleteWorkspace('tmpDataMD_{}'.format(j))
+        # DeleteWorkspace('tmpNormMD_{}'.format(j))
+
+    DivideMD(LHSWorkspace='dataMD', RHSWorkspace='normMD', OutputWorkspace='normDataMD')
+
+    SetMDFrame(InputWorkspace='dataMD', MDFrame='QSample', Axes=[0,1,2])
+    SetMDFrame(InputWorkspace='normMD', MDFrame='QSample', Axes=[0,1,2])
+    SetMDFrame(InputWorkspace='normDataMD', MDFrame='QSample', Axes=[0,1,2])
+
+    mtd['dataMD'].clearOriginalWorkspaces()
+    mtd['normMD'].clearOriginalWorkspaces()
+    mtd['normDataMD'].clearOriginalWorkspaces()
 
     bin_data = np.sum(box_data, axis=0)
     bin_norm = np.sum(box_norm, axis=0)
 
     signal = bin_data/bin_norm
     error = np.sqrt(bin_data)/bin_norm
+
+    dQp[:] = [dQpx,dQpy,dQpz]
 
     pk_bkg_data_norm = (pk_data, pk_norm, bkg_data, bkg_norm, dQp)
     data_norm = (Q0_bin_grid, Q1_bin_grid, Q2_bin_grid, box_data, box_norm)
@@ -579,6 +651,47 @@ def norm_integrator(facility, instrument, runs, banks, indices, split_angle, Q0,
     Q_bin = (Q0_bin, Q1_bin, Q2_bin)
 
     return Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg_data_norm, pk_bkg_cntrs
+
+def centroid_individual_peaks(runs, Q0, W):
+
+    Q_rot = np.dot(W.T, Q0)
+
+    Q0axis = mtd['normDataMD'].getXDimension()
+    Q1axis = mtd['normDataMD'].getYDimension()
+    Q2axis = mtd['normDataMD'].getZDimension()
+
+    Q0 = np.linspace(Q0axis.getMinimum(), Q0axis.getMaximum(), Q0axis.getNBoundaries())
+    Q1 = np.linspace(Q1axis.getMinimum(), Q1axis.getMaximum(), Q1axis.getNBoundaries())
+    Q2 = np.linspace(Q2axis.getMinimum(), Q2axis.getMaximum(), Q2axis.getNBoundaries())
+
+    Q0 = 0.5*(Q0[1:]+Q0[:-1])
+    Q1 = 0.5*(Q1[1:]+Q1[:-1])
+    Q2 = 0.5*(Q2[1:]+Q2[:-1])
+
+    Q0, Q1, Q2 = np.meshgrid(Q0, Q1, Q2, indexing='ij')
+
+    dQ0_rot = np.zeros_like(runs)
+    dQ1_rot = np.zeros_like(runs)
+    dQ2_rot = np.zeros_like(runs)
+
+    for j, r in enumerate(runs):
+
+        data_norm = mtd['normDataMD_{}'.format(j)].getSignalArray().copy()
+
+        mask = (data_norm > 0) & np.isfinite(data_norm)
+        weights = data_norm[mask]
+
+        if weights.size > 50:
+
+            dQ0_rot[j] = -Q_rot[0]+np.average(Q0[mask], weights=weights**2)
+            dQ1_rot[j] = -Q_rot[1]+np.average(Q1[mask], weights=weights**2)
+            dQ2_rot[j] = -Q_rot[2]+np.average(Q2[mask], weights=weights**2)
+
+    dQx = W[0,0]*dQ0_rot+W[0,1]*dQ1_rot+W[0,2]*dQ2_rot
+    dQy = W[1,0]*dQ0_rot+W[1,1]*dQ1_rot+W[1,2]*dQ2_rot
+    dQz = W[2,0]*dQ0_rot+W[2,1]*dQ1_rot+W[2,2]*dQ2_rot
+
+    return dQx, dQy, dQz
 
 def load_normalization_calibration(facility, instrument, spectrum_file, counts_file,
                                    tube_calibration, detector_calibration, mask_file):
@@ -760,14 +873,25 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
                 #                                              dEAnalysisMode='Elastic',
                 #                                              Q3DFrames='Q')
 
+                min_vals, max_vals = ConvertToMDMinMaxLocal(InputWorkspace=ows,
+                                                             QDimensions='Q3D',
+                                                             dEAnalysisMode='Elastic',
+                                                             Q3DFrames='Q_sample',
+                                                             LorentzCorrection=False,
+                                                             Uproj='1,0,0',
+                                                             Vproj='0,1,0',
+                                                             Wproj='0,0,1')
+
+                # print(min_vals, max_vals)
+
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
                             QDimensions='Q3D',
                             dEAnalysisMode='Elastic',
                             Q3DFrames='Q_sample',
                             LorentzCorrection=False,
-                            MinValues='{},{},{}'.format(-Q_max,-Q_max,-Q_max),
-                            MaxValues='{},{},{}'.format(Q_max,Q_max,Q_max),
+                            MinValues=min_vals,
+                            MaxValues=max_vals,
                             Uproj='1,0,0',
                             Vproj='0,1,0',
                             Wproj='0,0,1')
@@ -835,8 +959,12 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
                                     OutputWorkspace=omd)
 
             if type(ub_file) is list:
+                if HasUB(omd):
+                    ClearUB(omd)
                 LoadIsawUB(InputWorkspace=omd, Filename=ub_file[i])
             elif type(ub_file) is str:
+                if HasUB(omd):
+                    ClearUB(omd)
                 LoadIsawUB(InputWorkspace=omd, Filename=ub_file)
             else:
                 # UB = mtd[ows].getExperimentInfo(0).run().getProperty('ubmatrix').value
@@ -849,7 +977,7 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
             if facility == 'SNS':
 
                 if instrument == 'CORELLI':
-                    k_min, k_max = 2.5, 10
+                    k_min, k_max = 2.5, 8
                 elif instrument == 'TOPAZ':
                     k_min, k_max = 1.8, 12.5
                 elif instrument == 'MANDI':
@@ -862,7 +990,7 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
                 Q_max = 4*np.pi/lamda_min*np.sin(np.deg2rad(two_theta_max)/2)
 
                 min_d_spacing = 2*np.pi/Q_max
-                max_d_spacing = np.max([mtd[omd].getExperimentInfo(0).sample().getOrientedLattice().d(*hkl) for hkl in [(1,0,0),(0,1,0),(0,0,1)]])
+                max_d_spacing = np.max([mtd[omd].getExperimentInfo(0).sample().getOrientedLattice().d(*hkl) for hkl in [(1,0,0),(0,1,0),(0,0,1)]])*1.2
 
                 PredictPeaks(InputWorkspace=omd,
                              WavelengthMin=lamda_min,
@@ -1319,7 +1447,7 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
                     if type(prop.value) is np.ndarray:
                         run.addProperty(log, 0, True)
 
-            for pn in range(mtd[opk].getNumberPeaks()):
+            for pn in range(mtd[opk].getNumberPeaks()-1,-1,-1):
 
                 pk = mtd[opk].getPeak(pn)
 
@@ -1401,8 +1529,11 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
                 else:
                     tmp_outname = '{}_{}_{}.nxs'.format(instrument,r,no)
 
-                SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
-                SaveMD(InputWorkspace='crop_norm', Filename=os.path.join(tmp_directory, 'van_'+tmp_outname))
+                if i_stop-i_start > 1:
+                    SaveMD(InputWorkspace='crop_data', Filename=os.path.join(tmp_directory, tmp_outname))
+                    SaveMD(InputWorkspace='crop_norm', Filename=os.path.join(tmp_directory, 'van_'+tmp_outname))
+                else:
+                    mtd[opk].removePeak(pn)
 
                 DeleteWorkspace('crop_data')
                 DeleteWorkspace('crop_norm')
@@ -1444,7 +1575,7 @@ def pre_integration(runs, proc, outname, outdir, dbgdir, directory, facility, in
             norm_scale = mtd[ows].getRun().getPropertyAsSingleValueWithTimeAveragedMean('gd_prtn_chrg')
         else:
             norm_scale = 1
-        
+
         mtd['run_info'].addRow([r,norm_scale])
 
         if mtd.doesExist(ows):
@@ -1503,10 +1634,11 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                 if split_angle > 0:
 
                     if instrument == 'CORELLI':
-                        if b == 1 or b == 91:
-                            bank = 'bank{}'.format(b)
-                        else:
-                            bank = ','.join(['bank{}'.format(bank) for bank in [b-1,b,b+1]])
+                        banks_to_load = []
+                        for bind in range(-2,2+1):
+                            if b+bind >= 1 and b+bind <= 91:
+                                banks_to_load.append(b+bind)
+                        bank = ','.join(['bank{}'.format(bank) for bank in banks_to_load])
                     else:
                         bank = 'bank{}'.format(b)
 
@@ -1515,6 +1647,7 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                    SingleBankPixelsOnly=True,
                                    Precount=True,
                                    LoadLogs=False,
+                                   #FilterByTimeStop=60,
                                    LoadNexusInstrumentXML=False,
                                    OutputWorkspace=ows)
 
@@ -1588,13 +1721,18 @@ def partial_load(facility, instrument, runs, banks, indices, phi, chi, omega, no
                                            XMax=mtd['flux'].dataX(0).max(),
                                            OutputWorkspace=ows)
 
-                min_vals, max_vals = ConvertToMDMinMaxGlobal(InputWorkspace=ows,
+                min_vals, max_vals = ConvertToMDMinMaxLocal(InputWorkspace=ows,
                                                              QDimensions='Q3D',
                                                              dEAnalysisMode='Elastic',
-                                                             Q3DFrames='Q')
+                                                             Q3DFrames='Q_sample',
+                                                             LorentzCorrection=False,
+                                                             Uproj='1,0,0',
+                                                             Vproj='0,1,0',
+                                                             Wproj='0,0,1')
 
-                if np.isinf(min_vals).any() or np.isinf(max_vals).any():
-                    min_vals, max_vals = [-20,-20,-20], [20,20,20]
+                # if np.isinf(min_vals).any() or np.isinf(max_vals).any():
+                #     min_vals, max_vals = [-20,-20,-20], [20,20,20]
+                #min_vals, max_vals = [-20,-20,-20], [20,20,20]
 
                 ConvertToMD(InputWorkspace=ows,
                             OutputWorkspace=omd,
@@ -1695,7 +1833,7 @@ def partial_cleanup(runs, banks, indices, facility, instrument, split_angle, run
 def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, box_fit_size,
                      spectrum_file, counts_file, tube_calibration, detector_calibration, mask_file,
                      outdir, dbgdir, directory, facility, instrument, ipts, runs,
-                     split_angle, min_d, min_d_sat, a, b, c, alpha, beta, gamma, reflection_condition,
+                     split_angle, min_d, min_d_sat, sat_only, a, b, c, alpha, beta, gamma, reflection_condition,
                      mod_vector_1, mod_vector_2, mod_vector_3, max_order, cross_terms,
                      chemical_formula, z_parameter, sample_mass, elastic, timing_offset, experiment, tmp, cluster):
 
@@ -1741,6 +1879,18 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                         FilterValue=min_d, 
                         Operator='>')
 
+        if sat_only:
+            FilterPeaks(InputWorkspace=opk.format(r),
+                        OutputWorkspace=opk.format(r),
+                        FilterVariable='m^2+n^2+p^2',
+                        FilterValue=0, 
+                        Operator='>')
+            FilterPeaks(InputWorkspace=opk.format(r),
+                        OutputWorkspace=opk.format(r),
+                        FilterVariable='DSpacing',
+                        FilterValue=min_d_sat, 
+                        Operator='>')
+
         if max_order > 0:
 
             ol = mtd[opk.format(r)].sample().getOrientedLattice()
@@ -1757,56 +1907,56 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
             ol.setModUB(mod_UB)
 
-            mod_1 = np.linalg.norm(mod_vector_1) > 0
-            mod_2 = np.linalg.norm(mod_vector_2) > 0
-            mod_3 = np.linalg.norm(mod_vector_3) > 0
-
-            ind_1 = np.arange(-max_order*mod_1,max_order*mod_1+1).tolist()
-            ind_2 = np.arange(-max_order*mod_2,max_order*mod_2+1).tolist()
-            ind_3 = np.arange(-max_order*mod_3,max_order*mod_3+1).tolist()
-
-            if cross_terms:
-                iter_mnp = list(itertools.product(ind_1,ind_2,ind_3))
-            else:
-                iter_mnp = list(set(list(itertools.product(ind_1,[0],[0]))\
-                                  + list(itertools.product([0],ind_2,[0]))\
-                                  + list(itertools.product([0],[0],ind_3))))
-
-            iter_mnp = [iter_mnp[s] for s in np.lexsort(np.array(iter_mnp).T, axis=0)]
-
-            for pn in range(mtd[opk.format(r)].getNumberPeaks()):
-                pk = mtd[opk.format(r)].getPeak(pn)
-                hkl = pk.getHKL()
-                for m, n, p in iter_mnp:
-                    d_hkl = m*np.array(mod_vector_1)\
-                          + n*np.array(mod_vector_2)\
-                          + p*np.array(mod_vector_3)
-                    HKL = np.round(hkl-d_hkl,4)
-                    mnp = [m,n,p]
-                    H, K, L = HKL
-                    h, k, l = int(H), int(K), int(L)
-                    if reflection_condition == 'Primitive':
-                        allowed = True
-                    elif reflection_condition == 'C-face centred':
-                        allowed = (h + k) % 2 == 0
-                    elif reflection_condition == 'A-face centred':
-                        allowed = (k + l) % 2 == 0
-                    elif reflection_condition == 'B-face centred':
-                        allowed = (h + l) % 2 == 0
-                    elif reflection_condition == 'Body centred':
-                        allowed = (h + k + l) % 2 == 0
-                    elif reflection_condition == 'All-face centred':
-                        allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
-                    elif reflection_condition == 'Rhombohedrally centred, obverse':
-                        allowed = (-h + k + l) % 3 == 0
-                    elif reflection_condition == 'Rhombohedrally centred, reverse':
-                        allowed = (h - k + l) % 3 == 0
-                    elif reflection_condition == 'Hexagonally centred, reverse':
-                        allowed = (h - k) % 3 == 0
-                    if np.isclose(np.linalg.norm(np.mod(HKL,1)), 0) and allowed:
-                        HKL = HKL.astype(int).tolist()
-                        pk.setIntMNP(V3D(*mnp))
-                        pk.setIntHKL(V3D(*HKL))
+#             mod_1 = np.linalg.norm(mod_vector_1) > 0
+#             mod_2 = np.linalg.norm(mod_vector_2) > 0
+#             mod_3 = np.linalg.norm(mod_vector_3) > 0
+# 
+#             ind_1 = np.arange(-max_order*mod_1,max_order*mod_1+1).tolist()
+#             ind_2 = np.arange(-max_order*mod_2,max_order*mod_2+1).tolist()
+#             ind_3 = np.arange(-max_order*mod_3,max_order*mod_3+1).tolist()
+# 
+#             if cross_terms:
+#                 iter_mnp = list(itertools.product(ind_1,ind_2,ind_3))
+#             else:
+#                 iter_mnp = list(set(list(itertools.product(ind_1,[0],[0]))\
+#                                   + list(itertools.product([0],ind_2,[0]))\
+#                                   + list(itertools.product([0],[0],ind_3))))
+# 
+#             iter_mnp = [iter_mnp[s] for s in np.lexsort(np.array(iter_mnp).T, axis=0)]
+# 
+#             for pn in range(mtd[opk.format(r)].getNumberPeaks()):
+#                 pk = mtd[opk.format(r)].getPeak(pn)
+#                 hkl = pk.getHKL()
+#                 for m, n, p in iter_mnp:
+#                     d_hkl = m*np.array(mod_vector_1)\
+#                           + n*np.array(mod_vector_2)\
+#                           + p*np.array(mod_vector_3)
+#                     HKL = np.round(hkl-d_hkl,4)
+#                     mnp = [m,n,p]
+#                     H, K, L = HKL
+#                     h, k, l = int(H), int(K), int(L)
+#                     if reflection_condition == 'Primitive':
+#                         allowed = True
+#                     elif reflection_condition == 'C-face centred':
+#                         allowed = (h + k) % 2 == 0
+#                     elif reflection_condition == 'A-face centred':
+#                         allowed = (k + l) % 2 == 0
+#                     elif reflection_condition == 'B-face centred':
+#                         allowed = (h + l) % 2 == 0
+#                     elif reflection_condition == 'Body centred':
+#                         allowed = (h + k + l) % 2 == 0
+#                     elif reflection_condition == 'All-face centred':
+#                         allowed = (h + l) % 2 == 0 and (k + l) % 2 == 0 and (h + k) % 2 == 0
+#                     elif reflection_condition == 'Rhombohedrally centred, obverse':
+#                         allowed = (-h + k + l) % 3 == 0
+#                     elif reflection_condition == 'Rhombohedrally centred, reverse':
+#                         allowed = (h - k + l) % 3 == 0
+#                     elif reflection_condition == 'Hexagonally centred, reverse':
+#                         allowed = (h - k) % 3 == 0
+#                     if np.isclose(np.linalg.norm(np.mod(HKL,1)), 0) and allowed:
+#                         HKL = HKL.astype(int).tolist()
+#                         pk.setIntMNP(V3D(*mnp))
+#                         pk.setIntHKL(V3D(*HKL))
 
         if mtd.doesExist('flux'):
             lamda_min = 2*np.pi/mtd['flux'].dataX(0).max()
@@ -1815,7 +1965,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
             lamda_min = None
             lamda_max = None
 
-        print('Adding run {}'.format(opk.format(r)), cluster, lamda_min, lamda_max)
+        # print('Adding run {}'.format(opk.format(r)), cluster, lamda_min, lamda_max)
 
         peak_dictionary.add_peaks(opk.format(r), cluster, lamda_min, lamda_max)
         
@@ -1935,6 +2085,14 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
     peak_params = open(os.path.join(dbgdir, '{}_params.txt'.format(outname)), 'w')
     excl_params = open(os.path.join(dbgdir, 'rej_{}_params.txt'.format(outname)), 'w')
 
+    # ---
+
+    ind_peak_stats = open(os.path.join(dbgdir, 'ind_{}_stats.txt'.format(outname)), 'w')
+    ind_excl_stats = open(os.path.join(dbgdir, 'rej_ind_{}_stats.txt'.format(outname)), 'w')
+
+    ind_peak_params = open(os.path.join(dbgdir, 'ind_{}_params.txt'.format(outname)), 'w')
+    ind_excl_params = open(os.path.join(dbgdir, 'rej_ind_{}_params.txt'.format(outname)), 'w')
+
     fmt_summary = 3*'{:8.2f}'+'{:8.4f}'+6*'{:8.2f}'+'{:4.0f}'+6*'{:8.2f}'+'\n'
     fmt_stats = 3*'{:8.2f}'+'{:8.4f}'+12*'{:10.2f}'+'{:10}\n'
     fmt_params = 3*'{:8.2f}'+'{:8.4f}'+2*'{:10.2e}'+6*'{:8.3f}'+3*'{:8.2f}'+'{:6.0f}'+2*'{:6}'+6*'{:8.3f}'+'\n'
@@ -1956,12 +2114,12 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
         H, K, L = peak_dictionary.get_hkl(h, k, l, m, n, p)
         d = peak_dictionary.get_d(h, k, l, m, n, p)
 
-        pk_env = os.path.join(dbgdir, '{}_{}_{}.png'.format(outname,i,j))
-        ex_env = os.path.join(dbgdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
-
         summary_list = [H, K, L, d]
         stats_list = [H, K, L, d]
         params_list = [H, K, L, d]
+
+        ind_stats_list = [H, K, L, d]
+        ind_params_list = [H, K, L, d]
 
         runs = peak.get_run_numbers().tolist()
         banks = peak.get_bank_numbers().tolist()
@@ -1985,8 +2143,10 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
         if cluster and d > min_d_sat:
             if len(sat_Qs) > 0:
+                sort_sat_keys = np.lexsort(np.array(sat_keys).T, axis=0)
+                sat_keys, sat_Qs = sat_keys[sort_sat_keys], sat_Qs[sort_sat_keys]
                 delta_Q0 = Q0-sat_Qs[0]
-                delta = np.linalg.norm(delta_Q0)
+                delta = delta_nom = np.linalg.norm(delta_Q0)
                 close = True
 
         phi = peak.get_phi_angles()
@@ -2018,15 +2178,15 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
         fit = True
         remove = False
-        reason = '   none   '
+
+        reason = '   no/ok  '
 
         ol = mtd['cws'].sample().getOrientedLattice()
 
         radius = box_fit_size[0]+box_fit_size[1]*2*np.pi/d
         binsize = radius/20
 
-        if close:
-            radius *= 2
+        #if close: radius *= 2
 
         if not remove:
 
@@ -2034,8 +2194,27 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                          phi, chi, omega, norm_scale, split_angle,
                          dbgdir, ipts, outname, detector_calibration, elastic, timing_offset, experiment, tmp)
 
-            Q, Qx, Qy, Qz, data, norm = box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, key,
-                                                       binsize=binsize, radius=radius, exp=experiment, close=close)
+            rot = True if facility == 'HFIR' else False
+
+            if close:
+                bins = [13,13,31] 
+            elif rot:
+                bins = [13,13,13] 
+            else:
+                bins = [13,13,13] 
+
+            ellip = Ellipsoid(Q0, size=radius, rotation=rot)
+
+            if close: 
+                ellip.reset_axes(delta_Q0)
+
+            n, u, v = ellip.n.copy(), ellip.u.copy(), ellip.v.copy()
+
+            print(delta_Q0)
+            print(n)
+
+            Q, Qx, Qy, Qz, data, norm, mask = box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, n, u, v, key,
+                                                             binsize=binsize, radius=radius, exp=experiment, close=close)
 
             if not close:
 
@@ -2052,20 +2231,8 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 Q = np.sqrt(Qx**2+Qy**2+Qz**2)
 
                 Q, Qx, Qy, Qz, data, norm = Q[mask], Qx[mask], Qy[mask], Qz[mask], data[mask], norm[mask]
-
-            rot = True if facility == 'HFIR' else False
-
-            if close:
-                bins = [11,11,31] 
-            elif rot:
-                bins = [11,11,11] 
-            else:
-                bins = [11,11,11] 
-
-            ellip = Ellipsoid(Qx, Qy, Qz, data, norm, Q0, size=radius, rotation=rot)
-
-            if close:
-                ellip.reset_axes(delta_Q0)
+ 
+            ellip.update_data(Qx, Qy, Qz, data, norm)
 
             int_mask, bkg_mask = ellip.profile_mask(extend=close)
             Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
@@ -2091,10 +2258,12 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 peak_envelope.plot_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg)
 
                 stats_list.extend([peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1])
+                ind_stats_list.extend([peak_fit_1, peak_bkg_ratio_1, sig_noise_ratio_1])
 
             else:
 
                 stats_list.extend([np.nan, np.nan, np.nan, np.nan])
+                ind_stats_list.extend([np.nan, np.nan, np.nan, np.nan])
 
             sig_noise_ratio = sig_noise_ratio_1
 
@@ -2130,6 +2299,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                     reason = '   2d-proj'
 
                 stats_list.extend([peak_fit2d_1, peak_bkg_ratio2d_1, sig_noise_ratio2d_1])
+                ind_stats_list.extend([peak_fit2d_1, peak_bkg_ratio2d_1, sig_noise_ratio2d_1])
 
             else:
 
@@ -2137,8 +2307,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 reason = '   2d-norm'
 
                 stats_list.extend([np.nan, np.nan, np.nan])
-
-            # ---
+                ind_stats_list.extend([np.nan, np.nan, np.nan])
 
             peak_bkg_ratio2d = peak_bkg_ratio2d_1
             sig_noise_ratio2d = sig_noise_ratio2d_1
@@ -2185,6 +2354,26 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
                     peak_envelope.update_ellipse(mu, sigma, rho)
 
+            # --- --- --- --- ---
+
+            W0 = np.column_stack((u,v,n))
+
+            dQx = np.zeros_like(runs)
+            dQy = np.zeros_like(runs)
+            dQz = np.zeros_like(runs)
+
+            if not close:
+
+                Q0, W, D = ellip.ellipsoid()
+
+                Q, Qx, Qy, Qz, data, norm, mask = box_integrator(facility, instrument, runs, banks, indices, split_angle, Q0, delta_Q0, n, u, v, key,
+                                                                 binsize=binsize, radius=radius, exp=experiment, close=close)
+
+                ellip.recenter(Q0)
+                ellip.update_data(Qx, Qy, Qz, data, norm)
+
+            # --- --- --- --- ---
+
             int_mask, bkg_mask = ellip.profile_mask()
             Qp, data, norm = ellip.Qp, ellip.data, ellip.norm
 
@@ -2219,6 +2408,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 peak_envelope.plot_extracted_Q(prof.x, prof.y_sub, prof.y, prof.e, prof.y_fit, prof.y_bkg, peak_fit)
 
                 stats_list.extend([peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2])
+                ind_stats_list.extend([peak_fit_2, peak_bkg_ratio_2, sig_noise_ratio_2])
 
             else:
 
@@ -2226,6 +2416,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 reason = '   1d-prof'
 
                 stats_list.extend([np.nan, np.nan, np.nan])
+                ind_stats_list.extend([np.nan, np.nan, np.nan])
 
             int_mask, bkg_mask = ellip.projection_mask()
             dQ1, dQ2, data, norm = ellip.dQ1, ellip.dQ2, ellip.data, ellip.norm
@@ -2266,6 +2457,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                     reason = '   2d-proj'
 
                 stats_list.extend([peak_fit2d_2, peak_bkg_ratio2d_2, sig_noise_ratio2d_2])
+                ind_stats_list.extend([peak_fit2d_2, peak_bkg_ratio2d_2, sig_noise_ratio2d_2])
 
             else:
 
@@ -2273,6 +2465,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 reason = '   2d-norm'
 
                 stats_list.extend([np.nan, np.nan, np.nan])
+                ind_stats_list.extend([np.nan, np.nan, np.nan])
 
             # ---
 
@@ -2323,22 +2516,22 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
             # ---
 
-            Q1, W, D = ellip.ellipsoid()
+            Q1, W1, D1 = ellip.ellipsoid()
+            delta_Q1 = delta_Q0.copy()
+            Q1_sigs = ellip.sig()
 
             if fixed:
 
                 if ref_peak.is_peak_integrated():
 
-                    print('\nUsing fixed envelope\n')
+                    # print('\nUsing fixed envelope\n')
 
                     # Q1 = ref_peak.get_Q()
 
-                    W = ref_peak.get_W()
-                    D = ref_peak.get_D()
+                    W1 = ref_peak.get_W()
+                    D1 = ref_peak.get_D()
 
-            A = ellip.A(W, D)
-
-            radii = 1/np.sqrt(np.diagonal(D)) 
+            radii = 1/np.sqrt(np.diagonal(D1)) 
 
             fit_1d = [ellip.mu, ellip.sigma]
             fit_2d = [ellip.mu_x, ellip.mu_y, ellip.sigma_x, ellip.sigma_y, ellip.rho]
@@ -2347,9 +2540,9 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
             A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
             Q_rot = [np.nan, np.nan, np.nan]
-            Q_sigs = [np.nan, np.nan, np.nan]
+            Q_sigs = Q1_sigs.copy()
 
-            if (not np.isclose(np.abs(np.linalg.det(W)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()) and not remove:
+            if (not np.isclose(np.abs(np.linalg.det(W1)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()) and not remove:
 
                 remove = True
                 reason = '   3d-env '
@@ -2359,13 +2552,18 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                     remove = True
                     reason = '   3d-sat '
 
+            pk = peak_dictionary.peak_dict.get(key)[j]
+
+            wls = pk.get_wavelengths()
+            ind = np.arange(len(wls))
+
+            pk_env = os.path.join(dbgdir, '{}_{:05d}_{:03d}.png'.format(outname,i,j))
+            ex_env = os.path.join(dbgdir, 'rej_{}_{:05d}_{:03d}.png'.format(outname,i,j))
+
             if not remove:
 
-                #Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator_fast(runs, Q0, delta_Q0, Q1, D, W,
-                #                                                                                                bins=bins, exp=experiment, close=close)
-
                 Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator(facility, instrument, runs, banks, indices, split_angle,
-                                                                                                           Q1, delta_Q0, D, W, bins=bins, exp=experiment, close=close)
+                                                                                                           Q1, delta_Q1, D1, W1, bins=bins, exp=experiment, close=close)
 
                 dQ1_extents, dQ2_extents, Qp_extents = Q_bin
 
@@ -2373,30 +2571,33 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
                 peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
 
-                Q_sigs = ellip.sig()
                 dQ1, dQ2, Qp, _, _ = data_norm
 
                 mask = (signal > 0) & (error > 0) & np.isfinite(signal/error)
                 N = signal[mask].size
 
-                if N > 100:
+                if N > 50:
 
-                    pk = peak_dictionary.peak_dict.get(key)[j]
+                    peak_dictionary.integrated_result(key, Q1, D1, W1, fit_stats, data_norm, pk_bkg, cntrs, j)
 
-                    peak_dictionary.integrated_result(key, Q1, D, W, fit_stats, data_norm, pk_bkg, cntrs, j)
-
-                    I_est = pk.get_merged_intensity()
-                    sig_est = pk.get_merged_intensity_error()
+                    I_est = pk.get_partial_merged_intensity(ind)
+                    sig_est = pk.get_partial_merged_intensity_error(ind)
 
                     if not close:
-                        peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q_sigs)
+                        peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q1_sigs)
                     else:
-                        peak_fit_3d = SatelliteGaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q_sigs, delta)
+                        peak_fit_3d = SatelliteGaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q1_sigs, delta)
 
                     if not close:
                         A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
                     else:
-                        A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+                        A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+
+                    if not close:
+                        if boundary:
+                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q1_sigs, False)
+
+                            A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
                     fit_est_str = '   fit'
 
@@ -2405,7 +2606,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                     fit_3d = [mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01]
 
                     if close:
-                        fit_3d += [delta]
+                        fit_3d += [delta, scale]
 
                     pk.add_fit(fit_1d, fit_2d, fit_3d, 0)
 
@@ -2414,13 +2615,13 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                         fit = peak_fit_3d.model((dQ1, dQ2, Qp), A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
                     else:
                         A0, A1, A2, B, C0, C1, C2 = pk.integrate()
-                        fit = peak_fit_3d.model((dQ1, dQ2, Qp), A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, sig0, sig1, sig2, rho12, rho02, rho01)
+                        fit = peak_fit_3d.model((dQ1, dQ2, Qp), A0, A1, A2, B, C0, C1, C2, mu0, mu1, mu2, delta, scale, sig0, sig1, sig2, rho12, rho02, rho01)
 
                     I_fit = pk.get_fitted_intensity()
                     sig_fit = pk.get_fitted_intensity_error()
 
                     chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
-                    
+
                     if not np.isfinite(chi_sq):
                         remove = True
                         reason = '   3d-fit '
@@ -2436,18 +2637,24 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
                     radii = 3*np.sqrt(vals)
 
-                    D = np.diag(1/radii**2)
+                    D1 = np.diag(1/radii**2)
 
                     if close:
-                        delta_Q0 = np.dot(W, [0,0,delta])
+                        delta_Q1 = np.dot(W1, [0,0,delta])
 
-                    Q1 = np.dot(W, [mu0, mu1, mu2])
+                    Q1 = np.dot(W1, [mu0, mu1, mu2])
 
-                    W = np.dot(W, vecs)
+                    W1 = np.dot(W1, vecs)
 
-                    Q_sigs = np.sqrt(vals)
+                    Q1_sigs = np.sqrt(vals)
 
-                    if (not np.isclose(np.abs(np.linalg.det(W)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
+                    if close:
+
+                        scale_D1 = np.diag(1/radii**2)/scale**2
+
+                        scale_Q1_sigs = Q1_sigs*scale
+
+                    if (not np.isclose(np.abs(np.linalg.det(W1)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
 
                         remove = True
                         reason = '   3d-env '
@@ -2457,10 +2664,13 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                             remove = True
                             reason = '   3d-sat '
 
+                    close_signal, close_dQ1_extents, close_dQ2_extents, close_Qp_extents, close_Q_rot, close_Q_radii, close_Q_scales = signal.copy(), dQ1_extents.copy(), dQ2_extents.copy(), Qp_extents.copy(), Q_rot.copy(), Q_radii.copy(), Q_scales.copy()
+                    close_fit, close_I, close_err, close_chi_sq = fit.copy(), I.copy(), err.copy(), chi_sq.copy()
+
                     if not remove:
 
                         Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator(facility, instrument, runs, banks, indices, split_angle,
-                                                                                                                   Q1, delta_Q0, D, W, bins=[11,11,11], exp=experiment, close=False)
+                                                                                                                   Q1, np.zeros(3), D1, W1, bins=[13,13,13], exp=experiment, close=False)
 
                         dQ1_extents, dQ2_extents, Qp_extents = Q_bin
 
@@ -2473,18 +2683,21 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                         mask = (signal > 0) & (error > 0) & np.isfinite(signal/error)
                         N = signal[mask].size
 
-                        if N > 100:
+                        if N > 50:
 
-                            pk = peak_dictionary.peak_dict.get(key)[j]
+                            peak_dictionary.integrated_result(key, Q1, D1, W1, fit_stats, data_norm, pk_bkg, cntrs, j)
 
-                            peak_dictionary.integrated_result(key, Q1, D, W, fit_stats, data_norm, pk_bkg, cntrs, j)
+                            I_est = pk.get_partial_merged_intensity(ind)
+                            sig_est = pk.get_partial_merged_intensity_error(ind)
 
-                            I_est = pk.get_merged_intensity()
-                            sig_est = pk.get_merged_intensity_error()
-
-                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q_sigs)
+                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q1_sigs)
 
                             A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+
+                            if boundary:
+                                peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q1_sigs, False)
+
+                                A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
                             fit_est_str = '   fit'
 
@@ -2550,8 +2763,10 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 reason = '   3d-env '
 
             params_list.extend([A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N, bound_str, fit_est_str, *Q_rot, *Q_sigs])
+            ind_params_list.extend([A, B, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N, bound_str, fit_est_str, *Q_rot, *Q_sigs])
 
             stats_list.append(reason)
+            ind_stats_list.append(reason)
 
             if remove:
 
@@ -2569,9 +2784,191 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                 peak_stats.write(fmt_stats.format(*stats_list))
                 peak_params.write(fmt_params.format(*params_list))
 
-                if close:
+                # ---
+
+                for ind_k, (ind_run, ind_bank, ind_index) in enumerate(zip(runs, banks, indices)):
+
+                    try_ind = True
+                    reason = '   no/ok  '
+
+                    pk_env = os.path.join(dbgdir, 'ind_{}_{:05d}_{:03d}_{:03d}.png'.format(outname,i,j,ind_k))
+                    ex_env = os.path.join(dbgdir, 'rej_ind_{}_{:05d}_{:03d}_{:03d}.png'.format(outname,i,j,ind_k))
+
+                    Q2, W2, D2 = Q1.copy(), W1.copy(), D1.copy()
+                    Q2_sigs = Q1_sigs.copy()
+
+                    peak_envelope.update_individual(ind_k, len(indices), wls[ind_k], np.rad2deg(tts[ind_k]), np.rad2deg(azs[ind_k]), ind_run, ind_bank)
+
+                    radii = 1/np.sqrt(np.diag(D2))
+                    
+                    A, B = [0], [0]
+
+                    if (not np.isclose(np.abs(np.linalg.det(W2)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
+
+                        try_ind = False
+                        data = np.array([0])
+                        norm = np.array([1])
+                        bin_size = np.zeros(3)
+                        pk_bkg = [data], [norm], [data], [norm], bin_size
+                        cntrs = data, data, data, data, data, data
+                        pk.add_individual_integration(pk_bkg, cntrs)
+                        fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+                        pk.add_individual_fit(fit_3d)
+                        reason = '   3d-env '
+
+                    iteration = 0
+                    while iteration < 2 and try_ind:
+
+                        Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator(facility, instrument, [ind_run], [ind_bank], [ind_index], split_angle,
+                                                                                                                   Q2, np.zeros(3), D2, W2, bins=[13,13,13], exp=experiment, close=False)
+
+                        dQ1_extents, dQ2_extents, Qp_extents = Q_bin
+
+                        if iteration == 0:
+                            peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
+                        else:
+                            peak_envelope.plot_extracted_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
+
+                        dQ1, dQ2, Qp, _, _ = data_norm
+
+                        mask = (signal > 0) & (error > 0) & np.isfinite(signal/error)
+                        N = signal[mask].size
+
+                        if N <= 50:
+                            try_ind = False
+                            data = np.array([0])
+                            norm = np.array([1])
+                            bin_size = np.zeros(3)
+                            pk_bkg = [data], [norm], [data], [norm], bin_size
+                            cntrs = data, data, data, data, data, data
+                            reason = '   3d-cnts'
+
+                        if iteration == 0:
+                            pk.add_individual_integration(pk_bkg, cntrs)
+                        else:
+                            pk.update_individual_integration(pk_bkg, cntrs)
+
+                        if N > 50:
+
+                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q2_sigs, False)
+
+                            A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+
+                            fit_est_str = '   fit'
+
+                            bound_str = ' false' if boundary else '  true'
+
+                            fit_3d = [mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01]
+
+                            if iteration == 0:
+                                pk.add_individual_fit(fit_3d)
+                            else:
+                                pk.update_individual_fit(fit_3d)
+
+                            A, B, C0, C1, C2 = pk.individual_integrate()
+
+                            fit = peak_fit_3d.model((dQ1, dQ2, Qp), A[-1], B[-1], C0[-1], C1[-1], C2[-1], mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+
+                            chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
+
+                            I_est = pk.get_individual_intensity()
+                            sig_est = pk.get_individual_intensity_error()
+
+                            I_fit = pk.get_individual_fitted_intensity()
+                            sig_fit = pk.get_individual_fitted_intensity_error()
+
+                            I = [I_est[-1], I_fit[-1]]
+                            err = [sig_est[-1], sig_fit[-1]]
+
+                            if iteration == 0:
+                                peak_envelope.plot_fitting(fit, I, err, chi_sq)
+                            else:
+                                peak_envelope.plot_extracted_fitting(fit, I, err, chi_sq)
+
+                            # ---
+
+                            vals, vecs = peak_fit_3d.eigendecomposition()
+
+                            radii = 3*np.sqrt(vals)
+
+                            D2 = np.diag(1/radii**2)
+ 
+                            Q2 = np.dot(W2, [mu0, mu1, mu2])
+
+                            W2 = np.dot(W2, vecs)
+
+                            Q2_sigs = np.sqrt(vals)
+
+                            if boundary:
+                                try_ind = False
+                                reason = '   3d-bndr'
+                            elif I_est[-1] <= sig_est[-1] or np.isclose(I_est[-1], 0):
+                                try_ind = False
+                                reason = '   3d-est '
+                            elif np.isclose(I_fit[-1], 0):
+                                try_ind = False
+                                reason = '   3d-fitn'
+                            elif I_fit[-1] <= sig_fit[-1]:
+                                try_ind = False
+                                reason = '   3d-fits'
+
+                            if (not np.isclose(np.abs(np.linalg.det(W2)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
+
+                                try_ind = False
+                                reason = '   3d-env '
+
+                            if not try_ind:
+
+                                fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+
+                                pk.update_individual_fit(fit_3d)
+
+                        else:
+
+                            try_ind = False
+
+                            fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+
+                            if iteration == 0:
+                                pk.add_individual_fit(fit_3d)
+                            else:
+                                pk.update_individual_fit(fit_3d)
+
+                        iteration += 1
+
+                    if try_ind:
+                        peak_envelope.write_figure(pk_env)
+                    else:
+                        peak_envelope.write_figure(ex_env)
+
+                    ind_params_list[-20:] = A[-1], B[-1], mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N, bound_str, fit_est_str, *Q_rot, *Q2_sigs
+
+                    ind_stats_list[-1] = reason
+
+                    if not try_ind:
+
+                        ind_excl_stats.write(fmt_stats.format(*ind_stats_list))
+                        ind_excl_params.write(fmt_params.format(*ind_params_list))
+
+                    else:
+
+                        ind_peak_stats.write(fmt_stats.format(*ind_stats_list))
+                        ind_peak_params.write(fmt_params.format(*ind_params_list))
+
+                # ---
+ 
+                if close: #  and np.abs(delta/delta_nom-1) < 0.2
+                
+                    print(np.abs(delta/delta_nom-1) < 0.2)
 
                     for s, (sat_key, sat_Q) in enumerate(zip(sat_keys, sat_Qs)):
+
+                        peak_envelope.plot_integration(close_signal, close_dQ1_extents, close_dQ2_extents, close_Qp_extents, close_Q_rot, close_Q_radii, close_Q_scales)
+                        peak_envelope.plot_fitting(close_fit, close_I, close_err, close_chi_sq)
+
+                        Q2, W2, D2 = Q1.copy(), W1.copy(), scale_D1.copy()
+                        delta_Q2 = delta_Q1.copy()
+                        Q2_sigs = scale_Q1_sigs.copy()
 
                         remove = False
                         reason = '   none   '
@@ -2591,26 +2988,33 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                         H, K, L = peak_dictionary.get_hkl(h, k, l, m, n, p)
                         d = peak_dictionary.get_d(h, k, l, m, n, p)
 
-                        pk_env = os.path.join(dbgdir, '{}_{}_{}_{}.png'.format(outname,i,j,s))
-                        ex_env = os.path.join(dbgdir, 'rej_{}_{}_{}_{}.png'.format(outname,i,j,s))
+                        pk_env = os.path.join(dbgdir, '{}_{:05d}_{:03d}.png'.format(outname,i,j+(s+1)*100))
+                        ex_env = os.path.join(dbgdir, 'rej_{}_{:05d}_{:03d}.png'.format(outname,i,j+(s+1)*100))
 
                         peak_envelope.update_plots(sat_key, d)
 
                         summary_list[0:4] = [H, K, L, d]
                         stats_list[0:4] = [H, K, L, d]
                         params_list[0:4] = [H, K, L, d]
+                        ind_stats_list[0:4] = [H, K, L, d]
+                        ind_params_list[0:4] = [H, K, L, d]
 
                         if s == 0:
-                            Q2 = Q1-delta_Q0
+                            Q2 -= delta_Q2
                         else:
-                            Q2 = Q1+delta_Q0
+                            Q2 += delta_Q2
+
+                        sat_Q1, sat_D1, sat_W1 = Q2.copy(), D2.copy(), W2.copy()
+                        sat_Q1_sigs = Q2_sigs.copy()
 
                         Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator(facility, instrument, runs, banks, indices, split_angle,
-                                                                                                                   Q2, np.zeros(3), D, W, bins=[11,11,11], exp=experiment, close=False)
+                                                                                                                   Q2, np.zeros(3), D2, W2, bins=[13,13,13], exp=experiment, close=False)
 
                         dQ1_extents, dQ2_extents, Qp_extents = Q_bin
 
                         fit_stats = [peak_fit, peak_bkg_ratio, sig_noise_ratio, peak_fit2d, peak_bkg_ratio2d, sig_noise_ratio2d]
+
+                        peak_envelope.update_individual(-1, len(indices), lamda, two_theta, az_phi, None, None)
 
                         peak_envelope.plot_extracted_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
 
@@ -2619,14 +3023,14 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                         mask = (signal > 0) & (error > 0) & np.isfinite(signal/error)
                         N = signal[mask].size
 
-                        if N > 100:
+                        if N > 50:
 
-                            peak_dictionary.integrated_result(sat_key, Q2, D, W, fit_stats, data_norm, pk_bkg, cntrs, n_sat-1)
+                            peak_dictionary.integrated_result(sat_key, sat_Q1, sat_D1, sat_W1, fit_stats, data_norm, pk_bkg, cntrs, n_sat-1)
 
                             I_est = sat_pk.get_merged_intensity()
                             sig_est = sat_pk.get_merged_intensity_error()
 
-                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q_sigs)
+                            peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, Q2_sigs)
 
                             A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
 
@@ -2645,6 +3049,10 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                             sig_fit = sat_pk.get_fitted_intensity_error()
 
                             chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
+
+                            if not np.isfinite(chi_sq):
+                                remove = True
+                                reason = '   3d-fit '
 
                             I = [I_est, I_fit]
                             err = [sig_est, sig_fit]
@@ -2671,6 +3079,13 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
                         if remove:
 
+                            chi_sq = np.inf
+                            fit_3d = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+                        peak_dictionary.fitted_result(sat_key, fit_1d, fit_2d, fit_3d, chi_sq, n_sat-1)
+
+                        if remove:
+
                             peak_envelope.write_figure(ex_env)
 
                             excl_summary.write(fmt_summary.format(*summary_list))
@@ -2685,12 +3100,177 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
                             peak_stats.write(fmt_stats.format(*stats_list))
                             peak_params.write(fmt_params.format(*params_list))
 
-                        if remove:
+                            peak_envelope.plot_integration(close_signal, close_dQ1_extents, close_dQ2_extents, close_Qp_extents, close_Q_rot, close_Q_radii, close_Q_scales)
+                            peak_envelope.plot_fitting(close_fit, close_I, close_err, close_chi_sq)
 
-                            chi_sq = np.inf
-                            fit_3d = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+                            for sat_k, (ind_run, ind_bank, ind_index) in enumerate(zip(runs, banks, indices)):
 
-                        peak_dictionary.fitted_result(sat_key, fit_1d, fit_2d, fit_3d, chi_sq, n_sat-1)
+                                try_ind = True
+                                reason = '   no/ok  '
+
+                                sat_Q2, sat_D2, sat_W2 = sat_Q1.copy(), sat_D1.copy(), sat_W1.copy()
+                                sat_Q2_sigs = sat_Q1_sigs.copy()
+
+                                pk_env = os.path.join(dbgdir, 'ind_{}_{:05d}_{:03d}_{:03d}.png'.format(outname,i,j+(s+1)*100,sat_k))
+                                ex_env = os.path.join(dbgdir, 'rej_ind_{}_{:05d}_{:03d}_{:03d}.png'.format(outname,i,j+(s+1)*100,sat_k))
+
+                                peak_envelope.update_individual(sat_k, len(indices), wls[sat_k], np.rad2deg(tts[sat_k]), np.rad2deg(azs[sat_k]), ind_run, ind_bank)
+
+                                radii = 1/np.sqrt(np.diag(sat_D2))
+
+                                A, B = [0], [0]
+
+                                if (not np.isclose(np.abs(np.linalg.det(sat_W2)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
+
+                                    try_ind = False
+                                    data = np.array([0])
+                                    norm = np.array([1])
+                                    bin_size = np.zeros(3)
+                                    pk_bkg = [data], [norm], [data], [norm], bin_size
+                                    cntrs = data, data, data, data, data, data
+                                    sat_pk.add_individual_integration(pk_bkg, cntrs)
+                                    fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+                                    sat_pk.add_individual_fit(fit_3d)
+                                    reason = '   3d-env '
+
+                                iteration = 0
+                                while iteration < 2 and try_ind:
+
+                                    Q_bin, Q_rot, Q_radii, Q_scales, signal, error, data_norm, pk_bkg, cntrs = norm_integrator(facility, instrument, [ind_run], [ind_bank], [ind_index], split_angle,
+                                                                                                                               sat_Q2, np.zeros(3), sat_D2, sat_W2, bins=[13,13,13], exp=experiment, close=False)
+
+                                    dQ1_extents, dQ2_extents, Qp_extents = Q_bin
+
+                                    if iteration == 0:
+                                        peak_envelope.plot_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
+                                    else:
+                                        peak_envelope.plot_extracted_integration(signal, dQ1_extents, dQ2_extents, Qp_extents, Q_rot, Q_radii, Q_scales)
+
+                                    dQ1, dQ2, Qp, _, _ = data_norm
+
+                                    mask = (signal > 0) & (error > 0) & np.isfinite(signal/error)
+                                    N = signal[mask].size
+
+                                    if N <= 50:
+                                        try_ind = False
+                                        data = np.array([0])
+                                        norm = np.array([1])
+                                        bin_size = np.zeros(3)
+                                        pk_bkg = [data], [norm], [data], [norm], bin_size
+                                        cntrs = data, data, data, data, data, data
+                                        reason = '   3d-cnts'
+
+                                    if iteration == 0:
+                                        sat_pk.add_individual_integration(pk_bkg, cntrs)
+                                    else:
+                                        sat_pk.update_individual_integration(pk_bkg, cntrs)
+
+                                    if N > 50:
+
+                                        peak_fit_3d = GaussianFit3D((dQ1[mask], dQ2[mask], Qp[mask]), signal[mask], error[mask], Q_rot, sat_Q2_sigs, False)
+
+                                        A, B, C0, C1, C2, mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, boundary = peak_fit_3d.fit()
+
+                                        fit_est_str = '   fit'
+
+                                        bound_str = ' false' if boundary else '  true'
+
+                                        fit_3d = [mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01]
+
+                                        if iteration == 0:
+                                            sat_pk.add_individual_fit(fit_3d)
+                                        else:
+                                            sat_pk.update_individual_fit(fit_3d)
+
+                                        A, B, C0, C1, C2 = sat_pk.individual_integrate()
+
+                                        fit = peak_fit_3d.model((dQ1, dQ2, Qp), A[-1], B[-1], C0[-1], C1[-1], C2[-1], mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01)
+
+                                        chi_sq = np.sum((signal[mask]-fit[mask])**2/error[mask]**2)/(N-11)
+
+                                        I_est = sat_pk.get_individual_intensity()
+                                        sig_est = sat_pk.get_individual_intensity_error()
+
+                                        I_fit = sat_pk.get_individual_fitted_intensity()
+                                        sig_fit = sat_pk.get_individual_fitted_intensity_error()
+
+                                        I = [I_est[-1], I_fit[-1]]
+                                        err = [sig_est[-1], sig_fit[-1]]
+
+                                        if iteration == 0:
+                                            peak_envelope.plot_fitting(fit, I, err, chi_sq)
+                                        else:
+                                            peak_envelope.plot_extracted_fitting(fit, I, err, chi_sq)
+
+                                        # ---
+
+                                        vals, vecs = peak_fit_3d.eigendecomposition()
+
+                                        radii = 3*np.sqrt(vals)
+
+                                        sat_D2 = np.diag(1/radii**2)
+
+                                        sat_Q2 = np.dot(sat_W2, [mu0, mu1, mu2])
+
+                                        sat_W2 = np.dot(sat_W2, vecs)
+
+                                        sat_Q2_sigs = np.sqrt(vals)
+
+                                        if boundary:
+                                            try_ind = False
+                                            reason = '   3d-bndr'
+                                        elif I_est[-1] <= sig_est[-1] or np.isclose(I_est[-1], 0):
+                                            try_ind = False
+                                            reason = '   3d-est '
+                                        elif np.isclose(I_fit[-1], 0):
+                                            try_ind = False
+                                            reason = '   3d-fitn'
+                                        elif I_fit[-1] <= sig_fit[-1]:
+                                            try_ind = False
+                                            reason = '   3d-fits'
+
+                                        if (not np.isclose(np.abs(np.linalg.det(sat_W2)),1)) or np.isclose(radii, 0).any() or (not np.isfinite(radii).all()) or (not (radii > 0).all()) or np.isclose(1/radii**2, 0).any() or (not np.isfinite(1/radii**2).all()) or (not (1/radii**2 > 0).all()):
+
+                                            try_ind = False
+                                            reason = '   3d-env '
+
+                                        if not try_ind:
+
+                                            fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+
+                                            sat_pk.update_individual_fit(fit_3d)
+
+                                    else:
+
+                                        try_ind = False
+
+                                        fit_3d = [0, 0, 0, 1, 1, 1, 0, 0, 0]
+
+                                        if iteration == 0:
+                                            sat_pk.add_individual_fit(fit_3d)
+                                        else:
+                                            sat_pk.update_individual_fit(fit_3d)
+
+                                    iteration += 1
+
+                                if try_ind:
+                                    peak_envelope.write_figure(pk_env)
+                                else:
+                                    peak_envelope.write_figure(ex_env)
+
+                                ind_params_list[-20:] = A[-1], B[-1], mu0, mu1, mu2, sig0, sig1, sig2, rho12, rho02, rho01, N, bound_str, fit_est_str, *Q_rot, *sat_Q2_sigs
+
+                                ind_stats_list[-1] = reason
+
+                                if not try_ind:
+
+                                    ind_excl_stats.write(fmt_stats.format(*ind_stats_list))
+                                    ind_excl_params.write(fmt_params.format(*ind_params_list))
+
+                                else:
+
+                                    ind_peak_stats.write(fmt_stats.format(*ind_stats_list))
+                                    ind_peak_params.write(fmt_params.format(*ind_params_list))
 
             runs_banks, run_keys, bank_keys = partial_cleanup(runs, banks, indices, facility, instrument, split_angle,
                                                               runs_banks, run_keys, bank_keys, bank_group, key, exp=experiment)
@@ -2706,7 +3286,7 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
             peak_params.flush()
             excl_params.flush()
 
-            peak_dictionary.save_hkl(os.path.join(dbgdir, '{}.hkl'.format(outname)), min_signal_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
+            peak_dictionary.save_hkl(os.path.join(dbgdir, '{}.hkl'.format(outname)), min_sig_noise_ratio=min_sig_noise_ratio, cross_terms=cross_terms)
             peak_dictionary.save(os.path.join(dbgdir, '{}.pkl'.format(outname)))
 
     peak_dictionary.save_hkl(os.path.join(dbgdir, '{}.hkl'.format(outname)))
@@ -2728,24 +3308,64 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
     if mtd.doesExist('van'):
         DeleteWorkspace('van')
 
-    with open(os.path.join(dbgdir, '{}.pdf'.format(outname)), 'wb') as f:
+    with open(os.path.join(dbgdir, 'ind_{}.pdf'.format(outname)), 'wb') as f:
         merger = []
-        for i, (key, j) in enumerate(zip(keys,inds)):
-            env = os.path.join(dbgdir, '{}_{}_{}.png'.format(outname,i,j))
-            if os.path.exists(env):
-                with Image.open(env) as im:
-                    fig = env.replace('png','jpg')
+        files = sorted(glob.glob(os.path.join(dbgdir, 'ind_{}_*.png'.format(outname))))
+        for file in files:
+            if os.path.exists(file):
+                with Image.open(file) as im:
+                    fig = file.replace('png','jpg')
                     im = im.convert('RGB')
                     im.save(fig, 'JPEG')
                 merger.append(fig)
-            for s in range(2):
-                env = os.path.join(dbgdir, '{}_{}_{}_{}.png'.format(outname,i,j,s))
-                if os.path.exists(env):
-                    with Image.open(env) as im:
-                        fig = env.replace('png','jpg')
-                        im = im.convert('RGB')
-                        im.save(fig, 'JPEG')
-                    merger.append(fig)
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(dbgdir, 'ind_{}.pdf'.format(outname)))
+
+    with open(os.path.join(dbgdir, 'rej_ind_{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        files = sorted(glob.glob(os.path.join(dbgdir, 'rej_ind_{}_*.png'.format(outname))))
+        for file in files:
+            if os.path.exists(file):
+                with Image.open(file) as im:
+                    fig = file.replace('png','jpg')
+                    im = im.convert('RGB')
+                    im.save(fig, 'JPEG')
+                merger.append(fig)
+        if len(merger) > 0:
+            f.write(img2pdf.convert(merger))
+        else:
+            os.remove(os.path.join(dbgdir, 'rej_ind_{}.pdf'.format(outname)))
+
+    files = glob.glob(os.path.join(dbgdir, 'ind_{}_*.png'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+    files = glob.glob(os.path.join(dbgdir, 'rej_ind_{}_*.png'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+
+    files = glob.glob(os.path.join(dbgdir, 'ind_{}_*.jpg'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+    files = glob.glob(os.path.join(dbgdir, 'rej_ind_{}_*.jpg'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+            
+    with open(os.path.join(dbgdir, '{}.pdf'.format(outname)), 'wb') as f:
+        merger = []
+        files = sorted(glob.glob(os.path.join(dbgdir, '{}_*.png'.format(outname))))
+        for file in files:
+            if os.path.exists(file):
+                with Image.open(file) as im:
+                    fig = file.replace('png','jpg')
+                    im = im.convert('RGB')
+                    im.save(fig, 'JPEG')
+                merger.append(fig)
         if len(merger) > 0:
             f.write(img2pdf.convert(merger))
         else:
@@ -2753,50 +3373,33 @@ def integration_loop(keys, inds, proc, outname, ref_dict, int_list, filename, bo
 
     with open(os.path.join(dbgdir, 'rej_{}.pdf'.format(outname)), 'wb') as f:
         merger = []
-        for i, (key, j) in enumerate(zip(keys,inds)):
-            env = os.path.join(dbgdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
-            if os.path.exists(env):
-                with Image.open(env) as im:
-                    fig = env.replace('png','jpg')
+        files = sorted(glob.glob(os.path.join(dbgdir, 'rej_{}_*.png'.format(outname))))
+        for file in files:
+            if os.path.exists(file):
+                with Image.open(file) as im:
+                    fig = file.replace('png','jpg')
                     im = im.convert('RGB')
                     im.save(fig, 'JPEG')
                 merger.append(fig)
-            for s in range(2):
-                env = os.path.join(dbgdir, 'rej_{}_{}_{}_{}.png'.format(outname,i,j,s))
-                if os.path.exists(env):
-                    with Image.open(env) as im:
-                        fig = env.replace('png','jpg')
-                        im = im.convert('RGB')
-                        im.save(fig, 'JPEG')
-                    merger.append(fig)
         if len(merger) > 0:
             f.write(img2pdf.convert(merger))
         else:
             os.remove(os.path.join(dbgdir, 'rej_{}.pdf'.format(outname)))
 
-    for i, (key, j) in enumerate(zip(keys,inds)):
-        env = os.path.join(dbgdir, '{}_{}_{}.png'.format(outname,i,j))
-        if os.path.exists(env):
-            os.remove(env)
-        env = os.path.join(dbgdir, 'rej_{}_{}_{}.png'.format(outname,i,j))
-        if os.path.exists(env):
-            os.remove(env)
-        env = os.path.join(dbgdir, '{}_{}_{}.jpg'.format(outname,i,j))
-        if os.path.exists(env):
-            os.remove(env)
-        env = os.path.join(dbgdir, 'rej_{}_{}_{}.jpg'.format(outname,i,j))
-        if os.path.exists(env):
-            os.remove(env)
-        for s in range(2):
-            env = os.path.join(dbgdir, '{}_{}_{}_{}.png'.format(outname,i,j,s))
-            if os.path.exists(env):
-                os.remove(env)
-            env = os.path.join(dbgdir, 'rej_{}_{}_{}_{}.png'.format(outname,i,j,s))
-            if os.path.exists(env):
-                os.remove(env)            
-            env = os.path.join(dbgdir, '{}_{}_{}_{}.jpg'.format(outname,i,j,s))
-            if os.path.exists(env):
-                os.remove(env)
-            env = os.path.join(dbgdir, 'rej_{}_{}_{}_{}.jpg'.format(outname,i,j,s))
-            if os.path.exists(env):
-                os.remove(env)
+    files = glob.glob(os.path.join(dbgdir, '{}_*.png'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+    files = glob.glob(os.path.join(dbgdir, 'rej_{}_*.png'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+
+    files = glob.glob(os.path.join(dbgdir, '{}_*.jpg'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
+    files = glob.glob(os.path.join(dbgdir, 'rej_{}_*.jpg'.format(outname)))
+    for file in files:
+        if os.path.exists(file):
+            os.remove(file)
